@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: unified-exam-platform-api
+
+server:
+  port: ${PORT:8080}
+
+logging:
+  level:
+    com.unifiedexam.platform: INFO

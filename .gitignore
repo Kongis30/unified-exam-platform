@@ -1,0 +1,17 @@
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Java / Maven
+backend/target/
+*.class
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.idea/
+.vscode/
