@@ -1,12 +1,30 @@
-# 统一考试平台
+# Unified Exam Platform
 
-本目录是 SAT / PSAT / SHSAT 统一考试系统项目。当前已建立前后端最小骨架、类型注册 API 和新库基础主数据 DDL；账号认证、数据库迁移器接入、管理功能和旧数据迁移仍按计划逐阶段实现。
+SAT and PSAT are managed inside one SAT system workspace; SHSAT has its own workspace. All systems share accounts and classes while keeping their paper and exam rules separate.
 
-- [数据库设计](./docs/DATABASE_DESIGN.md)：统一主数据、试卷/发布/作答模型、考试类型扩展方式和旧库数据落点。
-- [实现计划与功能拆分](./docs/IMPLEMENTATION_PLAN.md)：工程骨架、模块边界、首阶段任务和后续实施顺序。
+- [数据库设计](./docs/DATABASE_DESIGN.md)：统一身份、试卷/发布/作答模型和类型扩展方式。
+- [实现计划与功能拆分](./docs/IMPLEMENTATION_PLAN.md)：模块边界和分阶段交付顺序。
+- [学生端目标与设计](./SYSTEM_DESIGN.md)：统一入口、SAT/SHSAT 页面与考试规则的目标。
+- [学生端实施阶段](./DEVELOPMENT_STAGES.md)：按依赖顺序完成入口、考试、评分与验收。
 
-## 本地运行骨架
+## Local setup
 
-- 后端：安装 Java 17+ 和 Maven，在 `backend/` 执行 `mvn spring-boot:run`，默认监听 `http://localhost:8080`。
-- 前端：在 `frontend/` 执行 `npm install`，再执行 `npm run dev`，默认监听 `http://localhost:5175`；Vite 将 `/api` 代理到后端。
-- 数据库：新库基础结构见 `database/migrations/V1__platform_core.sql`。数据库迁移器与运行时数据访问将在账号/班级阶段接入；本阶段 API 类型目录来自后端已注册模块。
+Requires Java 17+, Maven, Node.js, npm, and MySQL 8.
+
+1. Create an empty database:
+
+   ```sql
+   CREATE DATABASE unified_exam_platform CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+   ```
+
+2. In `backend/`, set `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`, then run `mvn spring-boot:run`. Flyway applies the versioned migrations in `backend/src/main/resources/db/migration/` automatically.
+3. On the first start with an empty database, set `PLATFORM_BOOTSTRAP_ADMIN_USERNAME` and `PLATFORM_BOOTSTRAP_ADMIN_PASSWORD` (at least 6 characters). No default credentials are provided. The bootstrap account is not recreated once the database contains users.
+4. In `frontend/`, run `npm install` and `npm run dev`, then open `http://localhost:5175`. Vite proxies `/api` requests to the backend.
+
+For HTTPS deployments, set `SESSION_COOKIE_SECURE=true`. The browser uses a same-site session and CSRF token. User-facing prompts and errors are in English.
+
+## Current implementation
+
+- Available: platform and exam-type registry, MySQL/Flyway schema, shared login, role-based access, account and class management, paper drafts and versions, exam release/eligibility, and the initial SHSAT attempt flow for choice questions.
+- In progress: full SHSAT question-type support, type-specific paper validation, detailed scoring reports, then SAT/PSAT exam flows.
+- Planned: complete SHSAT first, then SAT/PSAT, followed by legacy data migration.

@@ -1,20 +1,18 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import AppCard from '@/components/AppCard.vue'
 import { getExamTypes, getPlatformHealth } from '@/api/platform'
+import { authState } from '@/auth'
+import { groupExamTypesIntoWorkspaces } from '@/examTypes/workspaces'
 
 const examTypes = ref([])
+const workspaces = computed(() => groupExamTypesIntoWorkspaces(examTypes.value))
 const apiStatus = ref('checking')
 const loadError = ref('')
 
-const typeAccents = {
-  SAT: 'accent-sat',
-  PSAT: 'accent-psat',
-  SHSAT: 'accent-shsat',
-}
-
-/** 首页只展示服务端已注册类型；两个 API 任一失败时显示可诊断状态。 */
+// 首页信息来自模块注册表，新增考试类型后可直接从这里进入对应工作区。
 async function loadPlatformOverview() {
   try {
     const [health, types] = await Promise.all([getPlatformHealth(), getExamTypes()])
@@ -22,7 +20,7 @@ async function loadPlatformOverview() {
     examTypes.value = types
   } catch (error) {
     apiStatus.value = 'offline'
-    loadError.value = error instanceof Error ? error.message : '暂时无法连接后端服务'
+    loadError.value = error instanceof Error ? error.message : 'Unable to connect to the platform API.'
   }
 }
 
@@ -30,74 +28,54 @@ onMounted(loadPlatformOverview)
 </script>
 
 <template>
-  <div class="page-content">
-    <section class="welcome-band">
-      <div class="welcome-copy">
-        <div class="eyebrow"><span class="eyebrow-line"></span>统一考试管理 · 基础框架</div>
-        <h1>一处管理，<em>各自专注。</em></h1>
-        <p>账号、班级和发布入口统一；SAT、PSAT、SHSAT 保持各自的试卷结构与考试流程。</p>
-        <div class="welcome-meta">
-          <span class="status-mark" :class="`status-${apiStatus}`"></span>
-          <span v-if="apiStatus === 'online'">平台 API 已连接</span>
-          <span v-else-if="apiStatus === 'checking'">正在连接平台 API</span>
-          <span v-else-if="apiStatus === 'degraded'">平台 API 部分可用</span>
-          <span v-else>平台 API 未连接</span>
-          <span class="meta-separator">·</span>
-          <span>当前阶段：项目骨架</span>
-        </div>
-        <p v-if="loadError" class="connection-error">{{ loadError }}。请先启动后端服务。</p>
-      </div>
-      <div class="welcome-graphic" aria-hidden="true">
-        <div class="orbit orbit-one"></div>
-        <div class="orbit orbit-two"></div>
-        <div class="orbit-core"><span>EX</span></div>
-        <span class="orbit-label orbit-label-top">01 / PLATFORM</span>
-        <span class="orbit-label orbit-label-bottom">03 / MODULES</span>
-      </div>
-      <div class="welcome-count"><strong>{{ String(examTypes.length).padStart(2, '0') }}</strong><span>已注册类型</span></div>
-    </section>
-
-    <section class="section-heading">
+  <main class="page-shell dashboard-page">
+    <header class="management-heading dashboard-heading">
       <div>
-        <div class="eyebrow"><span class="eyebrow-line"></span>TYPE DIRECTORY</div>
-        <h2>选择考试类型</h2>
-        <p>各类型入口独立注册，统一使用平台账号和班级。</p>
+        <span class="eyebrow">SHARED EXAM MANAGEMENT</span>
+        <h1>Platform overview</h1>
+        <p>Manage shared accounts and classes, then work with papers and releases by system and program.</p>
       </div>
-      <span class="section-counter">{{ String(examTypes.length).padStart(2, '0') }} TYPES</span>
-    </section>
+      <span class="section-counter">{{ workspaces.length }} EXAM SYSTEMS</span>
+    </header>
 
-    <section v-if="examTypes.length" class="type-grid" aria-label="考试类型列表">
-      <RouterLink
-        v-for="(type, index) in examTypes"
-        :key="type.code"
-        class="type-card"
-        :class="typeAccents[type.code] || 'accent-default'"
-        :to="{ name: 'exam-type', params: { code: type.code } }"
-      >
-        <div class="card-topline">
-          <span class="card-number">0{{ index + 1 }}</span>
-          <span class="card-arrow" aria-hidden="true">↗</span>
+    <AppCard title="Platform status" subtitle="Shared identity and classroom services for every registered exam type.">
+      <div class="platform-status">
+        <span class="status-mark" :class="`status-${apiStatus}`"></span>
+        <strong v-if="apiStatus === 'online'">Connected</strong>
+        <strong v-else-if="apiStatus === 'checking'">Connecting</strong>
+        <strong v-else-if="apiStatus === 'degraded'">Partially available</strong>
+        <strong v-else>Unavailable</strong>
+        <span>Unified accounts enabled</span>
+      </div>
+      <p v-if="loadError" class="error-text">{{ loadError }} Start the backend service and try again.</p>
+    </AppCard>
+
+    <section class="dashboard-section">
+      <header class="dashboard-section__heading">
+        <div>
+          <h2>Exam workspaces</h2>
+          <p>Each exam program keeps its own papers and releases inside its system workspace.</p>
         </div>
-        <div class="card-code">{{ type.code }}</div>
-        <h3>{{ type.displayName }}</h3>
-        <p>{{ type.summary }}</p>
-        <div class="card-footer"><span>模块已注册</span><span class="card-footer-line"></span><span>进入模块</span></div>
-      </RouterLink>
-    </section>
-    <div v-else-if="apiStatus === 'online'" class="empty-state">
-      <span class="empty-symbol">—</span>
-      <strong>尚无已注册的考试类型</strong>
-      <p>请在后端考试类型模块中注册入口。</p>
-    </div>
-    <div v-else class="loading-state"><span class="loading-rule"></span>正在读取考试类型目录…</div>
+      </header>
 
-    <section class="foundation-strip">
-      <div class="foundation-title"><span class="foundation-icon">↗</span><div><strong>基础能力建设中</strong><small>功能将按实施阶段逐步接入</small></div></div>
-      <div class="foundation-step"><span>01</span><strong>工程与类型注册</strong><i class="step-current">当前</i></div>
-      <div class="foundation-step"><span>02</span><strong>统一账号与班级</strong><i>下一阶段</i></div>
-      <div class="foundation-step"><span>03</span><strong>试卷与考试流程</strong><i>规划中</i></div>
+      <div v-if="workspaces.length" class="type-grid" aria-label="Exam systems">
+        <AppCard v-for="workspace in workspaces" :key="workspace.code" class="type-card">
+          <span class="card-code">{{ workspace.programs.map((program) => program.code).join(' · ') }}</span>
+          <h3>{{ workspace.displayName }}</h3>
+          <p>{{ workspace.summary }}</p>
+          <RouterLink class="type-card__link" :to="['ADMIN', 'TEACHER'].includes(authState.user?.roleCode) && ['SHSAT', 'SAT'].includes(workspace.code)
+            ? { name: workspace.code === 'SHSAT' ? 'shsat-admin' : 'sat-admin' }
+            : { name: 'exam-type', params: { code: workspace.code } }">
+            Open workspace <span aria-hidden="true">↗</span>
+          </RouterLink>
+        </AppCard>
+      </div>
+      <AppCard v-else-if="apiStatus === 'online'" title="No exam systems are available">
+        <p class="status-note">Register an exam type module and enable it in the catalog.</p>
+      </AppCard>
+      <AppCard v-else title="Loading exam types">
+        <p class="status-note">Connecting to the platform API…</p>
+      </AppCard>
     </section>
-
-    <footer class="page-footer"><span>UNIFIED EXAM PLATFORM</span><span>BUILDING THE SHARED FOUNDATION</span></footer>
-  </div>
+  </main>
 </template>

@@ -1,0 +1,137 @@
+package com.unifiedexam.platform.paper;
+
+import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+/** Shared paper endpoints; exam-specific JSON remains owned by the registered exam type. */
+@RestController
+@RequestMapping("/api/admin")
+public class PaperController {
+
+    private final PaperService paperService;
+
+    public PaperController(PaperService paperService) {
+        this.paperService = paperService;
+    }
+
+    @GetMapping("/exam-types/{examTypeCode}/paper-groups")
+    public List<PaperService.PaperGroupView> listGroups(@PathVariable String examTypeCode) {
+        return paperService.listGroups(examTypeCode);
+    }
+
+    @PostMapping("/exam-types/{examTypeCode}/paper-groups")
+    public PaperService.PaperGroupView createGroup(@PathVariable String examTypeCode,
+                                                    @Valid @RequestBody PaperService.SaveGroupRequest request) {
+        return paperService.createGroup(examTypeCode, request);
+    }
+
+    @PutMapping("/paper-groups/{groupId}")
+    public PaperService.PaperGroupView updateGroup(@PathVariable long groupId,
+                                                    @Valid @RequestBody PaperService.SaveGroupRequest request) {
+        return paperService.updateGroup(groupId, request);
+    }
+
+    @DeleteMapping("/paper-groups/{groupId}")
+    public void deleteGroup(@PathVariable long groupId) {
+        paperService.deleteGroup(groupId);
+    }
+
+    @PutMapping("/exam-types/{examTypeCode}/paper-groups/order")
+    public List<PaperService.PaperGroupView> reorderGroups(@PathVariable String examTypeCode,
+            @Valid @RequestBody PaperService.ReorderGroupsRequest request) {
+        return paperService.reorderGroups(examTypeCode, request);
+    }
+
+    @PutMapping("/workspaces/{workspaceCode}/paper-groups/order")
+    public void reorderWorkspaceGroups(@PathVariable String workspaceCode,
+            @Valid @RequestBody PaperService.ReorderWorkspaceGroupsRequest request) {
+        paperService.reorderWorkspaceGroups(workspaceCode, request);
+    }
+
+    @GetMapping("/exam-types/{examTypeCode}/papers")
+    public List<PaperService.PaperSummary> listPapers(@PathVariable String examTypeCode) {
+        return paperService.list(examTypeCode);
+    }
+
+    @PostMapping("/exam-types/{examTypeCode}/papers")
+    public PaperService.PaperDetail createPaper(@PathVariable String examTypeCode,
+                                                 @Valid @RequestBody PaperService.CreatePaperRequest request,
+                                                 Authentication authentication) {
+        return paperService.create(examTypeCode, request, authentication.getName());
+    }
+
+    @GetMapping("/papers/{paperId}")
+    public PaperService.PaperDetail getPaper(@PathVariable long paperId) {
+        return paperService.get(paperId);
+    }
+
+    @GetMapping("/papers/{paperId}/delete-impact")
+    public PaperService.PaperDeleteImpact getDeleteImpact(@PathVariable long paperId) {
+        return paperService.deleteImpact(paperId);
+    }
+
+    @DeleteMapping("/papers/{paperId}")
+    public void deletePaper(@PathVariable long paperId) {
+        paperService.delete(paperId);
+    }
+
+    @PatchMapping("/papers/{paperId}")
+    public PaperService.PaperDetail updatePaper(@PathVariable long paperId,
+                                                 @Valid @RequestBody PaperService.UpdatePaperRequest request) {
+        return paperService.update(paperId, request);
+    }
+
+    @PatchMapping("/papers/{paperId}/group")
+    public PaperService.PaperSummary movePaper(@PathVariable long paperId, @RequestBody MovePaperRequest request) {
+        return paperService.moveToGroup(paperId, request.paperGroupId());
+    }
+
+    @PatchMapping("/papers/{paperId}/archive")
+    public PaperService.PaperSummary setPaperArchived(@PathVariable long paperId,
+                                                       @RequestBody ArchivePaperRequest request) {
+        return paperService.setArchived(paperId, request.archived());
+    }
+
+    @PostMapping("/papers/{paperId}/questions/import-from-exam")
+    public List<PaperService.QuestionView> importQuestions(@PathVariable long paperId,
+            @Valid @RequestBody PaperService.ImportQuestionsRequest request) {
+        return paperService.importQuestions(paperId, request);
+    }
+
+    @PatchMapping("/papers/{paperId}/scoring-profile")
+    public PaperService.PaperDetail updateScoringProfile(@PathVariable long paperId,
+                                                          @RequestBody ScoringProfileRequest request) {
+        return paperService.updateScoringProfile(paperId, request.scoringProfileCode());
+    }
+
+    @PutMapping("/papers/{paperId}/structure")
+    public PaperService.PaperDetail savePaperStructure(@PathVariable long paperId,
+                                                        @Valid @RequestBody PaperService.SaveStructureRequest request) {
+        return paperService.saveStructure(paperId, request);
+    }
+
+    @PostMapping("/papers/{paperId}/versions")
+    public PaperService.PaperDetail createVersion(@PathVariable long paperId, Authentication authentication) {
+        return paperService.createVersion(paperId, authentication.getName());
+    }
+
+    @PostMapping("/papers/{paperId}/seal")
+    public PaperService.PaperDetail sealPaper(@PathVariable long paperId) {
+        return paperService.seal(paperId);
+    }
+
+    public record ScoringProfileRequest(String scoringProfileCode) { }
+    public record MovePaperRequest(Long paperGroupId) { }
+    public record ArchivePaperRequest(boolean archived) { }
+}

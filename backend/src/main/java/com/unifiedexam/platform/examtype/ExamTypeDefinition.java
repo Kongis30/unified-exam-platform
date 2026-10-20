@@ -5,6 +5,8 @@ public record ExamTypeDefinition(
         String code,
         String displayName,
         String summary,
-        int sortOrder
+        int sortOrder,
+        String workspaceCode,
+        String workspaceName
 ) {
 }

@@ -1,0 +1,3 @@
+source_user_id,target_user_id
+# Replace values with manually verified IDs before migration; do not merge accounts by name alone.
+# 1,1

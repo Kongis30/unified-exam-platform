@@ -1,6 +1,22 @@
 spring:
   application:
     name: unified-exam-platform-api
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/unified_exam_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    hikari:
+      connection-init-sql: "SET time_zone = '+00:00'"
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  sql:
+    init:
+      mode: never
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
 
 server:
   port: ${PORT:8080}
@@ -8,3 +24,7 @@ server:
 logging:
   level:
     com.unifiedexam.platform: INFO
+
+platform:
+  session:
+    cookie-secure: ${SESSION_COOKIE_SECURE:false}

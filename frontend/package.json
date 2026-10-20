@@ -9,8 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "dompurify": "^3.4.17",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.14.7",
+    "html2pdf.js": "^0.14.0",
+    "markdown-it": "^14.3.2",
+    "mathlive": "^0.110.0",
+    "pinia": "^4.1.0",
     "vue": "^3.5.21",
-    "vue-router": "^4.5.1"
+    "vue-router": "^4.5.1",
+    "vuedraggable": "^4.1.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",

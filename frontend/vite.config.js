@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@shsat': fileURLToPath(new URL('./src/examTypes/shsat', import.meta.url)),
     },
   },
   server: {

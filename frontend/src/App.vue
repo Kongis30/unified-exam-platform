@@ -1,57 +1,78 @@
 <script setup>
-import { RouterLink, RouterView } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+
+import { authState } from './auth'
+import { getExamTypes, logout } from './api/platform'
+import AccountMenu from './components/AccountMenu.vue'
+import { groupExamTypesIntoWorkspaces } from './examTypes/workspaces'
+
+const router = useRouter()
+const route = useRoute()
+const examTypes = ref([])
+const workspaces = computed(() => groupExamTypesIntoWorkspaces(examTypes.value))
+const isExamRoute = computed(() => ['student-exam', 'shsat-student-exam', 'sat-student-exam'].includes(route.name))
+
+function workspaceRoute(code) {
+  if (['ADMIN', 'TEACHER'].includes(authState.user?.roleCode)) {
+    return { name: code === 'SHSAT' ? 'shsat-admin' : 'sat-admin' }
+  }
+  return { name: 'student-workspace', params: { code } }
+}
+
+// 主导航按注册表声明的工作区归并项目，新增系统后无需再改写导航。
+onMounted(async () => {
+  try {
+    examTypes.value = await getExamTypes()
+  } catch {
+    examTypes.value = []
+  }
+})
+
+async function signOut() {
+  try {
+    await logout()
+  } finally {
+    authState.user = null
+    authState.loaded = true
+    router.push({ name: 'login' })
+  }
+}
 </script>
 
 <template>
-  <div class="platform-shell">
-    <aside class="sidebar">
-      <RouterLink class="brand" to="/" aria-label="统一考试平台首页">
-        <span class="brand-mark">E</span>
-        <span class="brand-copy">
-          <strong>EXAM PLATFORM</strong>
-          <small>统一考试平台</small>
+  <RouterView v-if="$route.name === 'login'" />
+  <RouterView v-else-if="$route.name?.startsWith('admin-') || ['shsat-admin', 'sat-admin', 'sat-paper-edit'].includes($route.name)" />
+  <div v-else class="main-layout">
+    <header v-if="!isExamRoute" class="main-layout__header">
+      <RouterLink class="main-layout__brand" to="/" aria-label="Unified Exam Platform home">
+        <span class="main-layout__mark"><img src="/logo.png" alt="" /></span>
+        <span>
+          <strong>Unified Exam</strong>
+          <small>Assessment Platform</small>
         </span>
       </RouterLink>
 
-      <div class="sidebar-label">工作空间</div>
-      <RouterLink class="nav-item" active-class="nav-item-active" to="/">
-        <span class="nav-index">01</span>
-        <span>总览</span>
-      </RouterLink>
-      <div class="nav-item nav-item-muted" aria-disabled="true">
-        <span class="nav-index">02</span>
-        <span>账号管理</span>
-        <small>阶段 2</small>
-      </div>
-      <div class="nav-item nav-item-muted" aria-disabled="true">
-        <span class="nav-index">03</span>
-        <span>班级管理</span>
-        <small>阶段 2</small>
-      </div>
+      <nav class="main-layout__nav" aria-label="Main navigation">
+        <RouterLink :to="authState.user?.roleCode === 'STUDENT' ? { name: 'student-systems' } : { name: 'home' }">
+          {{ authState.user?.roleCode === 'STUDENT' ? 'Systems' : 'Overview' }}
+        </RouterLink>
+        <RouterLink v-if="authState.user?.roleCode === 'ADMIN'" to="/users">Accounts</RouterLink>
+        <RouterLink
+          v-for="workspace in workspaces"
+          :key="workspace.code"
+          :to="workspaceRoute(workspace.code)"
+        >
+          {{ workspace.displayName }}
+        </RouterLink>
+      </nav>
 
-      <div class="sidebar-divider"></div>
-      <div class="sidebar-label">考试类型</div>
-      <div class="type-shortcuts">
-        <RouterLink class="type-shortcut" to="/exam-types/SAT"><i class="type-dot dot-sat"></i>SAT</RouterLink>
-        <RouterLink class="type-shortcut" to="/exam-types/PSAT"><i class="type-dot dot-psat"></i>PSAT</RouterLink>
-        <RouterLink class="type-shortcut" to="/exam-types/SHSAT"><i class="type-dot dot-shsat"></i>SHSAT</RouterLink>
+      <div class="main-layout__user">
+        <AccountMenu @sign-out="signOut" />
       </div>
+    </header>
 
-      <div class="sidebar-footer">
-        <span class="footer-pulse"></span>
-        <span>平台骨架阶段</span>
-        <span class="footer-build">0.1</span>
-      </div>
-    </aside>
-
-    <main class="main-area">
-      <header class="topbar">
-        <div class="breadcrumb"><span>平台</span><b>/</b><strong>工作空间</strong></div>
-        <div class="topbar-right">
-          <span class="environment-tag"><i></i>本地开发</span>
-          <span class="avatar">EP</span>
-        </div>
-      </header>
+    <main class="main-layout__content">
       <RouterView />
     </main>
   </div>

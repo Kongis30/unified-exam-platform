@@ -6,6 +6,10 @@ frontend/.vite/
 # Java / Maven
 backend/target/
 *.class
+__pycache__/
+*.py[cod]
+backend/uploads/
+scripts/mappings/shsat_account_map.csv
 
 # Local configuration and logs
 .env
