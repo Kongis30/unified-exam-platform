@@ -92,6 +92,20 @@ async function main() {
     }
     return state;
   };
+  const finishRemainingModules = async (attemptId, state) => {
+    while (state.status !== 'finished') {
+      if (state.awaitingBreak) {
+        state = await api(student, `/api/student/sat-attempts/${attemptId}/resume-break`, 'POST');
+      }
+      assert.ok(state.currentModuleId, 'the next SAT module is available until the attempt is finished');
+      state = await api(student, `/api/student/sat-attempts/${attemptId}/modules/${state.currentModuleId}/submit`,
+        'POST', { answers: [], abnormalCount: 0 });
+    }
+    return state;
+  };
+  const paperQuestions = sections => sections.flatMap(section => [
+    ...(section.questions || []), ...paperQuestions(section.children || []),
+  ]);
 
   try {
     await login(admin, adminUsername, adminPassword);
@@ -252,12 +266,79 @@ async function main() {
     await student.waitForURL(`**/student/sat/exams/${psatExam.id}`);
     await student.locator('.answer-options').waitFor({ timeout: 15_000 });
     const psatStart = await api(student, `/api/student/exams/${psatExam.id}/sat-attempt`, 'POST');
-    const psatAttempt = await finishAllModules(psatStart.attemptId);
+    let psatState = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}`);
+    const readingModules = psatState.modules.filter(module => module.subject === 'RW');
+    assert.equal(readingModules.length, 2, 'PSAT has two Reading and Writing modules');
+    for (const module of readingModules) {
+      assert.equal(psatState.currentModuleId, module.id, 'Reading and Writing modules follow the defined exam order');
+      psatState = await api(student,
+        `/api/student/sat-attempts/${psatStart.attemptId}/modules/${module.id}/submit`, 'POST',
+        { answers: [], abnormalCount: 0 });
+    }
+    assert.equal(psatState.awaitingBreak, true, 'PSAT provides the break between Reading and Writing and Math');
+    psatState = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}/resume-break`, 'POST');
+    const gridIn = psatState.questions.find(question => question.type === 'fill_blank');
+    assert.ok(gridIn, 'the PSAT Math module contains a fill-in response question');
+    const psatPaperDetail = await api(admin, `/api/admin/papers/${psatState.paperId}`);
+    const gridInSource = paperQuestions(psatPaperDetail.sections).find(question =>
+      question.paperItemId === gridIn.id && question.questionTypeCode === 'SAT_FILL_IN_BLANK');
+    let acceptedAnswer = gridInSource?.answerKey?.correctAnswer;
+    assert.ok(acceptedAnswer !== undefined && acceptedAnswer !== null,
+      'the selected PSAT fill-in question has a configured answer key');
+    if (typeof acceptedAnswer === 'string' && acceptedAnswer.startsWith('[')) {
+      try {
+        const parsedAnswer = JSON.parse(acceptedAnswer);
+        if (Array.isArray(parsedAnswer)) acceptedAnswer = parsedAnswer[0];
+      } catch {
+        // A malformed legacy value is still submitted literally for the grading check.
+      }
+    }
+    const responseValue = Array.isArray(acceptedAnswer) ? String(acceptedAnswer[0]) : String(acceptedAnswer);
+    assert.ok(responseValue.trim(), 'the PSAT fill-in question has a scorable accepted answer');
+
+    await student.reload();
+    await student.locator('.answer-options').waitFor({ timeout: 15_000 });
+    const psatQuestionSelector = student.locator('.question-selector-btn');
+    await psatQuestionSelector.click();
+    await student.locator('.question-status-panel .question-status-btn').nth(
+      psatState.questions.findIndex(question => question.id === gridIn.id)).click();
+    const gridInNumber = psatState.questions.findIndex(question => question.id === gridIn.id) + 1;
+    assert.match(await psatQuestionSelector.textContent(), new RegExp(`Question ${gridInNumber} of`),
+      'the question selector navigates to the chosen PSAT fill-in question');
+    const fillInput = student.locator('.fill-blank-input input');
+    await fillInput.waitFor({ state: 'visible', timeout: 10_000 });
+    const fillSaveResponse = student.waitForResponse(response =>
+      response.url().includes(`/sat-attempts/${psatStart.attemptId}/modules/`) &&
+      response.url().endsWith('/save') && response.request().method() === 'PUT' &&
+      response.request().postDataJSON()?.answers?.some(answer =>
+        Number(answer.questionId) === Number(gridIn.id) && answer.answer === responseValue));
+    await fillInput.fill(responseValue);
+    assert.equal(await fillInput.inputValue(), responseValue, 'PSAT fill-in input accepts a typed answer');
+    const savedResponse = await fillSaveResponse;
+    assert.equal(savedResponse.status(), 200, 'PSAT fill-in edit triggers a successful autosave');
+    const savedPayload = savedResponse.request().postDataJSON();
+    const submittedGridIn = savedPayload.answers.find(answer => Number(answer.questionId) === Number(gridIn.id));
+    assert.equal(submittedGridIn?.answer, responseValue, 'PSAT autosave includes the typed fill-in response');
+    let savedGridIn;
+    for (let retry = 0; retry < 20; retry++) {
+      psatState = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}`);
+      savedGridIn = psatState.savedAnswers.find(answer => Number(answer.questionId) === Number(gridIn.id));
+      if (savedGridIn?.answer === responseValue) break;
+      await student.waitForTimeout(250);
+    }
+    assert.equal(savedGridIn?.answer, responseValue, 'PSAT fill-in answers autosave to the server');
+    await student.reload();
+    await student.locator('.answer-options').waitFor({ timeout: 15_000 });
+    await fillInput.waitFor({ state: 'visible' });
+    assert.equal(await fillInput.inputValue(), responseValue,
+      'PSAT fill-in answer is restored after reload');
+
+    const psatAttempt = await finishRemainingModules(psatStart.attemptId, psatState);
     assert.equal(psatAttempt.status, 'finished');
     const psatReport = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}/report`);
     assert.equal(psatReport.scoringType, 'PSAT', 'PSAT submissions use the PSAT scoring identity');
-    assert.equal(psatReport.summary.totalRaw, 0);
-    assert.equal(psatReport.summary.totalScaled, 320, 'zero raw answers use the PSAT scale floor');
+    assert.ok(psatReport.summary.totalRaw > 0, 'a correct PSAT fill-in answer contributes to the raw score');
+    assert.ok(psatReport.summary.totalScaled > 320, 'the PSAT scale reflects the correct fill-in answer');
 
     const trend = await api(admin,
       `/api/admin/classes/${classId}/score-trend?examTypeCodes=SAT&examTypeCodes=PSAT`);
@@ -267,7 +348,9 @@ async function main() {
     const psatTrend = testTrend.find(row => row.examId === psatExam.id);
     assert.equal(satTrend.studentCount, 1, 'repeated attempts are reduced to one student score per exam');
     assert.equal(satTrend.averageRawScore, 0);
-    assert.equal(psatTrend.averageScaledScore, 320);
+    assert.equal(psatTrend.averageRawScore, psatReport.summary.totalRaw,
+      'class score trend includes the raw points earned on the PSAT fill-in question');
+    assert.equal(typeof psatTrend.averageScaledScore, 'number', 'the PSAT trend includes a scaled score');
     await admin.setViewportSize({ width: 1440, height: 1000 });
     await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}`);
     await admin.getByRole('heading', { name: 'Class Exam Score Trend' }).waitFor();
@@ -358,7 +441,7 @@ async function main() {
       attemptId, secondAttemptId: secondStart.attemptId, deadlineAttemptId, modules: state.modules.length,
       checks: ['question navigation', 'offline answer sync after reconnect', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
         'multiple attempts in score history, report return state, mobile table layout',
-        'PSAT release type, student launch, and PSAT report scoring identity',
+        'PSAT release type, student launch, fill-in autosave/reload, answer grading, and PSAT report scoring identity',
         'empty student score and class trend states on mobile',
         'per-type student statistics, score filter, and fallback when a type has no attempts',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',

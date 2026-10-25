@@ -72,28 +72,17 @@
         </div>
       </template>
 
-      <!-- 填空题：提供输入框 -->
-      <template v-else-if="isFillBlank">
-        <div class="fill-blank-input">
-          <el-input
-            v-model="freeAnswer"
-            placeholder="Type your answer here"
-            clearable
-            :disabled="readOnly"
-            @input="onFreeAnswerChange"
-          />
-        </div>
-      </template>
-
-      <!-- 无选项的选择题或其它题型：给出提示与输入框作为兜底 -->
+      <!-- 填空题或无选项题型使用原生输入框，避免依赖未注册的 UI 组件。 -->
       <template v-else>
         <div class="fill-blank-input">
-          <el-input
+          <input
+            type="text"
+            class="fill-blank-control"
             v-model="freeAnswer"
             placeholder="Type your answer here"
-            clearable
             :disabled="readOnly"
-            @input="onFreeAnswerChange"
+            autocomplete="off"
+            @input="onFreeAnswerChange($event.target.value)"
           />
         </div>
       </template>
@@ -274,8 +263,6 @@ export default {
     )
     const questionHtml = computed(() => props.savedQuestionHtml || formatQuestion(props.question.question))
 
-    // 题型识别：填空题
-    const isFillBlank = computed(() => String(props.question?.type || '').toLowerCase() === 'fill_blank')
     const correctAnswerText = computed(() => String(props.correctAnswer || ''))
 
     // 规范化选项：将字符串/对象/数组统一为 [{ id: 'A', text: '...' }, ...]
@@ -334,7 +321,6 @@ export default {
       questionHtml,
       correctAnswerText,
       normalizedOptions,
-      isFillBlank,
       freeAnswer,
       onFreeAnswerChange
     }
@@ -461,6 +447,25 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.fill-blank-control {
+  width: min(100%, 360px);
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+  font-size: calc(16px * var(--exam-font-scale, 1));
+}
+.fill-blank-control:focus {
+  border-color: #3976f6;
+  outline: 3px solid rgb(57 118 246 / 16%);
+}
+.fill-blank-control:disabled {
+  background: #f7f9fc;
+  color: #64748b;
 }
 .fill-label {
   font-size: calc(15px * var(--exam-font-scale, 1));
