@@ -193,6 +193,9 @@ async function main() {
     const attemptList = await api(student, '/api/student/exams');
     const attemptId = attemptList.find(row => row.id === formalExam.id).activeAttemptId;
     assert.ok(attemptId, 'starting the exam creates an attempt');
+    const repeatedStart = await api(student, `/api/student/exams/${formalExam.id}/sat-attempt`, 'POST');
+    assert.equal(repeatedStart.attemptId, attemptId,
+      'repeating start while an attempt is in progress resumes the same attempt');
 
     const questionSelector = student.locator('.question-selector-btn');
     if (await student.locator('.question-status-panel .question-status-btn').count() < 2) {
