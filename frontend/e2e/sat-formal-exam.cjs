@@ -106,6 +106,21 @@ async function main() {
     classCreated = true;
     await api(admin, `/api/admin/classes/${classId}/students/batch`, 'POST', { studentUserIds: [studentId] });
     classMembershipAdded = true;
+    await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}/students/${studentId}/scores`);
+    await admin.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
+    await admin.getByText('No completed score data is available yet.').waitFor();
+    await admin.getByText('No SAT or PSAT attempts have been recorded for this student.').waitFor();
+    await admin.setViewportSize({ width: 390, height: 844 });
+    let emptyScorePage = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(emptyScorePage.page <= emptyScorePage.viewport, 'empty student score page has no overflow at 390px');
+    await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}`);
+    await admin.getByRole('heading', { name: 'Class Exam Score Trend' }).waitFor();
+    await admin.getByText('No completed exam scores to chart yet.').waitFor();
+    await admin.getByText('No exam records for this class yet.').waitFor();
+    assert.equal(await admin.locator('.class-score-chart').count(), 0, 'empty class trend uses a message instead of an empty chart');
+    const emptyClassPage = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(emptyClassPage.page <= emptyClassPage.viewport, 'empty class detail has no overflow at 390px');
+    await admin.setViewportSize({ width: 1440, height: 1000 });
     const papers = await api(admin, '/api/admin/exam-types/SAT/papers');
     const paper = papers.find(row => row.status === 'READY' && row.questionCount > 0);
     assert.ok(paper, 'a ready SAT paper with questions is available');
@@ -344,6 +359,7 @@ async function main() {
       checks: ['question navigation', 'offline answer sync after reconnect', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
         'multiple attempts in score history, report return state, mobile table layout',
         'PSAT release type, student launch, and PSAT report scoring identity',
+        'empty student score and class trend states on mobile',
         'per-type student statistics, score filter, and fallback when a type has no attempts',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',
         'admin deletes a PSAT attempt from student score history',
