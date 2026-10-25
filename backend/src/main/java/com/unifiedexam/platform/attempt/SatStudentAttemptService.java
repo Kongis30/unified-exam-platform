@@ -37,11 +37,22 @@ public class SatStudentAttemptService {
     /** 开始或续考：先由通用服务校验考试窗口、报名资格与次数，再初始化 SAT 模块状态。 */
     @Transactional(noRollbackFor = StudentAttemptService.ExpiredAttemptStartConflictException.class)
     public SatAttemptView start(long examId, String username) {
+        // 与通用开考流程保持先锁考试、后锁尝试的顺序，避免并发续考时反向持锁。
         String examType = jdbc.query("""
-            SELECT p.exam_type_code FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ?
+            SELECT p.exam_type_code FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ? FOR UPDATE
             """, rs -> rs.next() ? rs.getString(1) : null, examId);
         if (!"SAT".equals(examType) && !"PSAT".equals(examType)) throw notFound("Exam not found.");
-        StudentAttemptService.AttemptView attempt = attempts.start(examId, null, username);
+        boolean finalizedExpiredAttempt = finalizeExpiredAttempts(examId, username);
+        StudentAttemptService.AttemptView attempt;
+        try {
+            attempt = attempts.start(examId, null, username);
+        } catch (ResponseStatusException exception) {
+            if (!finalizedExpiredAttempt || exception.getStatusCode() != HttpStatus.CONFLICT
+                || !isExpectedStartConflict(exception.getReason())) {
+                throw exception;
+            }
+            throw new StudentAttemptService.ExpiredAttemptStartConflictException(exception.getReason());
+        }
         ensureState(attempt.id(), attempt.paperId());
         return snapshot(attempt.id(), username);
     }
@@ -158,6 +169,66 @@ public class SatStudentAttemptService {
         if (!Boolean.TRUE.equals(student)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Student account required.");
     }
 
+    /** 找回已过截止时间的 SAT/PSAT 尝试并按已保存答案交卷，避免通用开考逻辑先将其封存为不可评分的 EXPIRED。 */
+    private boolean finalizeExpiredAttempts(long examId, String username) {
+        List<DeadlineAttempt> expired = jdbc.query("""
+            SELECT a.id, e.paper_id, a.status
+            FROM attempts a
+            JOIN exams e ON e.id = a.exam_id
+            JOIN papers p ON p.id = e.paper_id
+            JOIN users u ON u.id = a.student_user_id
+            WHERE a.exam_id = ? AND u.username = ? AND p.exam_type_code IN ('SAT', 'PSAT')
+              AND a.is_practice = FALSE AND a.status IN ('IN_PROGRESS', 'EXPIRED')
+              AND a.expires_at <= CURRENT_TIMESTAMP(6)
+            FOR UPDATE
+            """, (rs, rowNum) -> new DeadlineAttempt(rs.getLong("id"), rs.getLong("paper_id"), rs.getString("status")),
+            examId, username);
+        expired.forEach(attempt -> forceSubmitAtDeadline(attempt.id(), username, attempt.paperId(), attempt.status()));
+        return !expired.isEmpty();
+    }
+
+    static boolean isExpectedStartConflict(String reason) {
+        return "This exam is not open for starting.".equals(reason)
+            || "You have used all available attempts for this exam.".equals(reason);
+    }
+
+    /** 截止后用服务端已保存答案补齐未完成模块并统一评分；迟到的请求体不会覆盖答案快照。 */
+    private void forceSubmitAtDeadline(long attemptId, String username, long paperId) {
+        forceSubmitAtDeadline(attemptId, username, paperId, "IN_PROGRESS");
+    }
+
+    private void forceSubmitAtDeadline(long attemptId, String username, long paperId, String status) {
+        List<Long> moduleIds = modules(paperId).stream().map(ModuleRow::id).toList();
+        completeAtDeadline(attemptId, username, moduleIds, status);
+    }
+
+    /** 按试卷模块顺序锁定整场考试后调用统一评分入口，确保超时交卷沿用正式成绩与报告逻辑。 */
+    void completeAtDeadline(long attemptId, String username, List<Long> moduleIds, String status) {
+        ArrayNode completed = mapper.createArrayNode();
+        moduleIds.forEach(completed::add);
+        jdbc.update("""
+            UPDATE sat_attempt_state SET active_module_section_id = NULL, module_started_at = NULL,
+                completed_modules_json = CAST(? AS JSON), awaiting_break = FALSE
+            WHERE attempt_id = ?
+            """, json(completed), attemptId);
+        if ("EXPIRED".equals(status)) {
+            jdbc.update("UPDATE attempts SET status = 'IN_PROGRESS' WHERE id = ? AND status = 'EXPIRED'", attemptId);
+        }
+        attempts.submit(attemptId, username);
+    }
+
+    private boolean isDeadlineReached(long attemptId) {
+        Boolean reached = jdbc.queryForObject("""
+            SELECT expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP(6)
+            FROM attempts WHERE id = ?
+            """, Boolean.class, attemptId);
+        return Boolean.TRUE.equals(reached);
+    }
+
+    private boolean isUnfinished(String status) {
+        return "IN_PROGRESS".equals(status) || "EXPIRED".equals(status);
+    }
+
     private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
         int value = rs.getInt(column);
         return rs.wasNull() ? null : value;
@@ -167,10 +238,15 @@ public class SatStudentAttemptService {
         return timestamp == null ? null : timestamp.toInstant();
     }
 
+    @Transactional
     public SatAttemptView get(long attemptId, String username) {
         StudentAttemptService.AttemptView attempt = attempts.get(attemptId, username);
         requireSat(attempt.examTypeCode());
         ensureState(attemptId, attempt.paperId());
+        SatState state = lockState(attemptId, username);
+        if (isDeadlineReached(attemptId) && isUnfinished(state.status())) {
+            forceSubmitAtDeadline(attemptId, username, state.paperId(), state.status());
+        }
         return snapshot(attemptId, username);
     }
 
@@ -393,6 +469,10 @@ public class SatStudentAttemptService {
         requireInProgress(state);
         requireActiveModule(state, moduleId);
         if (state.awaitingBreak()) throw conflict("Resume the break before continuing.");
+        if (isDeadlineReached(attemptId)) {
+            forceSubmitAtDeadline(attemptId, username, state.paperId());
+            return snapshot(attemptId, username);
+        }
         if (remainingSeconds(state) <= 0) throw conflict("This module has ended.");
         persistAnswers(attemptId, moduleId, submission.answers());
         if (submission.abnormalCount() != null) {
@@ -406,9 +486,17 @@ public class SatStudentAttemptService {
     @Transactional
     public SatAttemptView submitModule(long attemptId, long moduleId, ModuleSubmission submission, String username) {
         SatState state = lockState(attemptId, username);
+        if (contains(readArray(state.completedModulesJson()), moduleId)
+                && ("IN_PROGRESS".equals(state.status()) || "SUBMITTED".equals(state.status()))) {
+            return snapshot(attemptId, username);
+        }
         requireInProgress(state);
         requireActiveModule(state, moduleId);
         if (state.awaitingBreak()) throw conflict("Resume the break before continuing.");
+        if (isDeadlineReached(attemptId)) {
+            forceSubmitAtDeadline(attemptId, username, state.paperId());
+            return snapshot(attemptId, username);
+        }
         // 到时后的客户端交卷只结束模块，不能用未保存的迟交答案覆盖服务端快照。
         if (remainingSeconds(state) > 0) persistAnswers(attemptId, moduleId, submission.answers());
         List<ModuleRow> modules = modules(state.paperId());
@@ -438,7 +526,15 @@ public class SatStudentAttemptService {
     @Transactional
     public SatAttemptView resumeBreak(long attemptId, String username) {
         SatState state = lockState(attemptId, username);
-        if (!state.awaitingBreak()) throw conflict("There is no active break.");
+        if (!state.awaitingBreak()) {
+            if ("IN_PROGRESS".equals(state.status()) && state.activeModuleId() != null) return snapshot(attemptId, username);
+            if ("SUBMITTED".equals(state.status())) return snapshot(attemptId, username);
+            throw conflict("There is no active break.");
+        }
+        if (isDeadlineReached(attemptId)) {
+            forceSubmitAtDeadline(attemptId, username, state.paperId(), state.status());
+            return snapshot(attemptId, username);
+        }
         List<ModuleRow> modules = modules(state.paperId());
         int index = moduleIndex(modules, state.activeModuleId());
         if (index < 0 || index + 1 >= modules.size()) throw conflict("The next module is unavailable.");
@@ -452,6 +548,11 @@ public class SatStudentAttemptService {
     @Transactional
     public SatAttemptView updatePresence(long attemptId, int questionNumber, String username) {
         SatState state = lockState(attemptId, username);
+        if (isDeadlineReached(attemptId) && isUnfinished(state.status())) {
+            forceSubmitAtDeadline(attemptId, username, state.paperId(), state.status());
+            return snapshot(attemptId, username);
+        }
+        if ("SUBMITTED".equals(state.status())) return snapshot(attemptId, username);
         requireInProgress(state);
         if (state.awaitingBreak() || state.activeModuleId() == null) {
             throw conflict("There is no active module to report.");
@@ -479,7 +580,11 @@ public class SatStudentAttemptService {
 
     @Transactional
     public SatAttemptView finish(long attemptId, String username) {
-        lockState(attemptId, username);
+        SatState state = lockState(attemptId, username);
+        if (isDeadlineReached(attemptId) && isUnfinished(state.status())) {
+            forceSubmitAtDeadline(attemptId, username, state.paperId(), state.status());
+            return snapshot(attemptId, username);
+        }
         attempts.submit(attemptId, username);
         return snapshot(attemptId, username);
     }
@@ -657,13 +762,13 @@ public class SatStudentAttemptService {
 
     private SatState state(long attemptId) {
         return jdbc.query("""
-            SELECT e.id AS exam_id, e.paper_id, state.active_module_section_id,
+            SELECT state.attempt_id, e.id AS exam_id, e.paper_id, state.active_module_section_id,
                    state.module_started_at, state.completed_modules_json, state.awaiting_break,
                    state.focus_violation_count, e.duration_seconds, p.exam_type_code, a.status
             FROM sat_attempt_state state JOIN attempts a ON a.id = state.attempt_id
             JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             WHERE state.attempt_id = ?
-            """, rs -> rs.next() ? new SatState(rs.getLong("exam_id"), rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
+            """, rs -> rs.next() ? new SatState(rs.getLong("attempt_id"), rs.getLong("exam_id"), rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
                 rs.getTimestamp("module_started_at"),
                 rs.getString("completed_modules_json"), rs.getBoolean("awaiting_break"), rs.getInt("focus_violation_count"),
                 rs.getObject("duration_seconds") == null ? null : rs.getInt("duration_seconds"), rs.getString("exam_type_code"),
@@ -674,7 +779,7 @@ public class SatStudentAttemptService {
         StudentAttemptService.AttemptView owned = attempts.get(attemptId, username);
         requireSat(owned.examTypeCode());
         SatState state = jdbc.query("""
-            SELECT e.id AS exam_id, e.paper_id, state.active_module_section_id,
+            SELECT state.attempt_id, e.id AS exam_id, e.paper_id, state.active_module_section_id,
                    state.module_started_at, state.completed_modules_json, state.awaiting_break,
                    state.focus_violation_count, e.duration_seconds, p.exam_type_code, a.status
             FROM sat_attempt_state state JOIN attempts a ON a.id = state.attempt_id
@@ -682,7 +787,7 @@ public class SatStudentAttemptService {
             WHERE state.attempt_id = ? AND a.student_user_id = (
                 SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT' AND status = 'ACTIVE'
             ) FOR UPDATE
-            """, rs -> rs.next() ? new SatState(rs.getLong("exam_id"), rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
+            """, rs -> rs.next() ? new SatState(rs.getLong("attempt_id"), rs.getLong("exam_id"), rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
                 rs.getTimestamp("module_started_at"),
                 rs.getString("completed_modules_json"), rs.getBoolean("awaiting_break"), rs.getInt("focus_violation_count"),
                 rs.getObject("duration_seconds") == null ? null : rs.getInt("duration_seconds"), rs.getString("exam_type_code"),
@@ -714,7 +819,12 @@ public class SatStudentAttemptService {
         if (active == null) return 0;
         Integer elapsed = jdbc.queryForObject("SELECT GREATEST(0, TIMESTAMPDIFF(SECOND, ?, CURRENT_TIMESTAMP(6)))", Integer.class,
             state.moduleStartedAt());
-        return Math.max(0, active.durationSeconds() - (elapsed == null ? 0 : elapsed));
+        int moduleRemaining = Math.max(0, active.durationSeconds() - (elapsed == null ? 0 : elapsed));
+        Integer deadlineRemaining = jdbc.queryForObject("""
+            SELECT GREATEST(0, TIMESTAMPDIFF(SECOND, CURRENT_TIMESTAMP(6), expires_at))
+            FROM attempts WHERE id = ?
+            """, Integer.class, state.attemptId());
+        return deadlineRemaining == null ? moduleRemaining : Math.min(moduleRemaining, deadlineRemaining);
     }
 
     private void requireActiveModule(SatState state, long moduleId) {
@@ -760,7 +870,8 @@ public class SatStudentAttemptService {
                                       java.math.BigDecimal rawMaximum, long timeSpentSeconds) { }
 
     private record PracticePaper(long id, String examTypeCode, String title, String status) { }
-    private record SatState(long examId, long paperId, Long activeModuleId, Timestamp moduleStartedAt,
+    private record DeadlineAttempt(long id, long paperId, String status) { }
+    private record SatState(long attemptId, long examId, long paperId, Long activeModuleId, Timestamp moduleStartedAt,
             String completedModulesJson, boolean awaitingBreak, int focusViolationCount, Integer examDurationSeconds,
             String examTypeCode, String status) { }
     private record ModuleRow(long id, String code, String title, String subject, int moduleNumber,

@@ -58,6 +58,10 @@ export default {
 
     const resume = async () => {
       const next = await flow.resumeAfterBreak()
+      if (next.finished) {
+        router.replace({ path: '/student/sat/report', query: { examId: flow.examId, recordId: flow.recordId } })
+        return
+      }
       router.push(next.nextRoute)
     }
 

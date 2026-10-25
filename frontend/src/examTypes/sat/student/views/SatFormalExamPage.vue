@@ -776,10 +776,15 @@ export default {
         isMarked: !!(questionStatus.value[idx]?.reviewed)
       }))
       try {
-        await examApi.submitModule(flow.examId, flow.recordId, modId, { answers })
+        const submitted = await examApi.submitModule(flow.examId, flow.recordId, modId, { answers })
         passageHighlights.value = {}
         questionHighlights.value = {}
         clearPosition()
+        if (submitted.status === 'finished') {
+          exitExamFullscreen()
+          await router.push({ path: '/student/sat/report', query: { examId: flow.examId, recordId: flow.recordId } })
+          return
+        }
         const next = flow.advance()
         if (!next.finished) {
           await router.push({

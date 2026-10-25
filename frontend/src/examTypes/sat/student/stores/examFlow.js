@@ -113,9 +113,12 @@ export const useExamFlowStore = defineStore('satFormalExamFlow', () => {
   }
 
   async function resumeAfterBreak() {
-    applySnapshot(await examApi.resumeBreak(recordId.value))
+    const snapshot = await examApi.resumeBreak(recordId.value)
+    applySnapshot(snapshot)
     awaitingBreak.value = false
-    return { nextRoute: '/student/sat/module-wait' }
+    return resume.value?.status === 'ongoing'
+      ? { nextRoute: '/student/sat/module-wait' }
+      : { finished: true }
   }
 
   function advance() {

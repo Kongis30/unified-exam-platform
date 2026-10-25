@@ -17,6 +17,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SatStudentAttemptServiceTest {
@@ -100,5 +101,38 @@ class SatStudentAttemptServiceTest {
         assertTrue(sql.getValue().contains("state.module_started_at IS NOT NULL"));
         assertTrue(sql.getValue().contains("TIMESTAMPDIFF(SECOND, state.module_started_at, CURRENT_TIMESTAMP(6))"));
         assertTrue(sql.getValue().contains("e.answer_visibility = 'AFTER_CLOSE'"));
+    }
+
+    @Test
+    void deadlineSubmissionCompletesEveryModuleAndGradesSavedAnswers() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        StudentAttemptService attempts = mock(StudentAttemptService.class);
+        SatStudentAttemptService service = new SatStudentAttemptService(jdbc, mapper, attempts);
+
+        service.completeAtDeadline(9002, "student", java.util.List.of(101L, 102L, 103L, 104L), "IN_PROGRESS");
+
+        verify(jdbc).update(org.mockito.ArgumentMatchers.contains("completed_modules_json = CAST(? AS JSON)"),
+            eq("[101,102,103,104]"), eq(9002L));
+        verify(attempts).submit(9002, "student");
+        verify(jdbc, never()).update("UPDATE attempts SET status = 'IN_PROGRESS' WHERE id = ? AND status = 'EXPIRED'", 9002L);
+    }
+
+    @Test
+    void expiredDeadlineSubmissionRestoresAttemptOnlyLongEnoughToUseGrader() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        StudentAttemptService attempts = mock(StudentAttemptService.class);
+        SatStudentAttemptService service = new SatStudentAttemptService(jdbc, mapper, attempts);
+
+        service.completeAtDeadline(9003, "student", java.util.List.of(201L, 202L), "EXPIRED");
+
+        verify(jdbc).update("UPDATE attempts SET status = 'IN_PROGRESS' WHERE id = ? AND status = 'EXPIRED'", 9003L);
+        verify(attempts).submit(9003, "student");
+    }
+
+    @Test
+    void onlyExpectedStartConflictsPreservePreviouslyFinalizedAttempts() {
+        assertTrue(SatStudentAttemptService.isExpectedStartConflict("This exam is not open for starting."));
+        assertTrue(SatStudentAttemptService.isExpectedStartConflict("You have used all available attempts for this exam."));
+        assertFalse(SatStudentAttemptService.isExpectedStartConflict("This exam does not contain any questions."));
     }
 }
