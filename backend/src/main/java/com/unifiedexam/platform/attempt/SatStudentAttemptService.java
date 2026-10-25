@@ -43,16 +43,9 @@ public class SatStudentAttemptService {
             """, rs -> rs.next() ? rs.getString(1) : null, examId);
         if (!"SAT".equals(examType) && !"PSAT".equals(examType)) throw notFound("Exam not found.");
         boolean finalizedExpiredAttempt = finalizeExpiredAttempts(examId, username);
-        StudentAttemptService.AttemptView attempt;
-        try {
-            attempt = attempts.start(examId, null, username);
-        } catch (ResponseStatusException exception) {
-            if (!finalizedExpiredAttempt || exception.getStatusCode() != HttpStatus.CONFLICT
-                || !isExpectedStartConflict(exception.getReason())) {
-                throw exception;
-            }
-            throw new StudentAttemptService.ExpiredAttemptStartConflictException(exception.getReason());
-        }
+        StudentAttemptService.AttemptView attempt = finalizedExpiredAttempt
+            ? attempts.startAfterExpiredSubmission(examId, username)
+            : attempts.start(examId, null, username);
         ensureState(attempt.id(), attempt.paperId());
         return snapshot(attempt.id(), username);
     }
@@ -185,11 +178,6 @@ public class SatStudentAttemptService {
             examId, username);
         expired.forEach(attempt -> forceSubmitAtDeadline(attempt.id(), username, attempt.paperId(), attempt.status()));
         return !expired.isEmpty();
-    }
-
-    static boolean isExpectedStartConflict(String reason) {
-        return "This exam is not open for starting.".equals(reason)
-            || "You have used all available attempts for this exam.".equals(reason);
     }
 
     /** 截止后用服务端已保存答案补齐未完成模块并统一评分；迟到的请求体不会覆盖答案快照。 */

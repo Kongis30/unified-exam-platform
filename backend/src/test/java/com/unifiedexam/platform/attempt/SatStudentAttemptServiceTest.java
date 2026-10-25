@@ -17,7 +17,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SatStudentAttemptServiceTest {
@@ -129,10 +128,4 @@ class SatStudentAttemptServiceTest {
         verify(attempts).submit(9003, "student");
     }
 
-    @Test
-    void onlyExpectedStartConflictsPreservePreviouslyFinalizedAttempts() {
-        assertTrue(SatStudentAttemptService.isExpectedStartConflict("This exam is not open for starting."));
-        assertTrue(SatStudentAttemptService.isExpectedStartConflict("You have used all available attempts for this exam."));
-        assertFalse(SatStudentAttemptService.isExpectedStartConflict("This exam does not contain any questions."));
-    }
 }

@@ -21,8 +21,13 @@ class StudentAttemptServiceTest {
         Transactional transaction = StudentAttemptService.class
             .getMethod("start", long.class, String.class, String.class)
             .getAnnotation(Transactional.class);
+        Transactional finalizedAttemptTransaction = StudentAttemptService.class
+            .getMethod("startAfterExpiredSubmission", long.class, String.class)
+            .getAnnotation(Transactional.class);
 
         assertTrue(java.util.Arrays.asList(transaction.noRollbackFor())
+            .contains(StudentAttemptService.ExpiredAttemptStartConflictException.class));
+        assertTrue(java.util.Arrays.asList(finalizedAttemptTransaction.noRollbackFor())
             .contains(StudentAttemptService.ExpiredAttemptStartConflictException.class));
         assertEquals(409, new StudentAttemptService.ExpiredAttemptStartConflictException("Expired")
             .getStatusCode().value());

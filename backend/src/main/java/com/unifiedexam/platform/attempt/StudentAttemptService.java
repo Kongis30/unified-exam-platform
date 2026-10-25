@@ -41,16 +41,23 @@ public class StudentAttemptService {
     /** 锁定考试行，串行化同一场考试的并发开考请求并创建固定题目顺序。 */
     @Transactional(noRollbackFor = ExpiredAttemptStartConflictException.class)
     public AttemptView start(long examId, String firstSection, String username) {
-        return start(examId, firstSection, username, false);
+        return start(examId, firstSection, username, false, false);
+    }
+
+    /** 超时尝试已由 SAT 服务先评分交卷；保留其结果并继续执行相同的开考资格校验。 */
+    @Transactional(noRollbackFor = ExpiredAttemptStartConflictException.class)
+    public AttemptView startAfterExpiredSubmission(long examId, String username) {
+        return start(examId, null, username, false, true);
     }
 
     /** 为 SAT/PSAT 学生开放已封存试卷的自助练习；只接受平台内部创建的练习场次。 */
     @Transactional
     public AttemptView startPractice(long examId, String username) {
-        return start(examId, null, username, true);
+        return start(examId, null, username, true, false);
     }
 
-    private AttemptView start(long examId, String firstSection, String username, boolean requestedPractice) {
+    private AttemptView start(long examId, String firstSection, String username, boolean requestedPractice,
+                              boolean expiredAttemptWasSubmitted) {
         Account account = account(username);
         long studentId = account.id();
         boolean isStudent = "STUDENT".equals(account.roleCode());
@@ -115,13 +122,15 @@ public class StudentAttemptService {
 
         if (!practice) {
             if (!Boolean.TRUE.equals(open)) {
-                if (expiredAttempts > 0) throw new ExpiredAttemptStartConflictException("This exam is not open for starting.");
+                if (expiredAttempts > 0 || expiredAttemptWasSubmitted) {
+                    throw new ExpiredAttemptStartConflictException("This exam is not open for starting.");
+                }
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam is not open for starting.");
             }
 
             Integer attemptsUsed = countUsedFormalAttempts(examId, studentId);
             if (attemptsUsed != null && attemptsUsed >= exam.attemptLimit()) {
-                if (expiredAttempts > 0) {
+                if (expiredAttempts > 0 || expiredAttemptWasSubmitted) {
                     throw new ExpiredAttemptStartConflictException("You have used all available attempts for this exam.");
                 }
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "You have used all available attempts for this exam.");
