@@ -16,14 +16,20 @@ async function main() {
   });
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const studentContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const teacherContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const admin = await adminContext.newPage();
   const student = await studentContext.newPage();
+  const teacher = await teacherContext.newPage();
   const pageErrors = [];
+  const teacherPageErrors = [];
   student.on('pageerror', error => pageErrors.push(error.message));
+  teacher.on('pageerror', error => teacherPageErrors.push(error.message));
 
   const username = `sat_parity_${Date.now()}`;
+  const teacherUsername = `sat_parity_teacher_${Date.now()}`;
   const password = `sat-e2e-${Date.now()}`;
   let studentId;
+  let teacherId;
   const examIds = [];
   let paperId;
   let classId;
@@ -113,6 +119,10 @@ async function main() {
       username, password, realName: 'SAT Parity Student', roleCode: 'STUDENT', email: null, phone: null,
     });
     studentId = created.id;
+    const createdTeacher = await api(admin, '/api/admin/users', 'POST', {
+      username: teacherUsername, password, realName: 'SAT Parity Teacher', roleCode: 'TEACHER', email: null, phone: null,
+    });
+    teacherId = createdTeacher.id;
     const classroom = await api(admin, '/api/admin/classes?examTypeCodes=SAT&examTypeCodes=PSAT', 'POST', {
       name: `SAT parity class ${Date.now()}`, description: 'Temporary SAT score trend verification', sortOrder: 999,
     });
@@ -142,6 +152,30 @@ async function main() {
     const psatPapers = await api(admin, '/api/admin/exam-types/PSAT/papers');
     const psatPaper = psatPapers.find(row => row.status === 'READY' && row.questionCount > 0);
     assert.ok(psatPaper, 'a ready PSAT paper with questions is available');
+
+    const practiceEndpoints = [
+      ['/api/student/sat-practice-papers', 'GET'],
+      ['/api/student/sat-practice-attempts?page=1&size=10', 'GET'],
+      [`/api/student/sat-practice-papers/${paperId}/attempts`, 'POST'],
+      ['/api/student/sat-practice-attempts/999999999', 'DELETE'],
+    ];
+    for (const [path, method] of practiceEndpoints) {
+      const response = await raw(admin, path, method);
+      assert.equal(response.status, 403, `${method} ${path} denies an administrator without student role`);
+    }
+    await admin.goto(`${baseUrl}/student/systems/SAT`);
+    await admin.waitForURL(`${baseUrl}/`);
+    await admin.getByRole('heading', { name: 'Platform overview' }).waitFor();
+
+    await login(teacher, teacherUsername, password);
+    await teacher.goto(`${baseUrl}/student/systems/SAT`);
+    await teacher.waitForURL(`${baseUrl}/`);
+    await teacher.getByRole('heading', { name: 'Platform overview' }).waitFor();
+    for (const [path, method] of practiceEndpoints) {
+      const response = await raw(teacher, path, method);
+      assert.equal(response.status, 403, `${method} ${path} denies a teacher account`);
+    }
+    assert.deepEqual(teacherPageErrors, [], `teacher route-guard errors: ${teacherPageErrors.join('; ')}`);
 
     const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 2);
     await login(student, username, password);
@@ -373,7 +407,13 @@ async function main() {
     await student.reload();
     await student.locator('.answer-options').waitFor({ timeout: 15_000 });
     await fillInput.waitFor({ state: 'visible' });
-    assert.equal(await fillInput.inputValue(), responseValue,
+    let restoredGridIn = '';
+    for (let retry = 0; retry < 20; retry++) {
+      restoredGridIn = await fillInput.inputValue();
+      if (restoredGridIn === responseValue) break;
+      await student.waitForTimeout(250);
+    }
+    assert.equal(restoredGridIn, responseValue,
       'PSAT fill-in answer is restored after reload');
 
     const psatAttempt = await finishRemainingModules(psatStart.attemptId, psatState);
@@ -487,6 +527,7 @@ async function main() {
         'multiple attempts in score history, report return state, mobile table layout',
         'PSAT release type, student launch, fill-in autosave/reload, answer grading, and PSAT report scoring identity',
         'SAT practice start, report/history entry, and exclusion from formal score history',
+        'administrator and teacher denial for student practice APIs and student workspace route',
         'empty student score and class trend states on mobile',
         'per-type student statistics, score filter, and fallback when a type has no attempts',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',
@@ -499,6 +540,7 @@ async function main() {
       if (classMembershipAdded) await api(admin, `/api/admin/classes/${classId}/students/${studentId}`, 'DELETE');
       if (classCreated) await api(admin, `/api/admin/classes/${classId}`, 'DELETE');
       if (studentId) await api(admin, `/api/admin/users/${studentId}`, 'DELETE');
+      if (teacherId) await api(admin, `/api/admin/users/${teacherId}`, 'DELETE');
       console.log(JSON.stringify({ cleanup: 'PASS', examIds, studentId }));
     } catch (error) {
       console.error('CLEANUP_FAILURE', error.message);
