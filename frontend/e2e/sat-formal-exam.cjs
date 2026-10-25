@@ -117,6 +117,9 @@ async function main() {
     }
     await student.locator('.option-item').first().click();
     await student.getByRole('button', { name: 'Mark for Review' }).click();
+    const attemptList = await api(student, '/api/student/exams');
+    const attemptId = attemptList.find(row => row.id === formalExam.id).activeAttemptId;
+    assert.ok(attemptId, 'starting the exam creates an attempt');
 
     const questionSelector = student.locator('.question-selector-btn');
     if (await student.locator('.question-status-panel .question-status-btn').count() < 2) {
@@ -126,14 +129,25 @@ async function main() {
     if (await questionButtons.count() > 1) {
       await questionButtons.nth(1).click();
       assert.match(await questionSelector.textContent(), /Question 2 of/);
+      let state = await api(student, `/api/student/sat-attempts/${attemptId}`);
+      const secondQuestionId = state.questions[1].id;
+      await studentContext.setOffline(true);
+      await student.locator('.option-item').first().click();
+      await student.waitForTimeout(1_200);
+      await studentContext.setOffline(false);
+      let secondSaved;
+      for (let retry = 0; retry < 12; retry++) {
+        state = await api(student, `/api/student/sat-attempts/${attemptId}`);
+        secondSaved = state.savedAnswers.find(answer => Number(answer.questionId) === Number(secondQuestionId));
+        if (secondSaved?.answer) break;
+        await student.waitForTimeout(250);
+      }
+      assert.ok(secondSaved?.answer, 'an answer entered offline syncs after the connection returns');
       await questionSelector.click();
       await questionButtons.first().click();
       assert.match(await questionSelector.textContent(), /Question 1 of/);
     }
 
-    const attemptList = await api(student, '/api/student/exams');
-    const attemptId = attemptList.find(row => row.id === formalExam.id).activeAttemptId;
-    assert.ok(attemptId, 'starting the exam creates an attempt');
     let state;
     let saved;
     for (let retry = 0; retry < 12; retry++) {
@@ -253,7 +267,7 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS', formalExamId: formalExam.id, deadlineExamId: deadlineExam.id,
       attemptId, secondAttemptId: secondStart.attemptId, deadlineAttemptId, modules: state.modules.length,
-      checks: ['question navigation', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
+      checks: ['question navigation', 'offline answer sync after reconnect', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
         'multiple attempts in score history, report return state, mobile table layout',
         'PSAT release type, student launch, and PSAT report scoring identity',
         'formal submission, score report, history, attempt limit', 'closed-window retry returns 409 after forced submission'],
