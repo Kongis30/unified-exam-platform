@@ -58,9 +58,9 @@ async function main() {
     await page.locator('button[type="submit"]').click();
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   };
-  const createExam = async (title, closesAt, attemptLimit) => {
+  const createExam = async (title, closesAt, attemptLimit, targetPaperId = paperId) => {
     const now = Date.now();
-    const release = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
+    const release = await api(admin, `/api/admin/papers/${targetPaperId}/exams`, 'POST', {
       title,
       description: 'Temporary SAT parity verification',
       opensAt: new Date(now - 60_000).toISOString(),
@@ -100,6 +100,9 @@ async function main() {
     const paper = papers.find(row => row.status === 'READY' && row.questionCount > 0);
     assert.ok(paper, 'a ready SAT paper with questions is available');
     paperId = paper.id ?? paper.summary?.id;
+    const psatPapers = await api(admin, '/api/admin/exam-types/PSAT/papers');
+    const psatPaper = psatPapers.find(row => row.status === 'READY' && row.questionCount > 0);
+    assert.ok(psatPaper, 'a ready PSAT paper with questions is available');
 
     const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 2);
     await login(student, username, password);
@@ -200,8 +203,24 @@ async function main() {
     assert.ok(historyWidth.table && historyWidth.table.content > historyWidth.table.client,
       'score history columns remain reachable through the table’s own horizontal scroller at 390px');
 
+    const psatExam = await createExam(`PSAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 1, psatPaper.id);
     await student.goto(`${baseUrl}/student/systems/SAT`);
-    await student.getByRole('button', { name: 'View attempt' }).click();
+    const psatTitle = student.getByText(psatExam.title, { exact: true });
+    await psatTitle.waitFor();
+    assert.match(await psatTitle.locator('..').textContent(), /PSAT/,
+      'the unified SAT workspace identifies a PSAT release with its assessment type');
+    await student.getByRole('button', { name: /Start exam/ }).click();
+    await student.waitForURL(`**/student/sat/exams/${psatExam.id}`);
+    await student.locator('.answer-options').waitFor({ timeout: 15_000 });
+    const psatStart = await api(student, `/api/student/exams/${psatExam.id}/sat-attempt`, 'POST');
+    const psatAttempt = await finishAllModules(psatStart.attemptId);
+    assert.equal(psatAttempt.status, 'finished');
+    const psatReport = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}/report`);
+    assert.equal(psatReport.scoringType, 'PSAT', 'PSAT submissions use the PSAT scoring identity');
+
+    await student.goto(`${baseUrl}/student/systems/SAT`);
+    await student.locator('.student-exam-list article.paper-row')
+      .filter({ hasText: formalExam.title }).getByRole('button', { name: 'View attempt' }).click();
     await student.getByRole('heading', { name: 'Score Report' }).waitFor({ timeout: 15_000 });
     await student.setViewportSize({ width: 390, height: 844 });
     const mobileWidth = await student.evaluate(() => ({
@@ -234,6 +253,7 @@ async function main() {
       attemptId, secondAttemptId: secondStart.attemptId, deadlineAttemptId, modules: state.modules.length,
       checks: ['question navigation', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
         'multiple attempts in score history, report return state, mobile table layout',
+        'PSAT release type, student launch, and PSAT report scoring identity',
         'formal submission, score report, history, attempt limit', 'closed-window retry returns 409 after forced submission'],
     }));
   } finally {
