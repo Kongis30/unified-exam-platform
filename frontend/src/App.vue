@@ -11,7 +11,16 @@ const router = useRouter()
 const route = useRoute()
 const examTypes = ref([])
 const workspaces = computed(() => groupExamTypesIntoWorkspaces(examTypes.value))
-const isExamRoute = computed(() => ['student-exam', 'shsat-student-exam', 'sat-student-exam'].includes(route.name))
+const isExamRoute = computed(() => [
+  'student-exam', 'shsat-student-exam', 'sat-student-exam', 'sat-exam-break',
+  'sat-module-wait', 'sat-report-wait',
+].includes(route.name))
+const isStaffReportRoute = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode)
+  && ['sat-student-scores', 'sat-exam-results', 'sat-report'].includes(route.name))
+const hasOwnAdminLayout = computed(() => route.name?.startsWith('admin-')
+  || ['shsat-admin', 'sat-admin', 'sat-paper-edit', 'sat-admin-exam-monitor', 'sat-student-scores',
+    'sat-exam-results', 'student-attempt-report'].includes(route.name)
+  || isStaffReportRoute.value)
 
 function workspaceRoute(code) {
   if (['ADMIN', 'TEACHER'].includes(authState.user?.roleCode)) {
@@ -42,8 +51,8 @@ async function signOut() {
 
 <template>
   <RouterView v-if="$route.name === 'login'" />
-  <RouterView v-else-if="$route.name?.startsWith('admin-') || ['shsat-admin', 'sat-admin', 'sat-paper-edit'].includes($route.name)" />
-  <div v-else class="main-layout">
+  <RouterView v-else-if="hasOwnAdminLayout" />
+  <div v-else class="main-layout" :class="{ 'main-layout--exam': isExamRoute }">
     <header v-if="!isExamRoute" class="main-layout__header">
       <RouterLink class="main-layout__brand" to="/" aria-label="Unified Exam Platform home">
         <span class="main-layout__mark"><img src="/logo.png" alt="" /></span>

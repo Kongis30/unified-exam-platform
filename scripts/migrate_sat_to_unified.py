@@ -21,6 +21,25 @@ from urllib.parse import unquote, urlparse
 import pymysql
 
 SOURCE_SYSTEM = "SAT_V1"
+MAPPED_TARGET_TABLES = {
+    "category": "question_categories",
+    "class": "classes",
+    "exam": "exams",
+    "exam_live_presence": "attempts",
+    "exam_record": "attempts",
+    "exam_report": "attempts",
+    "group": "paper_groups",
+    "material": "sat_materials",
+    "paper": "papers",
+    "paper_module": "paper_sections",
+    "paper_question": "paper_items",
+    "practice_archive": "exams",
+    "question": "questions",
+    "score_record": "attempts",
+    "score_skill_analysis": "attempts",
+    "user": "users",
+    "user_answer": "paper_items",
+}
 SOURCE_TABLES = (
     "user", "class", "paper_group", "question_type", "material", "question", "paper",
     "paper_module", "paper_question", "exam", "user_exam", "exam_record", "user_answer",
@@ -169,19 +188,47 @@ class SatMigration:
         required_tables = {
             "sat_import_runs", "sat_import_id_map", "sat_class_settings", "sat_exam_settings",
             "sat_attempt_details", "sat_answer_details", "sat_import_orphan_attempts",
-            "sat_paper_settings", "sat_materials", "sat_question_materials",
+            "sat_paper_settings", "sat_materials", "sat_question_materials", "sat_practice_papers",
+            "sat_practice_paper_templates",
         }
         existing = {row["TABLE_NAME"] for row in self.target_rows("""SELECT TABLE_NAME FROM information_schema.TABLES
             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'""")}
         absent = sorted(required_tables - existing)
         if absent:
-            raise ValueError("Apply Flyway V14 before SAT import; missing tables: " + ", ".join(absent))
+            raise ValueError("Apply the current Flyway migrations before SAT import; missing tables: " + ", ".join(absent))
         type_codes = {row["code"] for row in self.target_rows("SELECT code FROM exam_types WHERE code IN ('SAT','PSAT')")}
         if type_codes != {"SAT", "PSAT"}:
             raise ValueError("Target must contain both SAT and PSAT exam types before import.")
 
         counts = {name: self.source_count(name) for name in SOURCE_TABLES}
         saved = self.one("SELECT COUNT(*) AS n FROM sat_import_id_map WHERE source_system=%s", (SOURCE_SYSTEM,))
+        latest_run_id = None
+        if int(saved["n"]):
+            latest_run = self.one("""SELECT id,status FROM sat_import_runs
+                WHERE source_database=%s ORDER BY id DESC LIMIT 1""", (self.args.source_database,))
+            if not latest_run or latest_run["status"] != "COMPLETED":
+                raise ValueError("SAT import mappings exist without a completed run; manual reconciliation is required.")
+            latest_run_id = int(latest_run["id"])
+            mapped_counts = {row["entity_type"]: int(row["n"]) for row in self.target_rows("""
+                SELECT entity_type,COUNT(*) AS n FROM sat_import_id_map
+                WHERE source_system=%s AND import_run_id=%s GROUP BY entity_type""",
+                (SOURCE_SYSTEM, latest_run["id"]))}
+            expected_mappings = {
+                "user": counts["user"], "class": counts["class"], "paper": counts["paper"],
+                "paper_module": counts["paper_module"], "paper_question": counts["paper_question"],
+                "question": counts["question"], "material": counts["material"], "exam": counts["exam"],
+                "user_exam": counts["user_exam"], "exam_record": counts["exam_record"],
+                "user_answer": counts["user_answer"],
+            }
+            mapping_mismatches = {entity: (mapped_counts.get(entity, 0), expected)
+                                  for entity, expected in expected_mappings.items()
+                                  if mapped_counts.get(entity, 0) != expected}
+            if mapping_mismatches:
+                raise ValueError(f"Completed SAT import mapping counts do not match source data: {mapping_mismatches}")
+        prior_mappings = self.target_rows("""SELECT entity_type,source_id,target_id FROM sat_import_id_map
+            WHERE source_system=%s AND target_id IS NOT NULL""", (SOURCE_SYSTEM,))
+        prior_targets = {(row["entity_type"], str(row["source_id"])): int(row["target_id"])
+                         for row in prior_mappings}
         source_users = self.source_rows("SELECT id, username, real_name, role FROM `user` ORDER BY id")
         target_users = self.target_rows("SELECT id, username, real_name, role_code FROM users")
         by_username = {str(row["username"]).casefold(): row for row in target_users}
@@ -194,7 +241,7 @@ class SatMigration:
             username_target = by_username.get(str(row["username"]).casefold())
             name_targets = name_roles.get((str(row["real_name"]).strip().casefold(), str(row["role"]).upper()), [])
             if username_target or name_targets:
-                proposed = self.account_map.get(source_id)
+                proposed = self.account_map.get(source_id, prior_targets.get(("user", str(source_id))))
                 matching = username_target or (name_targets[0] if len(name_targets) == 1 else None)
                 if not matching or proposed != int(matching["id"]):
                     user_conflicts.append({"source_user_id": source_id, "target_user_ids": [int(x["id"]) for x in ([username_target] if username_target else name_targets)],
@@ -206,20 +253,50 @@ class SatMigration:
                     raise ValueError(f"Account map for source user {source_id} does not point to an existing same-role account.")
 
         source_classes = self.source_rows("SELECT id,class_name FROM `class` ORDER BY id")
-        target_class_names = {str(row["name"]).casefold() for row in self.target_rows("SELECT name FROM classes")}
-        class_conflicts = [int(row["id"]) for row in source_classes if str(row["class_name"]).casefold() in target_class_names]
+        target_classes = self.target_rows("SELECT id,name FROM classes")
+        target_classes_by_name: dict[str, set[int]] = defaultdict(set)
+        for row in target_classes:
+            target_classes_by_name[str(row["name"]).casefold()].add(int(row["id"]))
+        class_conflicts = []
+        for row in source_classes:
+            matching_targets = target_classes_by_name.get(str(row["class_name"]).casefold(), set())
+            mapped_target = prior_targets.get(("class", str(row["id"])))
+            if matching_targets and mapped_target not in matching_targets:
+                class_conflicts.append(int(row["id"]))
 
         source_papers = self.source_rows("SELECT id,paper_code,paper_name,status FROM paper ORDER BY id")
         paper_conflicts = []
-        existing_papers = {(row["exam_type_code"], str(row["paper_code"]).casefold(), int(row["version_no"]))
-                           for row in self.target_rows("SELECT exam_type_code,paper_code,version_no FROM papers")}
+        existing_papers = {(row["exam_type_code"], str(row["paper_code"]).casefold(), int(row["version_no"])): int(row["id"])
+                           for row in self.target_rows("SELECT id,exam_type_code,paper_code,version_no FROM papers")}
         for row in source_papers:
             code = paper_type(row["paper_name"], row["paper_code"])
             key = (code, str(row["paper_code"]).casefold(), 1)
-            if key in existing_papers:
+            mapped_target = prior_targets.get(("paper", str(row["id"])))
+            if key in existing_papers and mapped_target != existing_papers[key]:
                 paper_conflicts.append({"source_paper_id": int(row["id"]), "exam_type_code": code, "paper_code": row["paper_code"]})
             if len(str(row["paper_code"])) > 80:
                 raise ValueError(f"Source paper code exceeds target limit: source paper {row['id']}.")
+
+        missing_target_mappings = self.missing_target_mappings(latest_run_id) if latest_run_id else {}
+        # 旧库里题量汇总字段可能落后于实际关联关系；预检报告保留两者，避免导入时误按过期数量删题。
+        paper_question_count_mismatches = self.source_rows("""SELECT p.id AS source_paper_id, p.paper_name,
+                COALESCE(p.total_questions, 0) AS declared_question_count,
+                COUNT(pq.id) AS linked_question_count,
+                COUNT(DISTINCT pq.question_id) AS unique_question_count
+            FROM paper p LEFT JOIN paper_question pq ON pq.paper_id = p.id
+            GROUP BY p.id, p.paper_name, p.total_questions
+            HAVING COALESCE(p.total_questions, 0) <> COUNT(pq.id)
+            ORDER BY p.id""")
+        module_question_count_mismatches = self.source_rows("""SELECT p.id AS source_paper_id, p.paper_name,
+                pm.id AS source_module_id, pm.module_name,
+                COALESCE(pm.question_count, 0) AS declared_question_count,
+                COUNT(pq.id) AS linked_question_count,
+                COUNT(DISTINCT pq.question_id) AS unique_question_count
+            FROM paper_module pm JOIN paper p ON p.id = pm.paper_id
+            LEFT JOIN paper_question pq ON pq.paper_id = p.id AND pq.module_id = pm.id
+            GROUP BY p.id, p.paper_name, pm.id, pm.module_name, pm.question_count
+            HAVING COALESCE(pm.question_count, 0) <> COUNT(pq.id)
+            ORDER BY p.id, pm.sort_order, pm.id""")
 
         invalid_links = {
             "orphan_paper_questions": int(self.source_one("""SELECT COUNT(*) n FROM paper_question pq
@@ -271,6 +348,9 @@ class SatMigration:
             "invalid_links": invalid_links,
             "archived_orphan_record_ids": [int(row["id"]) for row in orphan_records],
             "previously_imported_rows": existing_import,
+            "missing_target_mappings": missing_target_mappings,
+            "paper_question_count_mismatches": paper_question_count_mismatches,
+            "module_question_count_mismatches": module_question_count_mismatches,
         }
         if user_conflicts:
             raise ValueError("Account conflicts need an explicit --account-map after manual identity review.")
@@ -281,6 +361,20 @@ class SatMigration:
         if missing_assets and not self.args.allow_missing_assets:
             raise ValueError("Some source image files are missing. Review --report-json, then use --allow-missing-assets to retain their source references.")
         return report
+
+    def missing_target_mappings(self, import_run_id: int) -> dict[str, list[dict[str, Any]]]:
+        """Report imported targets removed or otherwise missing since the completed run."""
+        missing: dict[str, list[dict[str, Any]]] = {}
+        for entity, target_table in MAPPED_TARGET_TABLES.items():
+            rows = self.target_rows(f"""SELECT m.source_id,m.target_id
+                FROM sat_import_id_map m LEFT JOIN `{target_table}` t ON t.id=m.target_id
+                WHERE m.source_system=%s AND m.entity_type=%s AND m.import_run_id=%s
+                    AND m.target_id IS NOT NULL AND t.id IS NULL ORDER BY m.source_id""",
+                (SOURCE_SYSTEM, entity, import_run_id))
+            if rows:
+                missing[entity] = [{"source_id": str(row["source_id"]), "target_id": int(row["target_id"])}
+                                   for row in rows]
+        return missing
 
     def save_mapping_if_new(self, entity: str, source_id: Any, target_id: int | None, row: dict[str, Any]) -> int | None:
         existing = self.one("SELECT target_id,source_fingerprint FROM sat_import_id_map WHERE source_system=%s AND entity_type=%s AND source_id=%s",
@@ -633,6 +727,8 @@ class SatMigration:
                                  "max_student": None, "student_count": len({r.get("student_id") for r in history})}
                 self.save_map("practice_archive", source_paper_id, archive_id, source_record)
                 self.add_exam_settings(archive_id, source_record, True)
+            self.update("INSERT IGNORE INTO sat_practice_papers (paper_id,practice_exam_id) VALUES (%s,%s)",
+                        (self.target_papers[source_paper_id], archive_id))
             practice_exams[source_paper_id] = archive_id
         return practice_exams
 

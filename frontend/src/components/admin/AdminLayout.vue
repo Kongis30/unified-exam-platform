@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AppButton from '@/components/AppButton.vue'
+import AccountMenu from '@/components/AccountMenu.vue'
 import { authState } from '@/auth'
 import { getExamTypes, logout } from '@/api/platform'
 import { groupExamTypesIntoWorkspaces } from '@/examTypes/workspaces'
@@ -15,10 +16,6 @@ const showSignOutConfirm = ref(false)
 const workspaces = computed(() => groupExamTypesIntoWorkspaces(examTypes.value))
 const isAdmin = computed(() => authState.user?.roleCode === 'ADMIN')
 const currentModuleCode = computed(() => route.path.match(/^\/exam-types\/([^/]+)\/admin(?:\/|$)/)?.[1] || '')
-const userLabel = computed(() => {
-  const name = authState.user?.realName || authState.user?.username || ''
-  return /[\u3400-\u9fff\uf900-\ufaff]/u.test(name) ? (isAdmin.value ? 'Admin User' : 'Teacher User') : name
-})
 
 onMounted(async () => {
   try {
@@ -70,8 +67,7 @@ async function signOut() {
       </nav>
 
       <div class="admin-layout__user">
-        <span class="admin-layout__user-name">{{ userLabel }}</span>
-        <AppButton variant="ghost" type="button" @click="showSignOutConfirm = true">Sign Out</AppButton>
+        <AccountMenu @sign-out="showSignOutConfirm = true" />
       </div>
     </header>
 
@@ -134,7 +130,17 @@ async function signOut() {
 .admin-layout__modal-card footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 @media (max-width: 900px) {
   .admin-layout__header { grid-template-columns: 1fr auto; }
-  .admin-layout__nav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
+  .admin-layout__nav {
+    grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; flex-wrap: nowrap;
+    min-width: 0; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .admin-layout__nav::-webkit-scrollbar { display: none; }
+  .admin-layout__nav a { flex: 0 0 auto; white-space: nowrap; }
+}
+@media (max-width: 480px) {
+  .admin-layout__nav { gap: 4px; }
+  .admin-layout__nav a { padding: 7px 9px; font-size: 13px; }
 }
 @media print {
   .admin-layout__header { display: none; }

@@ -36,9 +36,14 @@ public class ExamReleaseService {
                    e.status, e.target_scope, e.opens_at, e.closes_at,
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
                    e.attempt_limit,
-                   e.created_at, e.published_at
+                   EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
+                   e.created_at, e.updated_at, e.published_at
             FROM exams e JOIN papers p ON p.id = e.paper_id
-            WHERE p.exam_type_code = ? ORDER BY e.created_at DESC, e.id DESC
+            WHERE p.exam_type_code = ? AND NOT EXISTS (
+                SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id
+            ) AND NOT EXISTS (
+                SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id
+            ) ORDER BY e.created_at DESC, e.id DESC
             """, (rs, rowNum) -> mapSummary(rs), examTypeCode);
     }
 
@@ -203,13 +208,15 @@ public class ExamReleaseService {
 
     @Transactional
     public ExamDetail unpublish(long examId) {
+        requireManageableExam(examId);
         String status = jdbcTemplate.query("SELECT status FROM exams WHERE id = ? FOR UPDATE",
             rs -> rs.next() ? rs.getString(1) : null, examId);
         if (status == null) throw notFound();
         if (!"PUBLISHED".equals(status)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only published exams can be unpublished.");
         }
-        Integer attemptCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM attempts WHERE exam_id = ?", Integer.class, examId);
+        Integer attemptCount = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM attempts WHERE exam_id = ? AND is_practice = FALSE", Integer.class, examId);
         if (attemptCount != null && attemptCount > 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "An exam with student attempts cannot be unpublished.");
         }
@@ -218,8 +225,23 @@ public class ExamReleaseService {
         return get(examId);
     }
 
+    /** 由后台提前结束已发布场次；学生不能再开考，进行中的尝试仍可正常提交。 */
+    @Transactional
+    public ExamDetail close(long examId) {
+        requireManageableExam(examId);
+        String status = jdbcTemplate.query("SELECT status FROM exams WHERE id = ? FOR UPDATE",
+            rs -> rs.next() ? rs.getString(1) : null, examId);
+        if (status == null) throw notFound();
+        if (!"PUBLISHED".equals(status)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only published exams can be ended.");
+        }
+        jdbcTemplate.update("UPDATE exams SET status = 'CLOSED' WHERE id = ?", examId);
+        return get(examId);
+    }
+
     @Transactional
     public void delete(long examId) {
+        requireManageableExam(examId);
         List<Long> lockedExamIds = jdbcTemplate.query("SELECT id FROM exams WHERE id = ? FOR UPDATE",
             (rs, rowNum) -> rs.getLong(1), examId);
         if (lockedExamIds.isEmpty()) throw notFound();
@@ -238,14 +260,22 @@ public class ExamReleaseService {
                    p.title AS paper_title,
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
                    e.attempt_limit,
-                   (SELECT COUNT(*) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ? AND a.status IN ('SUBMITTED','COMPLETED','EXPIRED') AND a.is_practice = FALSE) AS attempts_used,
-                   (SELECT MAX(a.id) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ? AND a.status = 'IN_PROGRESS' AND a.is_practice = FALSE) AS active_attempt_id,
-                   (SELECT MAX(a.id) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ? AND a.is_practice = FALSE) AS latest_attempt_id
+                   (SELECT COUNT(*) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ?
+                       AND (a.status IN ('SUBMITTED','COMPLETED','EXPIRED') OR
+                            (a.status = 'IN_PROGRESS' AND a.expires_at <= CURRENT_TIMESTAMP(6)))
+                       AND a.is_practice = FALSE) AS attempts_used,
+                   (SELECT MAX(a.id) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ?
+                       AND a.status = 'IN_PROGRESS' AND a.is_practice = FALSE
+                       AND (a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP(6))) AS active_attempt_id,
+                   (SELECT MAX(a.id) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ?
+                       AND a.status IN ('SUBMITTED', 'COMPLETED') AND a.is_practice = FALSE) AS latest_attempt_id
             FROM exam_participants ep JOIN exams e ON e.id = ep.exam_id
             JOIN papers p ON p.id = e.paper_id
             JOIN exam_types et ON et.code = p.exam_type_code AND et.is_active = TRUE
-            WHERE ep.student_user_id = ? AND ep.revoked_at IS NULL AND e.status = 'PUBLISHED'
-                AND (e.closes_at > CURRENT_TIMESTAMP(6) OR EXISTS (
+            WHERE ep.student_user_id = ? AND ep.revoked_at IS NULL AND e.status IN ('PUBLISHED', 'CLOSED')
+                AND NOT EXISTS (SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id)
+                AND NOT EXISTS (SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id)
+                AND ((e.status = 'PUBLISHED' AND e.closes_at > CURRENT_TIMESTAMP(6)) OR EXISTS (
                     SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ep.student_user_id AND a.is_practice = FALSE
                 ))
             ORDER BY e.opens_at, e.id
@@ -266,8 +296,13 @@ public class ExamReleaseService {
                    e.status, e.target_scope, e.opens_at, e.closes_at,
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
                    e.attempt_limit,
-                   e.created_at, e.published_at
-            FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ?
+                   EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
+                   e.created_at, e.updated_at, e.published_at
+            FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ? AND NOT EXISTS (
+                SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id
+            ) AND NOT EXISTS (
+                SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id
+            )
             """, (rs, rowNum) -> mapSummary(rs), examId);
         if (result.isEmpty()) throw notFound();
         return result.get(0);
@@ -279,7 +314,8 @@ public class ExamReleaseService {
             rs.getString("paper_title"), rs.getString("title"), rs.getString("description"), rs.getString("status"),
             rs.getString("target_scope"), rs.getTimestamp("opens_at").toInstant().toString(),
             rs.getTimestamp("closes_at").toInstant().toString(), nullableInt(rs, "duration_seconds"),
-            rs.getInt("attempt_limit"), rs.getTimestamp("created_at").toInstant().toString(),
+            rs.getInt("attempt_limit"), rs.getBoolean("has_student_attempts"), rs.getTimestamp("created_at").toInstant().toString(),
+            rs.getTimestamp("updated_at").toInstant().toString(),
             publishedAt == null ? null : publishedAt.toInstant().toString());
     }
 
@@ -326,6 +362,14 @@ public class ExamReleaseService {
         }
     }
 
+    private void requireManageableExam(long examId) {
+        Boolean practice = jdbcTemplate.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM sat_practice_papers WHERE practice_exam_id = ?)
+                OR EXISTS(SELECT 1 FROM sat_practice_paper_templates WHERE practice_exam_id = ?)
+            """, Boolean.class, examId, examId);
+        if (Boolean.TRUE.equals(practice)) throw notFound();
+    }
+
     private String examTargetScope(long examId) {
         String scope = jdbcTemplate.query("SELECT target_scope FROM exams WHERE id = ?",
             rs -> rs.next() ? rs.getString(1) : null, examId);
@@ -363,8 +407,8 @@ public class ExamReleaseService {
                                 @NotNull List<@Positive Long> studentUserIds) { }
     public record ExamSummary(long id, String examTypeCode, long paperId, String paperTitle, String title,
                               String description, String status, String targetScope, String opensAt,
-                              String closesAt, Integer durationSeconds, int attemptLimit,
-                              String createdAt, String publishedAt) { }
+                              String closesAt, Integer durationSeconds, int attemptLimit, boolean hasStudentAttempts,
+                              String createdAt, String updatedAt, String publishedAt) { }
     public record ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds) { }
     public record StudentExamView(long id, String examTypeCode, String title, String description,
                                   String opensAt, String closesAt, String paperTitle,

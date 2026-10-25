@@ -39,6 +39,7 @@ function itemKey(item, index) {
 function openImage(item) {
   emit('image-click', item);
 }
+
 </script>
 
 <template>
@@ -88,6 +89,7 @@ function openImage(item) {
 .mixed-content__text {
   white-space: inherit;
 }
+
 
 .mixed-content__inline-math {
   display: inline-block;

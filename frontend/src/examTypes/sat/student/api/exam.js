@@ -4,6 +4,10 @@ const base = '/api/student/sat-attempts'
 
 export const examApi = {
   startExam: (examId) => apiRequest(`/api/student/exams/${examId}/sat-attempt`, { method: 'POST' }),
+  listPracticePapers: () => apiRequest('/api/student/sat-practice-papers'),
+  listPracticeHistory: (page = 1, size = 10) => apiRequest(`/api/student/sat-practice-attempts?page=${page}&size=${size}`),
+  deletePracticeAttempt: (attemptId) => apiRequest(`/api/student/sat-practice-attempts/${attemptId}`, { method: 'DELETE' }),
+  startPractice: (paperId) => apiRequest(`/api/student/sat-practice-papers/${paperId}/attempts`, { method: 'POST' }),
   getProgress: (attemptId) => apiRequest(`${base}/${attemptId}`),
   resumeBreak: (attemptId) => apiRequest(`${base}/${attemptId}/resume-break`, { method: 'POST' }),
   getReport: (examId, attemptId) => apiRequest(`${base}/${attemptId}/report?examId=${examId}`),
@@ -18,7 +22,6 @@ export const examApi = {
   updatePresence: (_examId, attemptId, questionNumber) => apiRequest(`${base}/${attemptId}/presence`, {
     method: 'POST', body: JSON.stringify({ questionNumber }),
   }),
-  recordFocusViolation: (attemptId) => apiRequest(`${base}/${attemptId}/focus-violations`, { method: 'POST' }),
 }
 
 export const paperApi = {

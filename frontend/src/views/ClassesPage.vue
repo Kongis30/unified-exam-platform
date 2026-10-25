@@ -1,6 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AppButton from '@/components/AppButton.vue'
 import AppCard from '@/components/AppCard.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -8,9 +8,12 @@ import { createClass, listClasses, reorderClasses } from '@/api/platform'
 import { notifyOperation } from '@/utils/operationNotification'
 
 const props = defineProps({ examTypeCode: { type: String, default: '' } })
+const route = useRoute()
 const router = useRouter()
 const classes = ref([])
-const keyword = ref('')
+const keyword = ref(props.examTypeCode === 'SAT' && typeof route.query.classSearch === 'string'
+  ? route.query.classSearch
+  : '')
 const isLoading = ref(false)
 const showCreateDialog = ref(false)
 const isSavingClass = ref(false)
@@ -56,11 +59,32 @@ async function loadPage() {
 
 function openClass(classroom) {
   if (props.examTypeCode === 'SAT') {
-    router.push({ name: 'sat-class-detail', params: { classId: classroom.id } })
+    router.push({
+      name: 'sat-class-detail',
+      params: { classId: classroom.id },
+      query: { returnTo: getClassListReturnPath() },
+    })
   } else if (props.examTypeCode === 'SHSAT') {
     router.push({ name: 'admin-class-detail', params: { classId: classroom.id } })
   }
 }
+
+function getClassListReturnPath() {
+  const query = {
+    ...route.query,
+    tab: 'classes',
+    classSearch: keyword.value.trim() || undefined,
+  }
+  return router.resolve({ name: 'sat-admin', query }).fullPath
+}
+
+watch(keyword, (value) => {
+  if (props.examTypeCode !== 'SAT' || route.name !== 'sat-admin') return
+  const query = { ...route.query, classSearch: value.trim() || undefined }
+  if (JSON.stringify(query) !== JSON.stringify(route.query)) {
+    router.replace({ name: 'sat-admin', query })
+  }
+})
 
 function moveClass(sourceId, targetId) {
   const sourceIndex = classes.value.findIndex((item) => String(item.id) === String(sourceId))

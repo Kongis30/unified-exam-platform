@@ -8,8 +8,9 @@ import AppModal from '@/components/AppModal.vue'
 import AdminDataTable from '@/components/admin/AdminDataTable.vue'
 import ClassExamScoreTrend from '@/components/admin/ClassExamScoreTrend.vue'
 import { notifyOperation } from '@/utils/operationNotification'
+import { authState } from '@/auth'
 import {
-  addClassStudents, getClass, listAvailableStudents, listClassExams, listClassStudents,
+  addClassStudents, deleteClass, getClass, listAvailableStudents, listClassExams, listClassStudents,
   removeClassStudent, setClassStatus, updateClass,
 } from '@/api/platform'
 
@@ -25,6 +26,7 @@ const error = ref('')
 const editOpen = ref(false)
 const addStudentOpen = ref(false)
 const removeStudentTarget = ref(null)
+const deleteClassOpen = ref(false)
 const classForm = reactive({ name: '', description: '' })
 const addStudentSearch = ref('')
 const selectedStudentIds = ref([])
@@ -61,6 +63,11 @@ async function loadPage() {
 }
 
 function goBack() {
+  const returnTo = route.query.returnTo
+  if (typeof returnTo === 'string' && returnTo.startsWith('/exam-types/SAT/admin')) {
+    router.push(returnTo)
+    return
+  }
   router.push({ name: 'exam-type', params: { code: 'SAT' }, query: { tab: 'classes' } })
 }
 
@@ -96,6 +103,21 @@ async function toggleClassStatus() {
     await loadPage()
   } catch (requestError) {
     notifyOperation(requestError.message || 'Unable to update the class status.', 'error')
+  }
+}
+
+async function permanentlyDeleteClass() {
+  if (!classroom.value || isSaving.value) return
+  isSaving.value = true
+  try {
+    await deleteClass(classId.value)
+    notifyOperation('Class permanently deleted. Student accounts, exams, attempts, and results were kept.')
+    deleteClassOpen.value = false
+    goBack()
+  } catch (requestError) {
+    notifyOperation(requestError.message || 'Unable to delete this class.', 'error')
+  } finally {
+    isSaving.value = false
   }
 }
 
@@ -135,6 +157,17 @@ function toggleStudentSelection(studentId, checked) {
     : selectedStudentIds.value.filter((id) => id !== studentId)
 }
 
+function openStudentScores(student) {
+  router.push({
+    name: 'sat-student-scores',
+    params: { classId: classId.value, studentId: student.id },
+    query: {
+      className: classroom.value?.name || '',
+      returnTo: route.query.returnTo,
+    },
+  })
+}
+
 async function removeStudent() {
   if (!removeStudentTarget.value || isSaving.value) return
   isSaving.value = true
@@ -169,6 +202,7 @@ onMounted(loadPage)
       <div v-if="classroom" class="sat-class-detail-page__actions">
         <AppButton variant="secondary" @click="openEditDialog">Edit class</AppButton>
         <AppButton variant="secondary" @click="toggleClassStatus">{{ classroom.status === 'ACTIVE' ? 'Archive class' : 'Reopen class' }}</AppButton>
+        <AppButton v-if="authState.user?.roleCode === 'ADMIN'" variant="danger" @click="deleteClassOpen = true">Delete class</AppButton>
       </div>
     </div>
 
@@ -189,7 +223,8 @@ onMounted(loadPage)
       <AppCard class="sat-class-detail-section" title="Exam Releases" subtitle="Review releases targeted to this class, including drafts and published exams.">
         <div v-if="isLoading" class="admin-state">Loading exam records...</div>
         <p v-else-if="!exams.length" class="table-empty">No exam records for this class yet.</p>
-        <div v-else class="admin-table-scroll">
+        <p v-else class="mobile-table-scroll-hint">Swipe horizontally to see all columns.</p>
+        <div v-if="!isLoading && exams.length" class="admin-table-scroll" tabindex="0" aria-label="Exam releases table. Scroll horizontally to see all columns.">
           <AdminDataTable>
             <thead><tr><th>Exam</th><th>Paper</th><th>Exam Window</th><th>Status</th><th>Duration</th></tr></thead>
             <tbody>
@@ -216,7 +251,8 @@ onMounted(loadPage)
           </div>
           <p v-if="isLoading" class="admin-state">Loading students...</p>
           <p v-else-if="!students.length" class="table-empty">No students in this class yet.</p>
-          <div v-else class="admin-table-scroll">
+          <p v-else class="mobile-table-scroll-hint">Swipe horizontally to see all columns.</p>
+          <div v-if="!isLoading && students.length" class="admin-table-scroll" tabindex="0" aria-label="Students table. Scroll horizontally to see all columns.">
             <AdminDataTable>
               <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Joined</th><th>Actions</th></tr></thead>
               <tbody>
@@ -225,7 +261,10 @@ onMounted(loadPage)
                   <td>{{ student.username }}</td>
                   <td>{{ student.email || '—' }}</td>
                   <td>{{ formatDate(student.joinedAt) }}</td>
-                  <td><button type="button" class="text-button" @click="removeStudentTarget = student">Remove</button></td>
+                  <td class="sat-student-actions">
+                    <button type="button" class="text-button" @click="openStudentScores(student)">View scores</button>
+                    <button type="button" class="text-button sat-student-actions__remove" @click="removeStudentTarget = student">Remove</button>
+                  </td>
                 </tr>
               </tbody>
             </AdminDataTable>
@@ -280,6 +319,18 @@ onMounted(loadPage)
       <p>Remove <strong>{{ removeStudentTarget.realName }}</strong> from {{ classroom?.name }}?</p>
       <template #footer><AppButton variant="secondary" :disabled="isSaving" @click="removeStudentTarget = null">Cancel</AppButton><AppButton :disabled="isSaving" @click="removeStudent">Remove student</AppButton></template>
     </AppModal>
+
+    <AppModal v-if="deleteClassOpen && classroom" title="Delete class permanently?" :busy="isSaving" @close="deleteClassOpen = false">
+      <div class="sat-class-delete-confirm">
+        <p>You are about to permanently delete the shared platform class <strong>{{ classroom.name }}</strong> and remove its enrollments and exam targets across SAT, PSAT, and SHSAT.</p>
+        <p>Student accounts, exams, exam attempts, and results will remain. Students who already have exam access will keep it.</p>
+        <p>Any SHSAT review tasks must be reassigned or removed before this class can be deleted.</p>
+      </div>
+      <template #footer>
+        <AppButton variant="secondary" :disabled="isSaving" @click="deleteClassOpen = false">Cancel</AppButton>
+        <AppButton variant="danger" :disabled="isSaving" @click="permanentlyDeleteClass">{{ isSaving ? 'Deleting…' : 'Delete class' }}</AppButton>
+      </template>
+    </AppModal>
   </main>
 </template>
 
@@ -293,7 +344,13 @@ onMounted(loadPage)
 .sat-class-summary dt { color: var(--color-muted); font-size: 13px; }
 .sat-class-summary dd { margin: 0; color: var(--color-text); font-size: 17px; font-weight: 700; }
 .sat-class-students-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -4px 0 14px; color: var(--color-muted); font-size: 14px; }
+.sat-student-actions { white-space: nowrap; }
+.sat-student-actions .text-button { margin: 0 6px; }
+.sat-student-actions__remove { color: #a23d47; }
 .sat-class-form { display: grid; gap: 16px; }
+.sat-class-delete-confirm { display: grid; gap: 12px; color: var(--color-muted); line-height: 1.55; }
+.sat-class-delete-confirm p { margin: 0; }
+.sat-class-delete-confirm strong { color: var(--color-text); }
 .sat-class-form .app-modal__footer { margin-top: 0; }
 .sat-add-students-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
 .sat-add-students-search { flex: 1; max-width: 420px; }
@@ -309,6 +366,7 @@ onMounted(loadPage)
 .sat-student-class-list--empty { color: #8795aa; }
 .sat-add-students-empty { margin: 0; padding: 28px 16px; border: 1px dashed var(--color-border); border-radius: 12px; color: var(--color-muted); text-align: center; }
 .admin-table-scroll { overflow-x: auto; }
+.mobile-table-scroll-hint { display: none; }
 .class-exam-window { min-width: 250px; white-space: nowrap; }
 .class-exam-window span { display: flex; align-items: baseline; gap: 8px; }
 .class-exam-window small { min-width: 42px; color: #71819a; font-size: 11px; font-weight: 650; }
@@ -316,5 +374,7 @@ onMounted(loadPage)
   .sat-class-detail-page { width: min(100% - 24px, 1180px); padding-top: 20px; }
   .sat-class-detail-page__topbar { align-items: flex-start; flex-direction: column; }
   .sat-class-summary { grid-template-columns: 1fr; }
+  .mobile-table-scroll-hint { display: block; margin: -4px 0 8px; color: var(--color-muted); font-size: 12px; }
+  .admin-table-scroll { overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
 }
 </style>

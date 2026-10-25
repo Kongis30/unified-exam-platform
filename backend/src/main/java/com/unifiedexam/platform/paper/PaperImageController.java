@@ -1,8 +1,10 @@
 package com.unifiedexam.platform.paper;
 
 import jakarta.validation.constraints.Positive;
+import com.unifiedexam.platform.security.SatAdminAccessPolicy;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.Authentication;
 import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,15 +23,20 @@ public class PaperImageController {
 
     private final JdbcTemplate jdbcTemplate;
     private final PaperImageStorage imageStorage;
+    private final SatAdminAccessPolicy satAccess;
 
-    public PaperImageController(JdbcTemplate jdbcTemplate, PaperImageStorage imageStorage) {
+    public PaperImageController(JdbcTemplate jdbcTemplate, PaperImageStorage imageStorage,
+                                SatAdminAccessPolicy satAccess) {
         this.jdbcTemplate = jdbcTemplate;
         this.imageStorage = imageStorage;
+        this.satAccess = satAccess;
     }
 
     @PostMapping("/question-images")
     public PaperImageStorage.StoredImage uploadQuestionImage(@PathVariable @Positive long paperId,
-                                                              @RequestPart("file") MultipartFile file) {
+                                                              @RequestPart("file") MultipartFile file,
+                                                              Authentication authentication) {
+        satAccess.requireAdminForPaper(paperId, authentication);
         requireDraftPaper(paperId);
         return imageStorage.store(paperId, file);
     }
@@ -42,7 +49,9 @@ public class PaperImageController {
             @RequestParam(required = false) Long subTypeId,
             @RequestParam(required = false) String materialTitle,
             @RequestParam(required = false) String materialCategory,
-            @RequestParam(required = false, defaultValue = "0") Integer displayOrder) {
+            @RequestParam(required = false, defaultValue = "0") Integer displayOrder,
+            Authentication authentication) {
+        satAccess.requireAdminForPaper(paperId, authentication);
         requireDraftPaper(paperId);
         PaperImageStorage.StoredImage image = imageStorage.store(paperId, file);
         return new MaterialImageView(materialId, paperId, partId, subTypeId, "image",

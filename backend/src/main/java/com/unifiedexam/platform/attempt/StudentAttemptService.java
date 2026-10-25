@@ -41,19 +41,37 @@ public class StudentAttemptService {
     /** 锁定考试行，串行化同一场考试的并发开考请求并创建固定题目顺序。 */
     @Transactional
     public AttemptView start(long examId, String firstSection, String username) {
+        return start(examId, firstSection, username, false);
+    }
+
+    /** 为 SAT/PSAT 学生开放已封存试卷的自助练习；只接受平台内部创建的练习场次。 */
+    @Transactional
+    public AttemptView startPractice(long examId, String username) {
+        return start(examId, null, username, true);
+    }
+
+    private AttemptView start(long examId, String firstSection, String username, boolean requestedPractice) {
         Account account = account(username);
         long studentId = account.id();
-        boolean practice = !"STUDENT".equals(account.roleCode());
+        boolean isStudent = "STUDENT".equals(account.roleCode());
+        if (requestedPractice && !isStudent) throw notFound("Practice paper not found.");
         ExamRow exam = jdbcTemplate.query("""
             SELECT e.id, e.paper_id, e.duration_seconds, p.default_duration_seconds,
-                   e.attempt_limit, p.exam_type_code
+                   e.attempt_limit, p.exam_type_code,
+                   (EXISTS(SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id)
+                    OR EXISTS(SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id)) AS sat_practice
             FROM exams e JOIN papers p ON p.id = e.paper_id
             JOIN exam_types et ON et.code = p.exam_type_code AND et.is_active = TRUE
             WHERE e.id = ? FOR UPDATE
             """, rs -> rs.next() ? new ExamRow(rs.getLong("id"), rs.getLong("paper_id"),
                 nullableInt(rs, "duration_seconds"), nullableInt(rs, "default_duration_seconds"),
-                rs.getInt("attempt_limit"), rs.getString("exam_type_code")) : null, examId);
+                rs.getInt("attempt_limit"), rs.getString("exam_type_code"), rs.getBoolean("sat_practice")) : null, examId);
         if (exam == null) throw notFound("Exam not found.");
+        if (exam.satPractice() && !requestedPractice) throw notFound("Exam not found.");
+        if (requestedPractice && (!exam.satPractice() || !("SAT".equals(exam.examTypeCode()) || "PSAT".equals(exam.examTypeCode())))) {
+            throw notFound("Practice paper not found.");
+        }
+        boolean practice = requestedPractice || !isStudent;
         ExamTypeModule module = registeredModule(exam.examTypeCode());
         if (!module.supportsStudentAttempts() && !(practice && module.supportsStaffPracticeAttempts())) {
             throw notFound("This exam is not available yet.");
@@ -76,8 +94,10 @@ public class StudentAttemptService {
             if (!Boolean.TRUE.equals(eligible)) throw notFound("Exam not found.");
         }
 
+        expireTimedOutAttempts(examId, studentId, practice);
         Long existingAttempt = jdbcTemplate.query("""
             SELECT id FROM attempts WHERE exam_id = ? AND student_user_id = ? AND status = 'IN_PROGRESS' AND is_practice = ?
+                AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP(6))
             ORDER BY attempt_no DESC LIMIT 1
             """, rs -> rs.next() ? rs.getLong(1) : null, examId, studentId, practice);
         if (existingAttempt != null) return getOwnedAttempt(existingAttempt, studentId);
@@ -96,9 +116,8 @@ public class StudentAttemptService {
         if (!practice) {
             if (!Boolean.TRUE.equals(open)) throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam is not open for starting.");
 
-            Integer completedAttempts = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM attempts WHERE exam_id = ? AND student_user_id = ? AND is_practice = FALSE", Integer.class, examId, studentId);
-            if (completedAttempts != null && completedAttempts >= exam.attemptLimit()) {
+            Integer attemptsUsed = countUsedFormalAttempts(examId, studentId);
+            if (attemptsUsed != null && attemptsUsed >= exam.attemptLimit()) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "You have used all available attempts for this exam.");
             }
         }
@@ -137,6 +156,24 @@ public class StudentAttemptService {
         return getOwnedAttempt(attemptId, studentId);
     }
 
+    /** 开考重试时先封存超时尝试，避免把已不能作答的记录当作可续考场次。 */
+    int expireTimedOutAttempts(long examId, long studentId, boolean practice) {
+        return jdbcTemplate.update("""
+            UPDATE attempts SET status = 'EXPIRED'
+            WHERE exam_id = ? AND student_user_id = ? AND is_practice = ?
+              AND status = 'IN_PROGRESS' AND expires_at <= CURRENT_TIMESTAMP(6)
+            """, examId, studentId, practice);
+    }
+
+    /** 与学生考试列表使用同一套已消耗次数定义，忽略未开始和已取消的导入记录。 */
+    int countUsedFormalAttempts(long examId, long studentId) {
+        return jdbcTemplate.queryForObject("""
+            SELECT COUNT(*) FROM attempts
+            WHERE exam_id = ? AND student_user_id = ? AND is_practice = FALSE
+              AND status IN ('SUBMITTED', 'COMPLETED', 'EXPIRED')
+            """, Integer.class, examId, studentId);
+    }
+
     /** 为已验证的 SHSAT 错题任务创建只含本轮未清除题目的独立练习。 */
     @Transactional
     public AttemptView startWrongAnswerPractice(long assignmentId, Collection<Integer> questionNumbers, String username) {
@@ -168,7 +205,7 @@ public class StudentAttemptService {
             FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ? FOR UPDATE
             """, rs -> rs.next() ? new ExamRow(rs.getLong("id"), rs.getLong("paper_id"),
                 nullableInt(rs, "duration_seconds"), nullableInt(rs, "default_duration_seconds"),
-                rs.getInt("attempt_limit"), rs.getString("exam_type_code")) : null, examId);
+                rs.getInt("attempt_limit"), rs.getString("exam_type_code"), false) : null, examId);
         if (exam == null || !"SHSAT".equals(exam.examTypeCode())) throw notFound("Assigned review not found.");
         Integer durationSeconds = AttemptDurationPolicy.resolve(exam.durationSeconds(), exam.paperDefaultSeconds(),
             jdbcTemplate.query("SELECT time_multiplier FROM shsat_student_accommodations WHERE student_user_id = ?",
@@ -720,7 +757,7 @@ public class StudentAttemptService {
 
     private record Account(long id, String roleCode) { }
     private record ExamRow(long id, long paperId, Integer durationSeconds, Integer paperDefaultSeconds,
-                           int attemptLimit, String examTypeCode) { }
+                           int attemptLimit, String examTypeCode, boolean satPractice) { }
     private record AttemptState(String status, boolean practice, String examTypeCode, long paperId) { }
     private record OwnedAttemptSummary(AttemptView view, boolean allowReview, JsonNode progressState) { }
     private record GradingRow(long paperItemId, long sectionId, String questionTypeCode, JsonNode answerKey,

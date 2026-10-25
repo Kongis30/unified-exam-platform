@@ -169,10 +169,98 @@ public class SatPaperEditorService {
         if (current.size() != questionIds.size() || !new java.util.HashSet<>(current).equals(new java.util.HashSet<>(questionIds))) {
             throw badRequest("The question order must include every question in this module exactly once.");
         }
+        if (questionIds.isEmpty()) return;
+
+        // 先将顺序整体移到当前最大值之后，避开唯一索引上的中间态冲突，再写入最终顺序。
+        Integer maxOrder = jdbc.queryForObject(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM paper_items WHERE section_id = ?", Integer.class, moduleId);
+        long temporaryOffset = (maxOrder == null ? -1L : maxOrder.longValue()) + current.size() + 1L;
+        jdbc.update("UPDATE paper_items SET sort_order = sort_order + ? WHERE section_id = ?",
+            temporaryOffset, moduleId);
         for (int index = 0; index < questionIds.size(); index++) {
             jdbc.update("UPDATE paper_items SET sort_order = ?, display_number = ? WHERE section_id = ? AND question_id = ?",
                 index, index + 1, moduleId, questionIds.get(index));
         }
+    }
+
+    /** 保存整张试卷的模块题目布局；一次事务完成模块内排序与跨模块移动。 */
+    @Transactional
+    public void saveQuestionLayout(long paperId, QuestionLayoutWrite request) {
+        requireEditableSatPaper(paperId);
+        List<ModuleLayout> modules = jdbc.query("""
+            SELECT id, section_code, JSON_UNQUOTE(JSON_EXTRACT(settings_json, '$.subject')) AS subject
+            FROM paper_sections
+            WHERE paper_id = ? AND parent_section_id IS NULL ORDER BY sort_order, id
+            """, (rs, row) -> {
+            String code = rs.getString("section_code");
+            String subject = rs.getString("subject");
+            if (subject == null || subject.isBlank()) subject = code.startsWith("MATH") ? "Math" : "RW";
+            return new ModuleLayout(rs.getLong("id"), code, subject);
+        }, paperId);
+        Map<Long, String> moduleCodes = new LinkedHashMap<>();
+        Map<Long, String> moduleSubjects = new LinkedHashMap<>();
+        modules.forEach(module -> {
+            moduleCodes.put(module.moduleId(), module.sectionCode());
+            moduleSubjects.put(module.moduleId(), module.subject());
+        });
+        if (request == null || request.modules() == null || request.modules().size() != modules.size()) {
+            throw badRequest("The layout must include every SAT module exactly once.");
+        }
+
+        Map<Long, List<Long>> requestedOrder = new LinkedHashMap<>();
+        for (ModuleQuestionOrder module : request.modules()) {
+            if (module == null || !moduleCodes.containsKey(module.moduleId()) || module.questionIds() == null
+                    || requestedOrder.putIfAbsent(module.moduleId(), module.questionIds()) != null) {
+                throw badRequest("The layout must include every SAT module exactly once.");
+            }
+        }
+        if (requestedOrder.size() != modules.size()) {
+            throw badRequest("The layout must include every SAT module exactly once.");
+        }
+
+        List<PaperItemRow> currentItems = jdbc.query("""
+            SELECT pi.id, pi.question_id FROM paper_items pi
+            JOIN paper_sections ps ON ps.id = pi.section_id
+            WHERE ps.paper_id = ? AND ps.parent_section_id IS NULL
+            ORDER BY ps.sort_order, pi.sort_order, pi.id
+            """, (rs, row) -> new PaperItemRow(rs.getLong("id"), rs.getLong("question_id")), paperId);
+        java.util.Set<Long> currentQuestionIds = currentItems.stream().map(PaperItemRow::questionId)
+            .collect(java.util.stream.Collectors.toSet());
+        List<Long> orderedQuestionIds = requestedOrder.values().stream().flatMap(List::stream).toList();
+        if (orderedQuestionIds.size() != currentItems.size()
+                || new java.util.HashSet<>(orderedQuestionIds).size() != orderedQuestionIds.size()
+                || !currentQuestionIds.equals(new java.util.HashSet<>(orderedQuestionIds))) {
+            throw badRequest("The layout must include every question in this paper exactly once.");
+        }
+
+        if (currentItems.isEmpty()) return;
+        Integer maxOrder = jdbc.queryForObject("""
+            SELECT COALESCE(MAX(pi.sort_order), -1) FROM paper_items pi
+            JOIN paper_sections ps ON ps.id = pi.section_id
+            WHERE ps.paper_id = ? AND ps.parent_section_id IS NULL
+            """, Integer.class, paperId);
+        long temporaryOffset = (maxOrder == null ? -1L : maxOrder.longValue()) + currentItems.size() + 1L;
+        jdbc.update("""
+            UPDATE paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
+            SET pi.sort_order = pi.sort_order + ? WHERE ps.paper_id = ? AND ps.parent_section_id IS NULL
+            """, temporaryOffset, paperId);
+
+        Map<Long, Long> itemIds = new LinkedHashMap<>();
+        currentItems.forEach(item -> itemIds.put(item.questionId(), item.itemId()));
+        requestedOrder.forEach((moduleId, questionIds) -> {
+            for (int index = 0; index < questionIds.size(); index++) {
+                long questionId = questionIds.get(index);
+                jdbc.update("""
+                    UPDATE questions q JOIN paper_items pi ON pi.question_id = q.id
+                    SET q.render_json = JSON_SET(COALESCE(q.render_json, JSON_OBJECT()), '$.sat.subject', ?)
+                    WHERE pi.id = ?
+                    """, moduleSubjects.get(moduleId), itemIds.get(questionId));
+                jdbc.update("""
+                    UPDATE paper_items SET section_id = ?, sort_order = ?, display_number = ?, scoring_section_code = ?
+                    WHERE id = ?
+                    """, moduleId, index, index + 1, moduleCodes.get(moduleId), itemIds.get(questionId));
+            }
+        });
     }
 
     @Transactional
@@ -373,7 +461,6 @@ public class SatPaperEditorService {
     private ResponseStatusException badRequest(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }
 
     private record Stage(String code, String name, int order) { }
-    private record PaperRow(long id, String title, String description, String status) { }
     private record SectionRow(long id, String code, JsonNode settings) { }
 
     public record PaperStructure(long paperId, String paperTitle, String paperDescription, String status, List<StageView> stages) { }
@@ -395,5 +482,10 @@ public class SatPaperEditorService {
             BigDecimal score, String tags, String analysis, String type) { }
     public record ModuleWrite(String moduleName, String description, String subject, Integer moduleType,
             String moduleDifficulty, Integer timeLimit, Integer questionCount, Integer totalScore, Integer sortOrder) { }
+    public record ModuleQuestionOrder(long moduleId, List<Long> questionIds) { }
+    public record QuestionLayoutWrite(List<ModuleQuestionOrder> modules) { }
     public record MaterialWrite(String title, String materialType, String content, String fileUrl, String source) { }
+    record PaperRow(long id, String title, String description, String status) { }
+    record ModuleLayout(long moduleId, String sectionCode, String subject) { }
+    record PaperItemRow(long itemId, long questionId) { }
 }

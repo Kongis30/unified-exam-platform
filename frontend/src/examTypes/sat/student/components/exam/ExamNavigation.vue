@@ -4,7 +4,7 @@
     <div class="bottom-nav">
       <!-- 左侧：用户信息和题目进度 -->
       <div class="nav-left">
-        <div class="user-info">Jin Tang</div>
+        <div class="user-info">{{ studentName }}</div>
       </div>
       
       <!-- 中间：题号选择按钮 -->
@@ -95,7 +95,8 @@
 </template>
 
 <script>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { authState } from '@/auth'
 
 export default {
   name: 'ExamNavigation',
@@ -127,6 +128,7 @@ export default {
   ],
   setup(props, { emit }) {
     const showQuestionPanel = ref(false)
+    const studentName = computed(() => authState.user?.realName?.trim() || authState.user?.username || 'Student')
     
     const toggleQuestionPanel = () => {
       showQuestionPanel.value = !showQuestionPanel.value
@@ -151,6 +153,7 @@ export default {
     
     return {
       showQuestionPanel,
+      studentName,
       toggleQuestionPanel,
       navigateToQuestion,
       submitExam,

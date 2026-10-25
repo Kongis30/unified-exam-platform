@@ -68,18 +68,19 @@ export const useExamFlowStore = defineStore('satFormalExamFlow', () => {
         spendSeconds: answer.spendSeconds,
         isMarked: answer.isMarked,
       })),
-      mode: 'exam',
+      mode: snapshot.practice ? 'practice' : 'exam',
       abnormalCount: snapshot.abnormalCount,
     }
     localStorage.setItem('sat:exam:last', JSON.stringify({
-      recordId: recordId.value, examId: examId.value, paperId: paperId.value, mode: 'exam',
+      recordId: recordId.value, examId: examId.value, paperId: paperId.value,
+      mode: snapshot.practice ? 'practice' : 'exam',
     }))
   }
 
-  async function init(id) {
+  async function init(id, mode = 'exam') {
     reset()
     reviewMode.value = false
-    applySnapshot(await examApi.startExam(id))
+    applySnapshot(mode === 'practice' ? await examApi.startPractice(id) : await examApi.startExam(id))
   }
 
   async function initFromProgress(_paperId, attemptId) {

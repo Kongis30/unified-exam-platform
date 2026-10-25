@@ -39,7 +39,7 @@ export default {
         // 携带考试上下文跳转，保证硬刷新后仍可断点续考
         const query = { recordId: flow.recordId }
         if (flow.examId) query.examId = flow.examId
-        if (flow.paperId) query.mode = flow.examId ? 'exam' : 'practice'
+        if (flow.paperId) query.mode = flow.resume?.mode === 'practice' ? 'practice' : 'exam'
         router.push({ path: '/student/sat/exams/' + (flow.examId || route.query.examId), query })
       }, 1500)
     })

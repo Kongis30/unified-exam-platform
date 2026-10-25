@@ -59,6 +59,8 @@ a { color: inherit; text-decoration: none; }
 .error-text { margin: 0; }
 
 .main-layout { min-height: 100vh; }
+.main-layout--exam { height: 100vh; min-height: 0; overflow: hidden; }
+.main-layout--exam .main-layout__content { height: 100%; padding: 0; overflow: hidden; }
 .main-layout__header {
   position: sticky;
   top: 0;
@@ -536,7 +538,10 @@ td small { margin-top: 4px; color: #8795aa; font-size: 9px; }
   .main-layout__header { grid-template-columns: 1fr auto; gap: 10px 14px; padding: 10px 18px; }
   .main-layout__nav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; overflow-x: auto; }
   .main-layout__nav a { flex: 0 0 auto; font-size: 12px; }
-  .main-layout__user { grid-column: 2; grid-row: 1; gap: 8px; font-size: 12px; }
+  .main-layout__user { grid-column: 2; grid-row: 1; gap: 8px; min-width: 0; max-width: 42vw; font-size: 12px; }
+  .main-layout__user .account-menu,
+  .main-layout__user .account-menu__trigger { min-width: 0; max-width: 100%; }
+  .main-layout__user .account-menu__trigger strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .main-layout__content { padding: 18px; }
   .management-heading { align-items: start; gap: 10px; }
   .management-heading h1 { font-size: 30px; }

@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppButton from '@/components/AppButton.vue'
 import AppCard from '@/components/AppCard.vue'
 import AppModal from '@/components/AppModal.vue'
-import { createUser, listUsers, resetUserPassword, setUserStatus } from '@/api/platform'
+import ResponsiveActionGroup from '@/components/admin/ResponsiveActionGroup.vue'
+import { createUser, deleteUser, listUsers, resetUserPassword, setUserStatus, updateUserRole } from '@/api/platform'
 
 const DEFAULT_STUDENT_PASSWORD = '9297019872'
 
@@ -21,6 +22,13 @@ const email = ref('')
 const phone = ref('')
 const usernameCustomized = ref(false)
 const fieldErrors = ref({ realName: '', username: '', password: '', email: '' })
+const roleEditorUser = ref(null)
+const selectedRole = ref('STUDENT')
+const savingRole = ref(false)
+const deleteTargetUser = ref(null)
+const deleteCountdown = ref(5)
+const deletingUser = ref(false)
+let deleteTimer
 
 const filteredUsers = computed(() => {
   const nameFilter = filters.value.name.trim().toLocaleLowerCase()
@@ -70,6 +78,14 @@ function clearFilters() {
 
 function formatRole(roleCode) {
   return ({ ADMIN: 'Administrator', TEACHER: 'Teacher', STUDENT: 'Student' })[roleCode] || roleCode || '—'
+}
+
+function accountActions(user) {
+  return [
+    { key: 'password', label: 'Reset password', onSelect: () => changePassword(user) },
+    { key: 'status', label: user.status === 'ACTIVE' ? 'Disable' : 'Enable', onSelect: () => toggleStatus(user) },
+    { key: 'delete', label: 'Delete permanently', danger: true, onSelect: () => openDeleteDialog(user) },
+  ]
 }
 
 function openCreateDialog() {
@@ -154,6 +170,75 @@ async function changePassword(user) {
   catch (requestError) { error.value = requestError.message }
 }
 
+function openRoleEditor(user) {
+  roleEditorUser.value = user
+  selectedRole.value = user.roleCode
+  error.value = ''
+}
+
+async function saveRole() {
+  if (!roleEditorUser.value || selectedRole.value === roleEditorUser.value.roleCode) {
+    roleEditorUser.value = null
+    return
+  }
+  savingRole.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    await updateUserRole(roleEditorUser.value.id, selectedRole.value)
+    notice.value = `${roleEditorUser.value.realName || roleEditorUser.value.username} is now a ${formatRole(selectedRole.value)}.`
+    roleEditorUser.value = null
+    await loadUsers()
+  } catch (requestError) {
+    error.value = requestError.message
+  } finally {
+    savingRole.value = false
+  }
+}
+
+function openDeleteDialog(user) {
+  error.value = ''
+  deleteTargetUser.value = user
+  deleteCountdown.value = 5
+  window.clearInterval(deleteTimer)
+  deleteTimer = window.setInterval(() => {
+    if (deleteCountdown.value <= 1) {
+      deleteCountdown.value = 0
+      window.clearInterval(deleteTimer)
+      deleteTimer = undefined
+    } else {
+      deleteCountdown.value -= 1
+    }
+  }, 1000)
+}
+
+function closeDeleteDialog(force = false) {
+  if (deletingUser.value && !force) return
+  window.clearInterval(deleteTimer)
+  deleteTimer = undefined
+  deleteTargetUser.value = null
+}
+
+async function confirmDeleteUser() {
+  if (!deleteTargetUser.value || deleteCountdown.value > 0) return
+  deletingUser.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const removedName = deleteTargetUser.value.realName || deleteTargetUser.value.username
+    await deleteUser(deleteTargetUser.value.id)
+    closeDeleteDialog(true)
+    notice.value = `${removedName} and their linked exam records were deleted.`
+    await loadUsers()
+  } catch (requestError) {
+    error.value = requestError.message
+  } finally {
+    deletingUser.value = false
+  }
+}
+
+onBeforeUnmount(() => window.clearInterval(deleteTimer))
+
 onMounted(loadUsers)
 </script>
 
@@ -171,7 +256,7 @@ onMounted(loadUsers)
       </div>
     </header>
 
-    <p v-if="error && !showCreateDialog" class="error-text page-message" role="alert">{{ error }}</p>
+    <p v-if="error && !showCreateDialog && !roleEditorUser && !deleteTargetUser" class="error-text page-message" role="alert">{{ error }}</p>
     <p v-else-if="notice" class="success-text page-message" role="status">{{ notice }}</p>
 
     <AppCard title="Platform accounts" subtitle="All roles use one account directory across SAT, PSAT, and SHSAT.">
@@ -230,22 +315,18 @@ onMounted(loadUsers)
                 <strong>{{ user.realName || user.username || 'Unnamed account' }}</strong>
                 <small v-if="user.username && user.username.toLocaleLowerCase() !== (user.realName || '').trim().toLocaleLowerCase()">{{ user.username }}</small>
               </td>
-              <td class="accounts-cell-role"><span class="role-pill">{{ formatRole(user.roleCode) }}</span></td>
+              <td class="accounts-cell-role">
+                <button class="role-edit" type="button" :aria-label="`Change ${user.username} role`" @click="openRoleEditor(user)">
+                  <span class="role-pill">{{ formatRole(user.roleCode) }}</span><span class="role-edit__icon" aria-hidden="true">⌄</span>
+                </button>
+              </td>
               <td class="accounts-cell-contact">
                 <span>{{ user.email || user.phone || '—' }}</span>
                 <small v-if="user.email && user.phone">{{ user.phone }}</small>
               </td>
               <td class="accounts-cell-status"><span class="status-pill" :class="user.status === 'ACTIVE' ? 'is-active' : 'is-disabled'">{{ user.status === 'ACTIVE' ? 'Active' : 'Disabled' }}</span></td>
               <td class="accounts-cell-actions">
-                <div class="table-actions">
-                  <button class="account-action account-action--password" type="button" @click="changePassword(user)">Reset password</button>
-                  <button
-                    class="account-action"
-                    :class="user.status === 'ACTIVE' ? 'account-action--disable' : 'account-action--enable'"
-                    type="button"
-                    @click="toggleStatus(user)"
-                  >{{ user.status === 'ACTIVE' ? 'Disable' : 'Enable' }}</button>
-                </div>
+                <ResponsiveActionGroup :actions="accountActions(user)" label="Account actions" align="center" />
               </td>
             </tr>
             <tr v-if="!filteredUsers.length">
@@ -312,6 +393,49 @@ onMounted(loadUsers)
         <AppButton type="submit" form="create-account-form" :disabled="creating">{{ creating ? 'Creating…' : 'Create account' }}</AppButton>
       </template>
     </AppModal>
+
+    <AppModal
+      v-if="roleEditorUser"
+      title="Change account role"
+      :description="`Changing ${roleEditorUser.realName || roleEditorUser.username}’s role affects access across every exam module.`"
+      :busy="savingRole"
+      @close="roleEditorUser = null"
+    >
+      <form id="change-account-role-form" class="role-editor-form" @submit.prevent="saveRole">
+        <p class="role-editor-account">{{ roleEditorUser.realName || roleEditorUser.username }} <span>{{ roleEditorUser.username }}</span></p>
+        <label class="form-field">
+          <span class="form-label">Role</span>
+          <select v-model="selectedRole" class="form-input">
+            <option value="STUDENT">Student</option>
+            <option value="TEACHER">Teacher</option>
+            <option value="ADMIN">Administrator</option>
+          </select>
+        </label>
+        <p class="role-editor-note">Administrators can manage accounts and all exam modules. Teachers and students have different access.</p>
+        <p v-if="error" class="error-text" role="alert">{{ error }}</p>
+      </form>
+      <template #footer>
+        <AppButton type="button" variant="secondary" :disabled="savingRole" @click="roleEditorUser = null">Cancel</AppButton>
+        <AppButton type="submit" form="change-account-role-form" :disabled="savingRole">{{ savingRole ? 'Saving…' : 'Save role' }}</AppButton>
+      </template>
+    </AppModal>
+
+    <AppModal
+      v-if="deleteTargetUser"
+      title="Permanently delete account?"
+      :description="`This removes ${deleteTargetUser.realName || deleteTargetUser.username} and their linked exam attempts, answers, scores, and class memberships from every exam module. Shared papers and exams will remain.`"
+      :busy="deletingUser"
+      @close="closeDeleteDialog"
+    >
+      <p class="delete-account-confirmation">This action cannot be undone. The delete button will be available in {{ deleteCountdown }} seconds.</p>
+      <p v-if="error" class="error-text" role="alert">{{ error }}</p>
+      <template #footer>
+        <AppButton type="button" variant="secondary" :disabled="deletingUser" @click="closeDeleteDialog">Cancel</AppButton>
+        <AppButton type="button" variant="danger" :disabled="deletingUser || deleteCountdown > 0" @click="confirmDeleteUser">
+          {{ deletingUser ? 'Deleting…' : deleteCountdown > 0 ? `Delete (${deleteCountdown}s)` : 'Delete permanently' }}
+        </AppButton>
+      </template>
+    </AppModal>
   </main>
 </template>
 
@@ -373,17 +497,17 @@ onMounted(loadUsers)
 .accounts-table .role-pill,
 .accounts-table .status-pill { align-items: center; border: 1px solid transparent; border-radius: 999px; padding: 5px 10px; font-size: 12px; font-weight: 650; letter-spacing: 0; line-height: 1.2; }
 .accounts-table .role-pill { border-color: #dce6f4; color: #536b8a; background: #f3f7fc; }
+.role-edit { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 999px; padding: 2px; color: inherit; background: transparent; cursor: pointer; }
+.role-edit:hover { background: #eef4fd; }
+.role-edit:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.role-edit__icon { color: #8291a8; font-size: 12px; }
+.role-editor-form { display: grid; gap: 16px; }
+.role-editor-account { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0; color: #23334d; font-weight: 650; }
+.role-editor-account span { color: #71819a; font-size: 13px; font-weight: 450; }
+.role-editor-note { margin: -6px 0 0; color: #66758d; font-size: 13px; line-height: 1.5; }
 .accounts-table .status-pill.is-active { border-color: #c5ead9; color: #13764f; background: #edf9f3; }
 .accounts-table .status-pill.is-disabled { border-color: #f1d0d0; color: #a84b4b; background: #fff4f3; }
-.accounts-cell-actions .table-actions { justify-content: center; gap: 8px; }
-.account-action { min-height: 34px; border: 1px solid #d8e3f0; border-radius: 7px; padding: 0 10px; color: #53627a; background: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
-.account-action:hover { border-color: #b8cbe3; background: #f7faff; }
-.account-action--password { color: #2459b8; border-color: #cfddf4; }
-.account-action--password:hover { border-color: #a9c2eb; background: #eff5ff; }
-.account-action--disable { color: #68778d; border-color: #dfe5ee; }
-.account-action--disable:hover { color: #a94343; border-color: #e9b5b5; background: #fff4f3; }
-.account-action--enable { color: #13764f; border-color: #c5ead9; }
-.account-action--enable:hover { border-color: #9ed8bc; background: #edf9f3; }
+.delete-account-confirmation { margin: 0; color: #5b6b82; font-size: 14px; line-height: 1.55; }
 .clear-account-filters { margin-left: 5px; border: 0; padding: 0; color: var(--color-primary-strong); background: transparent; font: inherit; font-weight: 700; cursor: pointer; }
 @media (max-width: 720px) {
   .accounts-toolbar { align-items: stretch; }

@@ -77,6 +77,14 @@ export function setUserStatus(userId, status) {
   return apiRequest(`/api/admin/users/${userId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) })
 }
 
+export function updateUserRole(userId, roleCode) {
+  return apiRequest(`/api/admin/users/${userId}/role`, { method: 'PUT', body: JSON.stringify({ roleCode }) })
+}
+
+export function deleteUser(userId) {
+  return apiRequest(`/api/admin/users/${userId}`, { method: 'DELETE' })
+}
+
 export function resetUserPassword(userId, password) {
   return apiRequest(`/api/admin/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ password }) })
 }
@@ -120,6 +128,10 @@ export function updateClass(classId, classroom, examTypeCodes = []) {
 
 export function setClassStatus(classId, status) {
   return apiRequest(`/api/admin/classes/${classId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) })
+}
+
+export function deleteClass(classId) {
+  return apiRequest(`/api/admin/classes/${classId}`, { method: 'DELETE' })
 }
 
 export function listClassStudents(classId) {
@@ -242,6 +254,10 @@ export function createExam(paperId, exam) {
   return apiRequest(`/api/admin/papers/${paperId}/exams`, { method: 'POST', body: JSON.stringify(exam) })
 }
 
+export function getExam(examId) {
+  return apiRequest(`/api/admin/exams/${examId}`)
+}
+
 export function updateExam(examId, exam) {
   return apiRequest(`/api/admin/exams/${examId}`, { method: 'PATCH', body: JSON.stringify(exam) })
 }
@@ -256,6 +272,10 @@ export function publishExam(examId) {
 
 export function unpublishExam(examId) {
   return apiRequest(`/api/admin/exams/${examId}/unpublish`, { method: 'POST' })
+}
+
+export function closeExam(examId) {
+  return apiRequest(`/api/admin/exams/${examId}/close`, { method: 'POST' })
 }
 
 export function deleteExam(examId) {

@@ -1,7 +1,7 @@
 <template>
   <AdminLayout>
     <div class="main-content">
-      <RouterLink class="sat-editor-back" :to="{ name: 'sat-admin' }">← Back to SAT administration</RouterLink>
+      <RouterLink class="sat-editor-back" :to="returnLocation">← Back to Paper Management</RouterLink>
       <div class="header-section">
         <h1 class="page-title">Edit Paper: {{ paperTitle }}</h1>
         <p class="page-subtitle">Manage SAT sections, modules and questions for this paper</p>
@@ -54,7 +54,9 @@
               <div class="section-header" @click="toggleSection(section.id)">
                 <div class="section-info">
                   <h4>{{ section.name }}</h4>
-                  <span class="module-count">{{ section.modules.length }} modules</span>
+                  <span class="module-count">
+                    {{ section.modules.length }} {{ section.modules.length === 1 ? 'module' : 'modules' }}
+                  </span>
                 </div>
                 <el-icon class="expand-icon" :class="{ 'expanded': expandedSections.includes(section.id) }">
                   <ArrowDown />
@@ -75,7 +77,7 @@
                       <h5>{{ module.name }}</h5>
                       <span class="question-count">
                         {{ module.isAdaptive 
-                          ? `${module.adaptiveOptions?.length || 0} modules` 
+                          ? `${module.adaptiveOptions?.length || 0} ${module.adaptiveOptions?.length === 1 ? 'module' : 'modules'}`
                           : `${(module.questions && module.questions.length) ? module.questions.length : 0} questions` }}
                       </span>
                     </div>
@@ -474,7 +476,7 @@ import { ref, reactive, computed, onMounted, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
-  ElButton, ElCascader, ElCol, ElEmpty, ElForm, ElFormItem, ElIcon, ElImage, ElInput,
+  ElButton, ElCascader, ElCol, ElEmpty, ElForm, ElFormItem, ElIcon, ElImage, ElInput, ElLoading,
   ElInputNumber, ElOption, ElRadio, ElRow, ElSelect, ElSwitch, ElUpload,
 } from 'element-plus'
 import { ArrowDown, Plus } from '@element-plus/icons-vue'
@@ -497,6 +499,20 @@ const operationToast = {
 
 const route = useRoute()
 const router = useRouter()
+const vLoading = ElLoading.directive
+const returnLocation = computed(() => {
+  const returnTo = route.query.returnTo
+  if (typeof returnTo === 'string'
+    && returnTo.startsWith('/exam-types/SAT/admin')
+    && !returnTo.startsWith('//')) {
+    return returnTo
+  }
+  return { name: 'sat-admin', query: { tab: 'papers' } }
+})
+
+function returnToPaperList() {
+  router.push(returnLocation.value)
+}
 
 const satTagOptions = [
   {
@@ -683,6 +699,7 @@ const showQuestionPreview = ref(false)
 const loading = ref(false)
 const scoringType = ref('SAT')
 const savingScoringType = ref(false)
+const paperSettings = ref({ adaptiveMode: true, restTimeSeconds: 600 })
 const stemImageUploading = ref(false)
 const materialImageUploading = ref(false)
 const questionContentInput = ref(null)
@@ -748,7 +765,7 @@ const clearLegacyQuestionTag = () => {
 const materialHtml = computed(() => renderMarkdown(questionForm.material))
 const materialImageUrl = ref('')
 
-const apiBase = ''
+const apiBase = import.meta.env.VITE_API_BASE_URL || ''
 
 const normalizeUrl = (url) => {
   if (!url) return ''
@@ -1021,13 +1038,21 @@ const loadPaperInfo = async () => {
   const response = await paperApi.getInfo(paperId)
   if (response?.success) {
     scoringType.value = Number(response.data?.totalScore) === 1520 ? 'PSAT' : 'SAT'
+    paperSettings.value = {
+      adaptiveMode: response.data?.settings?.adaptiveMode ?? true,
+      restTimeSeconds: response.data?.settings?.restTimeSeconds ?? 600,
+    }
   }
 }
 
 const saveScoringType = async () => {
   savingScoringType.value = true
   try {
-    await paperApi.update(paperId, { scoringType: scoringType.value })
+    const response = await paperApi.update(paperId, {
+      scoringType: scoringType.value,
+      ...paperSettings.value,
+    })
+    paperSettings.value = response.data
     operationToast.success('Scoring table updated')
   } catch (error) {
     console.error('Failed to update scoring table:', error)
@@ -1047,7 +1072,7 @@ const loadPaperStructure = async () => {
     // 验证试卷ID
     if (!paperId || isNaN(paperId)) {
       operationToast.error('Invalid paper ID')
-      router.push({ name: 'sat-admin' })
+      returnToPaperList()
       return
     }
     
@@ -1081,7 +1106,7 @@ const loadPaperStructure = async () => {
             moduleType: module.moduleNumber,
             subject: stageCode.startsWith('RW') ? 'RW' : 'Math',
           sortOrder: derivedOrder,
-            moduleDifficulty: module.moduleDifficulty || 'Easy',
+            moduleDifficulty: module.moduleDifficulty || 'Mid',
             description: module.description,
             questionCount: module.questionCount,
             totalScore: module.totalScore,
@@ -1141,7 +1166,7 @@ const loadPaperStructure = async () => {
       // Return to the paper list when the requested paper is missing.
       if (response.message?.includes('not found')) {
         setTimeout(() => {
-          router.push({ name: 'sat-admin' })
+          returnToPaperList()
         }, 2000)
       }
     }
@@ -1153,7 +1178,7 @@ const loadPaperStructure = async () => {
     if (error.status === 404) {
       errorMessage = 'Paper not found, redirecting to papers list'
       setTimeout(() => {
-        router.push({ name: 'sat-admin' })
+        returnToPaperList()
       }, 2000)
     } else if (error.status === 500) {
       errorMessage = 'Server internal error, please try again later'
@@ -1925,7 +1950,7 @@ const addNewOption = () => {
 const toggleSortMode = () => {
   sortMode.value = !sortMode.value
   if (sortMode.value) {
-    operationToast.info('Sort mode enabled. You can drag questions to reorder them.')
+    operationToast.info('Drag questions to reorder them or move them between modules.')
   } else {
     operationToast.info('Sort mode disabled.')
   }
@@ -1942,25 +1967,11 @@ const saveSortOrder = async () => {
   if (!sortMode.value) return
   
   try {
-    // 遍历所有模块，保存题目顺序
-    for (const section of satSections.value) {
-      for (const module of section.modules) {
-        if (module.questions && module.questions.length > 0) {
-          const questionIds = module.questions.map(q => q.questionId || q.id)
-          await paperEditApi.updateQuestionOrder(module.id, questionIds)
-        }
-        
-        // 处理自适应模块的子选项
-        if (module.isAdaptive && module.options) {
-          for (const option of module.options) {
-            if (option.questions && option.questions.length > 0) {
-              const questionIds = option.questions.map(q => q.id)
-              await paperEditApi.updateQuestionOrder(option.id, questionIds)
-            }
-          }
-        }
-      }
-    }
+    const modules = satSections.value.flatMap(section => section.modules).map(module => ({
+      moduleId: module.id,
+      questionIds: (module.questions || []).map(question => question.questionId || question.id),
+    }))
+    await paperEditApi.saveQuestionLayout(modules)
     
     operationToast.success('All question orders saved successfully')
     sortMode.value = false
@@ -1969,6 +1980,7 @@ const saveSortOrder = async () => {
   } catch (error) {
     console.error('保存题目顺序失败:', error)
     operationToast.error('Failed to save question order')
+    await loadPaperStructure()
   }
 }
 

@@ -26,5 +26,7 @@ logging:
     com.unifiedexam.platform: INFO
 
 platform:
+  uploads:
+    sat-import-materials-directory: ${SAT_IMPORT_MATERIALS_DIRECTORY:uploads/sat-import/materials}
   session:
     cookie-secure: ${SESSION_COOKIE_SECURE:false}

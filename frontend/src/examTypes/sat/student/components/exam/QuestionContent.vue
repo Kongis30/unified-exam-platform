@@ -4,14 +4,21 @@
       <!-- 阅读材料区域：当有文字材料或图片材料时显示 -->
       <div v-if="showPassage && hasPassageSection" class="passage-section">
         <div class="passage-content sat-rich-text" :class="{ 'highlightable': highlightMode }" @mouseup="handleTextSelection($event, 'passage')">
-          <div v-math v-html="passageHtml" ref="passageHtmlRef" @click="handleImageClick"></div>
+          <div v-math v-html="passageHtml" ref="passageHtmlRef" @click="handleImageClick" @error.capture="handleInlineImageError"></div>
           <!-- 显示材料图片（若有），宽度与材料区域一致，点击可预览 -->
           <div v-if="materialImageUrl" class="material-image">
-            <img
+            <img v-if="!materialImageUnavailable"
               :src="materialImageUrl"
               alt="Material"
+              @error="handleMaterialImageError"
               @click="emitImagePreview(materialImageUrl)"
             />
+            <div v-else class="material-image-fallback" role="img" aria-label="Material image unavailable">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13ZM6 6v12h12V6H6Zm1 10 3.1-3.6 2.1 2.3 2.2-2.7L17 16H7Zm2-6.3a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z" />
+              </svg>
+              <span>Material image unavailable</span>
+            </div>
           </div>
         </div>
       </div>
@@ -19,7 +26,7 @@
       <!-- 题目区域 -->
       <div v-if="showQuestionText" class="question-section" :class="{ 'no-passage': !question.passage }">
         <div class="question-text sat-rich-text" :class="{ 'highlightable': highlightMode }" @mouseup="handleTextSelection($event, 'question')">
-          <div v-math v-html="questionHtml" ref="questionHtmlRef" @click="handleImageClick"></div>
+          <div v-math v-html="questionHtml" ref="questionHtmlRef" @click="handleImageClick" @error.capture="handleInlineImageError"></div>
         </div>
       </div>
     </div>
@@ -28,7 +35,7 @@
 </template>
 
 <script>
-import { computed, ref, watch, watchEffect } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { renderMarkdown } from '../../utils/markdown.js'
 import { paperEditApi } from '../../api/exam.js'
 
@@ -102,24 +109,20 @@ export default {
     // 备用：当题目中未携带图片URL时，按需拉取题目详情以获得材料图片
     const materialImageUrlRemote = ref('')
     const displayImageUrl = computed(() => materialImageUrl.value || materialImageUrlRemote.value)
-    const fetchedFor = ref(null)
+    const materialImageUnavailable = ref(false)
     watch(() => props.question?.id, async (qid) => {
       try {
         materialImageUrlRemote.value = ''
-        fetchedFor.value = null
+        materialImageUnavailable.value = false
         // 若已有URL则不再拉取
         if (materialImageUrl.value) return
         if (!qid) return
         const res = await paperEditApi.getQuestionDetail(qid)
         const mat = res?.data?.material || res?.material || null
         const url = normalize(mat?.fileUrl || '')
-        if (url) {
-          materialImageUrlRemote.value = url
-          fetchedFor.value = qid
-          console.log('[QuestionContent] fetched material.fileUrl from detail', { qid, url })
-        }
-      } catch (e) {
-        console.warn('[QuestionContent] fetch question detail failed', e)
+        if (url) materialImageUrlRemote.value = url
+      } catch {
+        // 题目详情中的可选材料缺失时，仍继续显示题目文字。
       }
     }, { immediate: true })
     const questionHtml = computed(() => renderMarkdown(props.question.question))
@@ -133,19 +136,23 @@ export default {
       return hasText || hasImage
     })
 
-    // Debug: 打印材料图片字段与规范化后的URL，帮助定位未显示原因
-    watchEffect(() => {
-      try {
-        console.log('[QuestionContent] material debug', {
-          questionId: props.question?.id,
-          passageExists: !!(props.question?.passage && String(props.question.passage).trim()),
-          rawImage: rawImage.value,
-          normalizedUrl: materialImageUrl.value,
-          materialObj: props.question?.material || null
-        })
-      } catch (e) {}
-    })
-    
+    const handleMaterialImageError = () => {
+      materialImageUnavailable.value = true
+    }
+
+    // v-html 内图片由 capture 阶段接收非冒泡的 error 事件，仅替换当前渲染节点。
+    const handleInlineImageError = (event) => {
+      const image = event?.target
+      if (image?.tagName !== 'IMG' || image.dataset.fallbackApplied) return
+      image.dataset.fallbackApplied = 'true'
+      const fallback = document.createElement('span')
+      fallback.className = 'inline-image-fallback'
+      fallback.setAttribute('role', 'img')
+      fallback.setAttribute('aria-label', 'Image unavailable')
+      fallback.textContent = 'Image unavailable'
+      image.replaceWith(fallback)
+    }
+
     const removeHighlightWrapper = (el) => {
       if (!el || !el.parentNode) return
       const parent = el.parentNode
@@ -241,6 +248,9 @@ export default {
       hasPassageSection,
       handleTextSelection,
       handleImageClick,
+      handleMaterialImageError,
+      handleInlineImageError,
+      materialImageUnavailable,
       emitImagePreview,
       toggleHighlight,
       addNote,
@@ -356,6 +366,40 @@ export default {
   border-radius: 6px;
   background: #fff;
   cursor: zoom-in;
+}
+
+.material-image-fallback {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: min(100%, 640px);
+  min-height: 120px;
+  padding: 20px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 14px;
+  text-align: center;
+}
+
+.material-image-fallback svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+  opacity: .7;
+}
+
+.inline-image-fallback {
+  display: inline-flex;
+  align-items: center;
+  margin: 4px 0;
+  padding: 4px 9px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 13px;
 }
 
 .question-section {

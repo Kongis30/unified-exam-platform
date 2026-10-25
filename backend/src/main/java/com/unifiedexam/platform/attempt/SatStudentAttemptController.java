@@ -5,11 +5,13 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -29,6 +31,28 @@ public class SatStudentAttemptController {
     @PostMapping("/exams/{examId}/sat-attempt")
     public SatStudentAttemptService.SatAttemptView start(@PathVariable long examId, Authentication authentication) {
         return attempts.start(examId, authentication.getName());
+    }
+
+    @PostMapping("/sat-practice-papers/{paperId}/attempts")
+    public SatStudentAttemptService.SatAttemptView startPractice(@PathVariable long paperId, Authentication authentication) {
+        return attempts.startPractice(paperId, authentication.getName());
+    }
+
+    @GetMapping("/sat-practice-papers")
+    public List<SatStudentAttemptService.PracticePaperView> practicePapers(Authentication authentication) {
+        return attempts.practicePapers(authentication.getName());
+    }
+
+    @GetMapping("/sat-practice-attempts")
+    public SatStudentAttemptService.PracticeHistoryPage practiceHistory(
+            @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int size,
+            Authentication authentication) {
+        return attempts.practiceHistory(authentication.getName(), page, size);
+    }
+
+    @DeleteMapping("/sat-practice-attempts/{attemptId}")
+    public void deletePracticeAttempt(@PathVariable long attemptId, Authentication authentication) {
+        attempts.deletePracticeAttempt(attemptId, authentication.getName());
     }
 
     @GetMapping("/sat-attempts/{attemptId}")
@@ -88,11 +112,6 @@ public class SatStudentAttemptController {
     public SatStudentAttemptService.SatAttemptView updatePresence(@PathVariable long attemptId,
             @Valid @RequestBody PresenceRequest request, Authentication authentication) {
         return attempts.updatePresence(attemptId, request.questionNumber(), authentication.getName());
-    }
-
-    @PostMapping("/sat-attempts/{attemptId}/focus-violations")
-    public int recordFocusViolation(@PathVariable long attemptId, Authentication authentication) {
-        return attempts.recordFocusViolation(attemptId, authentication.getName());
     }
 
     public record PresenceRequest(@NotNull @Positive Integer questionNumber) { }

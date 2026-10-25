@@ -2,11 +2,16 @@ package com.unifiedexam.platform.examtype.psat;
 
 import com.unifiedexam.platform.examtype.ExamTypeDefinition;
 import com.unifiedexam.platform.examtype.sat.SatExamTypeModule;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 /** 注册 SAT 工作区中的 PSAT 项目；数据编码和评分规则保持独立。 */
 @Component
 public class PsatExamTypeModule extends SatExamTypeModule {
+
+    public PsatExamTypeModule(ObjectMapper mapper) {
+        super(mapper);
+    }
 
     @Override
     public ExamTypeDefinition definition() {

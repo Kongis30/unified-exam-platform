@@ -1,26 +1,41 @@
 <template>
-  <div class="report-page">
-    <header class="topbar">
+  <component :is="isStaff ? AdminLayout : 'div'" class="report-page" :class="{ 'report-page--admin': isStaff }">
+    <header v-if="!isStaff" class="topbar">
       <div class="brand">JIN SAT&amp;PSAT System</div>
       <nav class="actions">
-        <button class="print-btn" @click="handlePrint" :disabled="loading">
+        <button class="print-btn" @click="handlePrint" :disabled="loading || exportingPdf">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19,8H5A3,3 0 0,0 2,11V17H6V21H18V17H22V11A3,3 0 0,0 19,8M16,19H8V14H16V19M19,12A1,1 0 0,1 18,11A1,1 0 0,1 19,10A1,1 0 0,1 20,11A1,1 0 0,1 19,12M18,3H6V7H18V3Z"/>
           </svg>
           Print
         </button>
-        <button class="export-pdf-btn" @click="exportToPDF" :disabled="loading">
+        <button class="export-pdf-btn" @click="exportToPDF" :disabled="loading || exportingPdf">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
           </svg>
           Export PDF
         </button>
-        <a class="home" href="/">Return to Home</a>
+          <a v-if="isStaff" class="home" href="/">Return to Home</a>
+          <RouterLink v-else class="home" :to="{ name: 'student-workspace', params: { code: 'SAT' } }">Back to SAT exams</RouterLink>
       </nav>
     </header>
 
     <main class="content">
       <div class="header-section">
+        <div v-if="isStaff" class="report-heading-actions">
+          <button
+            v-if="staffReturnPath"
+            type="button"
+            class="staff-report-back"
+            @click="returnToStaffPage"
+          >← Back to results</button>
+          <div class="report-export-actions">
+            <button class="print-btn" type="button" @click="handlePrint" :disabled="loading || exportingPdf">Print</button>
+            <button class="export-pdf-btn" type="button" @click="exportToPDF" :disabled="loading || exportingPdf">
+              {{ exportingPdf ? 'Exporting...' : 'Export PDF' }}
+            </button>
+          </div>
+        </div>
         <h1 class="page-title">Score Report</h1>
         <div class="report-info" v-if="!loading && !errorMessage">
           <p class="user-info">Student Name: {{ showValue(reportData.userName) }}</p>
@@ -28,12 +43,13 @@
           <p class="paper-info">
             Paper Name: {{ showValue(reportData.paperName) }}
             <span class="scoring-badge">{{ reportData.scoringType }} Scoring</span>
+            <span v-if="reportData.mode === 'practice'" class="mode-badge">Practice</span>
           </p>
           <p class="proctor-info" :class="{ 'proctor-warning': reportData.abnormalCount > 0 }">
             Times Left Exam Page: {{ reportData.abnormalCount }}
           </p>
         </div>
-        <p class="page-subtitle">Your performance overview and detailed answers</p>
+        <p class="page-subtitle">{{ isStaff ? 'Student performance overview and detailed answers' : 'Your performance overview and detailed answers' }}</p>
       </div>
 
       <section class="card" v-if="loading">
@@ -73,7 +89,7 @@
             <div class="value">{{ summary.totalRaw }}</div>
           </div>
           <div class="summary-scores">
-            <div class="label">Scaled Scores (Reserved)</div>
+            <div class="label">Scaled Scores</div>
             <div class="scores">
               <div>EBRW: {{ showValue(summary.ebrwScaled) }}</div>
               <div>Math: {{ showValue(summary.mathScaled) }}</div>
@@ -92,7 +108,10 @@
             </div>
             <span class="muted">{{ knowledgeBreakdown.length }} skill areas</span>
           </div>
-          <div v-if="knowledgeBreakdown.length === 0" class="empty-state">No tagged questions available.</div>
+          <div v-if="!reportData.answersVisible" class="empty-state">
+            Question-level analysis is currently hidden for this exam.
+          </div>
+          <div v-else-if="knowledgeBreakdown.length === 0" class="empty-state">No tagged questions available.</div>
           <div v-else class="skills-layout">
             <section v-for="section in knowledgeSections" :key="section.key" class="skill-section">
               <h3 class="skill-section-title">{{ section.title }}</h3>
@@ -167,7 +186,11 @@
 
       <section class="card" v-if="!loading && !errorMessage">
         <h2 class="card-title">Answer Details</h2>
-        <div class="table-wrapper">
+        <div v-if="!reportData.answersVisible" class="empty-state">
+          Answer details and explanations are currently hidden for this exam.
+        </div>
+        <div v-else-if="answers.length === 0" class="empty-state">No answer details are available for this attempt.</div>
+        <div v-else class="table-wrapper">
           <table class="answers-table">
             <thead>
               <tr>
@@ -181,7 +204,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(a, idx) in answers" :key="idx" :class="a.isCorrect === 1 ? 'row-ok' : (a.isCorrect === 0 ? 'row-bad' : 'row-unknown')" @click="openQuestion(a)">
+              <tr v-for="(a, idx) in answers" :key="idx" :class="[a.isCorrect === 1 ? 'row-ok' : (a.isCorrect === 0 ? 'row-bad' : 'row-unknown'), { 'row-clickable': !isStaff }]" @click="openQuestion(a)">
                 <td>{{ idx + 1 }}</td>
                 <td>{{ a.module }}</td>
                 <td>{{ a.tagLabel || 'Uncategorized' }}</td>
@@ -200,18 +223,21 @@
       </section>
 
     </main>
-  </div>
+  </component>
 </template>
 
 <script>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { authState } from '@/auth'
+import AdminLayout from '@/components/admin/AdminLayout.vue'
 
 export default {
   name: 'Report',
   setup() {
     const router = useRouter()
     const loading = ref(true)
+    const exportingPdf = ref(false)
     const errorMessage = ref('')
     const summary = ref({ rw1Raw: 0, rw2Raw: 0, math1Raw: 0, math2Raw: 0, rw1Spend: 0, rw2Spend: 0, math1Spend: 0, math2Spend: 0, totalRaw: 0 })
     const answers = ref([])
@@ -225,8 +251,17 @@ export default {
       byModule: [],
       byQuestion: []
     })
-    const reportData = ref({ userName: '', examName: '', paperName: '', paperId: null, scoringType: 'SAT', mode: '', abnormalCount: 0 })
+    const reportData = ref({ userName: '', examName: '', paperName: '', paperId: null, scoringType: 'SAT', mode: '', abnormalCount: 0, answersVisible: true })
     const reportQuery = ref({ examId: null, recordId: null })
+    const isStaff = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode))
+    const staffReturnPath = computed(() => {
+      const path = router.currentRoute.value.query.returnTo
+      return typeof path === 'string' && path.startsWith('/exam-types/SAT/admin/') ? path : ''
+    })
+
+    const returnToStaffPage = () => {
+      if (staffReturnPath.value) router.push(staffReturnPath.value)
+    }
 
     const formatSeconds = (s) => {
       const sec = Number(s || 0)
@@ -245,19 +280,21 @@ export default {
       loading.value = true
       errorMessage.value = ''
       try {
-        const { examApi } = await import('../api/exam.js')
-        // Optional readiness check to be robust
-        try {
-          const readyRes = await examApi.isReportReady(examId, recordId)
-          const ready = !!(readyRes?.data?.ready || readyRes?.ready)
-          if (!ready) {
-            // Short backoff to allow backend to finalize
-            await new Promise(r => setTimeout(r, 400))
+        let res
+        if (isStaff.value) {
+          const { getSatAttemptReport } = await import('../../admin/api/studentScores.js')
+          res = await getSatAttemptReport(recordId)
+        } else {
+          const { examApi } = await import('../api/exam.js')
+          try {
+            const readyRes = await examApi.isReportReady(examId, recordId)
+            const ready = !!(readyRes?.data?.ready || readyRes?.ready)
+            if (!ready) await new Promise(r => setTimeout(r, 400))
+          } catch (readyError) {
+            console.warn('Report readiness check failed; loading report directly:', readyError)
           }
-        } catch (readyError) {
-          console.warn('Report readiness check failed; loading report directly:', readyError)
+          res = await examApi.getReport(examId, recordId)
         }
-        const res = await examApi.getReport(examId, recordId)
         const data = res?.data || res || {}
         summary.value = data.summary || summary.value
         answers.value = Array.isArray(data.answers) ? data.answers : []
@@ -276,7 +313,8 @@ export default {
           paperId: data.paperId || null,
           scoringType: data.scoringType === 'PSAT' || Number(data.totalScore) === 1520 ? 'PSAT' : 'SAT',
           mode: data.mode || '',
-          abnormalCount: Number(data.abnormalCount) || 0
+          abnormalCount: Number(data.abnormalCount) || 0,
+          answersVisible: data.answersVisible === true
         }
       } catch (error) {
         console.error('Load report failed:', error)
@@ -287,6 +325,7 @@ export default {
     }
 
     const openQuestion = (row) => {
+      if (isStaff.value) return
       const qid = row?.questionId || row?.qid
       if (!qid || !reportData.value.paperId || !reportQuery.value.recordId) return
       router.push({
@@ -307,19 +346,23 @@ export default {
     }
 
     const exportToPDF = async () => {
+      if (loading.value || exportingPdf.value) return
+      exportingPdf.value = true
+      const exportButtons = document.querySelectorAll('.report-export-actions, .actions')
+      const hiddenElements = []
       try {
-        // 动态导入 html2pdf 库
         const html2pdf = (await import('html2pdf.js')).default
-        
-        // 获取要导出的元素
-        const element = document.querySelector('.report-page')
-        
-        // 临时隐藏导出按钮
-        const exportBtn = document.querySelector('.export-pdf-btn')
-        const originalDisplay = exportBtn.style.display
-        exportBtn.style.display = 'none'
-        
-        // PDF 配置选项
+        const element = document.querySelector('.content')
+        if (!element) throw new Error('Report content is unavailable')
+        for (const item of exportButtons) {
+          hiddenElements.push([item, item.style.display])
+          item.style.display = 'none'
+        }
+        const staffBack = element.querySelector('.staff-report-back')
+        if (staffBack) {
+          hiddenElements.push([staffBack, staffBack.style.display])
+          staffBack.style.display = 'none'
+        }
         const options = {
           margin: 1,
           filename: `${reportData.value.userName || 'Student'}_${reportData.value.examName || 'Exam'}_Report.pdf`,
@@ -336,16 +379,14 @@ export default {
           }
         }
         
-        // 生成并下载 PDF
         await html2pdf().set(options).from(element).save()
-        
-        // 恢复导出按钮显示
-        exportBtn.style.display = originalDisplay
-        
       } catch (error) {
-         console.error('PDF export failed:', error)
-         alert('PDF export failed, please try again')
-       }
+        console.error('PDF export failed:', error)
+        alert('PDF export failed. Please try again.')
+      } finally {
+        for (const [element, display] of hiddenElements) element.style.display = display
+        exportingPdf.value = false
+      }
     }
 
     onMounted(async () => {
@@ -506,6 +547,10 @@ export default {
       knowledgeSections,
       timeAnalysis,
       reportData,
+      isStaff,
+      exportingPdf,
+      staffReturnPath,
+      returnToStaffPage,
       strongestKnowledge,
       weakestKnowledge,
       formatSeconds,
@@ -514,6 +559,7 @@ export default {
       exportToPDF,
       openQuestion,
       retryReport,
+      AdminLayout,
       formatPercent,
       accuracyClass,
       knowledgeKey,
@@ -534,15 +580,20 @@ export default {
   background: #fff;
   color: #2c3e50;
 }
+.report-page--admin { min-height: auto; background: transparent; }
+.report-heading-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.report-export-actions { display: flex; align-items: center; gap: 8px; }
+.report-export-actions .print-btn,
+.report-export-actions .export-pdf-btn { min-height: 36px; padding: 0 14px; border: 1px solid var(--color-border, #dbe6f7); border-radius: 999px; background: #fff; color: var(--color-primary-strong, #245fe8); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+.report-export-actions .export-pdf-btn { background: var(--color-primary, #3478f6); border-color: transparent; color: #fff; }
+.report-export-actions button:disabled { opacity: .55; cursor: wait; }
 
 /* Row background colors for correctness */
 .answers-table tr.row-ok { background-color: #f6ffed; }       /* light green */
 .answers-table tr.row-bad { background-color: #fff1f0; }      /* light red */
 .answers-table tr.row-unknown { background-color: #fffbe6; }  /* light yellow */
 
-.answers-table tr.row-ok:hover,
-.answers-table tr.row-bad:hover,
-.answers-table tr.row-unknown:hover { filter: brightness(0.98); }
+.answers-table tr.row-clickable:hover { filter: brightness(0.98); cursor: pointer; }
 .topbar {
     display: flex;
     justify-content: space-between;
@@ -613,6 +664,23 @@ export default {
 
   .header-section {
     margin-bottom: 16px;
+  }
+
+  .staff-report-back {
+    display: inline-flex;
+    align-items: center;
+    border: 0;
+    padding: 4px 0;
+    color: var(--color-muted);
+    background: transparent;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .staff-report-back:hover {
+    color: var(--color-primary-strong);
   }
 
   .page-title {
@@ -837,6 +905,8 @@ export default {
     display: none;
   }
 
+  .report-heading-actions { display: none; }
+
   .report-page {
     min-height: auto;
     color: #000;
@@ -860,8 +930,9 @@ export default {
   }
 
   .analytics-grid,
-  .summary-grid {
-    grid-template-columns: 1fr;
+  .summary-grid,
+  .skills-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .summary-total,

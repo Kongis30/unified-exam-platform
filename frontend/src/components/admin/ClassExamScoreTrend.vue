@@ -14,6 +14,7 @@ const loading = ref(false)
 const error = ref('')
 const rows = ref([])
 const hoveredPoint = ref(null)
+const scoreMetric = ref('scaled')
 
 const chart = computed(() => {
   const width = 760
@@ -22,21 +23,24 @@ const chart = computed(() => {
   const plotWidth = width - padding.left - padding.right
   const plotHeight = height - padding.top - padding.bottom
   const points = [...rows.value]
-    .map((row) => ({
-      ...row,
-      averageScore: Number(row.averageScore),
-      timestamp: new Date(row.examDate).getTime(),
-    }))
-    .filter((row) => Number.isFinite(row.averageScore))
+    .map((row) => {
+      const score = scoreMetric.value === 'scaled' ? row.averageScaledScore : row.averageRawScore
+      return { ...row, averageScore: score == null ? Number.NaN : Number(score), timestamp: new Date(row.examDate).getTime() }
+    })
+    .filter((row) => Number.isFinite(row.averageScore) && Number.isFinite(row.timestamp))
     .sort((left, right) => left.timestamp - right.timestamp)
 
   const lowestScore = points.reduce((score, point) => Math.min(score, point.averageScore), points[0]?.averageScore ?? 0)
   const highestScore = points.reduce((score, point) => Math.max(score, point.averageScore), points[0]?.averageScore ?? 0)
-  const min = lowestScore === highestScore ? Math.max(0, lowestScore - 1) : lowestScore
-  const max = lowestScore === highestScore ? highestScore + 1 : highestScore
+  const dataRange = highestScore - lowestScore
+  const scorePadding = dataRange === 0 ? (scoreMetric.value === 'scaled' ? 10 : 1) : dataRange * 0.12
+  const step = niceStep((dataRange + scorePadding * 2) / 5)
+  const min = Math.max(scoreMetric.value === 'raw' ? 0 : -Infinity,
+    Math.floor((lowestScore - scorePadding) / step) * step)
+  const max = Math.ceil((highestScore + scorePadding) / step) * step
   const range = max - min
-  const yTicks = Array.from({ length: 6 }, (_, index) => {
-    const value = min + (range / 5) * index
+  const yTicks = Array.from({ length: Math.round(range / step) + 1 }, (_, index) => {
+    const value = min + step * index
     return { value, y: padding.top + plotHeight - ((value - min) / range) * plotHeight }
   })
   const plottedPoints = points.map((point, index) => ({
@@ -51,6 +55,13 @@ const chart = computed(() => {
     linePath: plottedPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' '),
   }
 })
+
+function niceStep(value) {
+  if (!Number.isFinite(value) || value <= 0) return 1
+  const magnitude = 10 ** Math.floor(Math.log10(value))
+  const fraction = value / magnitude
+  return (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * magnitude
+}
 
 // 由图表容器负责加载：切换班级或考试模块时重新请求对应的成绩序列。
 async function loadTrend() {
@@ -82,6 +93,10 @@ function formatNumber(value) {
   return Number(value).toFixed(2).replace(/\.00$/, '')
 }
 
+function formatAxisNumber(value) {
+  return Number(value).toFixed(1).replace(/\.0$/, '')
+}
+
 function formatDate(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
@@ -97,66 +112,97 @@ function formatDateTime(value) {
 }
 
 watch(() => `${props.classId}:${props.examTypeCodes.join(',')}`, loadTrend, { immediate: true })
+watch(scoreMetric, () => { hoveredPoint.value = null })
 </script>
 
 <template>
-  <AppCard title="Class Exam Score Trend" subtitle="Average score for each completed exam, ordered from earliest to latest.">
+  <AppCard title="Class Exam Score Trend" subtitle="Compare class averages for completed SAT and PSAT exams.">
     <div v-if="loading" class="admin-state">Loading score trend...</div>
     <div v-else-if="error" class="admin-state admin-state--error">
       <p class="error-text">{{ error }}</p>
       <AppButton variant="secondary" @click="loadTrend">Retry</AppButton>
     </div>
-    <div v-else-if="chart.points.length === 0" class="admin-state">No completed exam scores to chart yet.</div>
-    <div v-else class="class-score-chart-wrap">
-      <svg
-        class="class-score-chart"
-        :viewBox="`0 0 ${chart.width} ${chart.height}`"
-        preserveAspectRatio="xMidYMid meet"
-        role="img"
-        aria-label="Class average exam scores over time"
-      >
-        <g class="class-score-chart__grid">
-          <line
-            v-for="tick in chart.yTicks"
-            :key="`grid-${tick.value}`"
-            :x1="chart.padding.left" :y1="tick.y"
-            :x2="chart.width - chart.padding.right" :y2="tick.y"
-          />
-        </g>
-        <g class="class-score-chart__axis-label">
-          <text
-            v-for="tick in chart.yTicks"
-            :key="`y-${tick.value}`"
-            :x="chart.padding.left - 10" :y="tick.y"
-            text-anchor="end" dominant-baseline="middle"
-          >{{ formatNumber(tick.value) }}</text>
-        </g>
-        <path v-if="chart.points.length > 1" class="class-score-chart__line" :d="chart.linePath" />
-        <g
-          v-for="point in chart.points"
-          :key="point.examId"
-          tabindex="0" role="img"
-          :aria-label="`${point.examTitle}, average score ${formatNumber(point.averageScore)}, exam date ${formatDateTime(point.examDate)}`"
-          @mouseenter="hoveredPoint = point" @mouseleave="hoveredPoint = null"
-          @focus="hoveredPoint = point" @blur="hoveredPoint = null"
-        >
-          <circle class="class-score-chart__point" :cx="point.x" :cy="point.y" r="5" />
-          <text class="class-score-chart__value" :x="point.x" :y="point.y - 12" text-anchor="middle">{{ formatNumber(point.averageScore) }}</text>
-          <text class="class-score-chart__axis-label" :x="point.x" :y="chart.baselineY + 18" text-anchor="middle">{{ formatDate(point.examDate) }}</text>
-        </g>
-      </svg>
-      <div v-if="hoveredPoint" class="class-score-chart__tooltip" :style="tooltipStyle(hoveredPoint)" role="status">
-        <strong>{{ hoveredPoint.examTitle }}</strong>
-        <span>Average score: {{ formatNumber(hoveredPoint.averageScore) }}</span>
-        <span>Exam date: {{ formatDateTime(hoveredPoint.examDate) }}</span>
-        <span>Completed students: {{ hoveredPoint.studentCount }}</span>
+    <div v-else>
+      <div v-if="rows.length" class="score-trend-toolbar">
+        <label for="class-score-metric">Score shown</label>
+        <select id="class-score-metric" v-model="scoreMetric">
+          <option value="scaled">Scaled score</option>
+          <option value="raw">Raw score</option>
+        </select>
+        <span>{{ scoreMetric === 'scaled' ? 'SAT 400–1600 · PSAT 320–1520' : 'Raw score is the number of correct answers' }}</span>
       </div>
+      <div v-if="chart.points.length" class="class-score-chart-wrap">
+        <svg
+          class="class-score-chart"
+          :viewBox="`0 0 ${chart.width} ${chart.height}`"
+          preserveAspectRatio="xMidYMid meet"
+          role="img"
+          aria-label="Class average exam scores over time"
+        >
+          <g class="class-score-chart__grid">
+            <line
+              v-for="tick in chart.yTicks"
+              :key="`grid-${tick.value}`"
+              :x1="chart.padding.left" :y1="tick.y"
+              :x2="chart.width - chart.padding.right" :y2="tick.y"
+            />
+          </g>
+          <g class="class-score-chart__axis-label">
+            <text
+              v-for="tick in chart.yTicks"
+              :key="`y-${tick.value}`"
+              :x="chart.padding.left - 10" :y="tick.y"
+              text-anchor="end" dominant-baseline="middle"
+            >{{ formatAxisNumber(tick.value) }}</text>
+          </g>
+          <path v-if="chart.points.length > 1" class="class-score-chart__line" :d="chart.linePath" />
+          <g
+            v-for="point in chart.points"
+            :key="point.examId"
+            tabindex="0" role="img"
+            :aria-label="`${point.examTypeCode}, ${point.examTitle}, average ${scoreMetric} score ${formatNumber(point.averageScore)}, exam date ${formatDateTime(point.examDate)}`"
+            @mouseenter="hoveredPoint = point" @mouseleave="hoveredPoint = null"
+            @focus="hoveredPoint = point" @blur="hoveredPoint = null"
+          >
+            <circle class="class-score-chart__point" :cx="point.x" :cy="point.y" r="5" />
+            <text class="class-score-chart__value" :x="point.x" :y="point.y - 12" text-anchor="middle">{{ formatNumber(point.averageScore) }}</text>
+            <text class="class-score-chart__axis-label" :x="point.x" :y="chart.baselineY + 18" text-anchor="middle">{{ formatDate(point.examDate) }}</text>
+          </g>
+        </svg>
+        <div v-if="hoveredPoint" class="class-score-chart__tooltip" :style="tooltipStyle(hoveredPoint)" role="status">
+          <strong><span class="score-type-badge">{{ hoveredPoint.examTypeCode }}</span>{{ hoveredPoint.examTitle }}</strong>
+          <span>Average {{ scoreMetric }} score: {{ formatNumber(hoveredPoint.averageScore) }}</span>
+          <span>Exam date: {{ formatDateTime(hoveredPoint.examDate) }}</span>
+          <span>Completed students: {{ hoveredPoint.studentCount }}</span>
+        </div>
+      </div>
+      <p v-else class="admin-state">
+        {{ rows.length ? `No ${scoreMetric} score data is available for these completed exams.` : 'No completed exam scores to chart yet.' }}
+      </p>
     </div>
   </AppCard>
 </template>
 
 <style scoped>
 .class-score-chart-wrap { position: relative; }
+.score-trend-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.score-trend-toolbar label { color: var(--color-text); font-weight: 600; }
+.score-trend-toolbar select {
+  min-height: 34px;
+  padding: 0 30px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: #fff;
+  font: inherit;
+}
 .class-score-chart {
   display: block;
   width: 100%;
@@ -194,4 +240,21 @@ watch(() => `${props.classId}:${props.examTypeCodes.join(',')}`, loadTrend, { im
   pointer-events: none;
 }
 .class-score-chart__tooltip strong { color: var(--color-primary-strong); }
+.score-type-badge {
+  display: inline-flex;
+  margin-right: 7px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--color-primary-strong);
+  background: #edf3ff;
+  font-size: 10px;
+  letter-spacing: .04em;
+  vertical-align: 1px;
+}
+@media (max-width: 560px) {
+  .score-trend-toolbar { flex-wrap: wrap; gap: 8px; }
+  .score-trend-toolbar span { flex-basis: 100%; }
+  .class-score-chart__axis-label { font-size: 22px; }
+  .class-score-chart__value { font-size: 26px; }
+}
 </style>

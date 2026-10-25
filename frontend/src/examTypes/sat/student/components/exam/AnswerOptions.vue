@@ -243,7 +243,7 @@ export default {
     const normalizeImageSrc = (src) => {
       if (!src) return ''
       const s = String(src)
-      const apiBase = import.meta.env.VITE_API_BASE_URL || '/sat-api'
+      const apiBase = import.meta.env.VITE_API_BASE_URL || ''
       if (s.startsWith('/uploads/')) return `${apiBase}${s}`
       if (s.startsWith('uploads/')) return `${apiBase}/${s}`
       return s

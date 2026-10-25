@@ -1,5 +1,8 @@
 <template>
   <div class="exam-container" :class="{ 'highlight-mode': highlightMode, 'review-mode': isReviewMode }">
+    <div v-if="!isReviewMode && !isOnline" class="exam-network-alert" role="status" aria-live="polite">
+      You are offline. Your progress will sync when your connection is restored.
+    </div>
     <!-- 顶部导航栏 -->
     <ExamHeader 
       :exam-title="examTitle"
@@ -202,6 +205,7 @@ export default {
     const currentQuestion = ref(1)
     const totalQuestions = ref(0)
     const timeRemaining = ref(flow.currentDurationMinutes * 60)
+    const isOnline = ref(typeof navigator === 'undefined' || navigator.onLine)
     const selectedAnswers = ref([])
     const questionStatus = ref([])
     const isReviewMode = computed(() => router.currentRoute.value.query.review === '1')
@@ -397,6 +401,12 @@ export default {
         doSaveProgress()
       }, 1000)
     }
+
+    const handleNetworkOnline = () => {
+      isOnline.value = true
+      scheduleAutosave()
+    }
+    const handleNetworkOffline = () => { isOnline.value = false }
 
     // 页面关闭/切走前 fire-and-forget 保存
     const handleBeforeUnload = () => {
@@ -720,6 +730,33 @@ export default {
       if (isSubmitting.value) return
       showSubmitModal.value = false
     }
+    // 模块提交请求失败时，以服务端进度为准，区分“未提交”和“提交成功但响应丢失”。
+    const recoverAfterSubmissionError = async (submittedModuleId) => {
+      const attemptId = flow.recordId
+      const paperId = flow.paperId
+      if (!attemptId || !paperId) return false
+
+      await flow.initFromProgress(paperId, attemptId)
+      if (flow.resume.status !== 'ongoing') {
+        showSubmitModal.value = false
+        redirectToReport(flow.examId || flow.paperId, attemptId)
+        return true
+      }
+
+      const moduleAdvanced = Number(flow.currentModuleId) !== Number(submittedModuleId)
+      if (!moduleAdvanced && !flow.awaitingBreak) return false
+
+      passageHighlights.value = {}
+      questionHighlights.value = {}
+      clearPosition()
+      showSubmitModal.value = false
+      await router.replace({
+        path: flow.awaitingBreak ? '/student/sat/break' : '/student/sat/module-wait',
+        query: { examId: flow.examId, recordId: attemptId },
+      })
+      return true
+    }
+
     const confirmSubmitSection = async () => {
       if (isReviewMode.value) return
       submissionError.value = ''
@@ -756,6 +793,11 @@ export default {
         await router.push({ path: '/student/sat/report', query: { examId: flow.examId, recordId: flow.recordId } })
       } catch (submitError) {
         console.error('Module submission failed:', submitError)
+        try {
+          if (await recoverAfterSubmissionError(modId)) return
+        } catch (recoveryError) {
+          console.error('Unable to reconcile SAT module progress:', recoveryError)
+        }
         submissionError.value = submitError.message || 'Unable to submit this module. Your answers are still available; please try again.'
         showSubmitModal.value = true
       } finally {
@@ -827,7 +869,7 @@ export default {
       router.replace({
         path: '/student/sat/report',
         query: {
-          examId: examIdParam || flow.examId || flow.paperId,
+          examId: flow.resume?.mode === 'practice' ? flow.examId : examIdParam || flow.examId || flow.paperId,
           recordId: recordIdParam || flow.recordId
         }
       })
@@ -865,6 +907,8 @@ export default {
     onMounted(async () => {
       window.addEventListener('keydown', handlePreviewKeydown)
       window.addEventListener('beforeunload', handleBeforeUnload)
+      window.addEventListener('online', handleNetworkOnline)
+      window.addEventListener('offline', handleNetworkOffline)
       document.addEventListener('visibilitychange', handleVisibilityChange)
       document.addEventListener('visibilitychange', handleExamVisibilityChange)
       document.addEventListener('fullscreenchange', handleFullscreenChange)
@@ -917,6 +961,7 @@ export default {
         reviewed: false
       }))
       resetQuestionTiming()
+      initializeQuestionStatus()
 
       // 水合已保存答案（含标记）
       const answerMap = {}
@@ -946,7 +991,6 @@ export default {
         currentQuestion.value = savedPos
       }
 
-      initializeQuestionStatus()
       updateQuestionStatus()
       startTimer()
       startPresenceHeartbeat()
@@ -976,6 +1020,8 @@ export default {
       window.removeEventListener('mouseup', stopDrag)
       window.removeEventListener('keydown', handlePreviewKeydown)
       window.removeEventListener('beforeunload', handleBeforeUnload)
+      window.removeEventListener('online', handleNetworkOnline)
+      window.removeEventListener('offline', handleNetworkOffline)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       document.removeEventListener('visibilitychange', handleExamVisibilityChange)
       document.removeEventListener('fullscreenchange', handleFullscreenChange)
@@ -984,6 +1030,7 @@ export default {
     return {
       examTitle,
       currentQuestion,
+      isOnline,
       isReviewMode,
       totalQuestions,
       timeRemaining,
@@ -1047,6 +1094,19 @@ export default {
   display: flex;
   flex-direction: column;
   background-color: #f5f5f5;
+}
+
+.exam-network-alert {
+  position: relative;
+  z-index: 10;
+  flex: 0 0 auto;
+  padding: 9px 16px;
+  color: #704d08;
+  background: #fff3cd;
+  border-bottom: 1px solid #f0d98f;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .exam-content {
@@ -1166,13 +1226,13 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  padding: 24px;
   background: rgba(17, 24, 39, 0.78);
 }
 
 .image-preview-img {
-  max-width: min(96vw, 1200px);
-  max-height: 92vh;
+  max-width: min(100%, 1200px);
+  max-height: calc(100vh - 48px);
   object-fit: contain;
   border: 1px solid #e5e7eb;
   border-radius: 8px;

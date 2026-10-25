@@ -22,7 +22,7 @@
         <li>Do not speak in the testing room; outside the room, do not discuss the exam with anyone.</li>
       </ul>
 
-      <div class="user">Jin Tang</div>
+      <div class="user">{{ studentName }}</div>
     </div>
   </div>
 </template>
@@ -32,6 +32,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useExamFlowStore } from '../stores/examFlow.js'
 import { examApi } from '../api/exam.js'
+import { authState } from '@/auth'
 
 export default {
   name: 'Break',
@@ -39,6 +40,7 @@ export default {
     const flow = useExamFlowStore()
     const route = useRoute()
     const router = useRouter()
+    const studentName = computed(() => authState.user?.realName?.trim() || authState.user?.username || 'Student')
 
     const totalSeconds = ref(flow.restTimeSeconds || 600)
     const remaining = ref(totalSeconds.value)
@@ -81,7 +83,7 @@ export default {
       if (timer) clearInterval(timer)
     })
 
-    return { formattedTime, resume }
+    return { formattedTime, resume, studentName }
   }
 }
 </script>
@@ -139,4 +141,25 @@ export default {
 .rules { color: #ddd; line-height: 1.8; }
 .rules li { margin-bottom: 8px; }
 .user { position: fixed; bottom: 24px; left: 24px; color: #bbb; font-size: 12px; }
+
+@media (max-width: 680px) {
+  .break-page {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: 32px;
+    height: 100%;
+    min-height: 100vh;
+    overflow-y: auto;
+    padding: 28px 20px 32px;
+  }
+
+  .left { gap: 14px; }
+  .timer-box { width: min(100%, 280px); margin-bottom: 0; padding: 20px 24px; }
+  .time { font-size: 40px; }
+  .resume-btn { min-height: 46px; }
+  .right { max-width: none; margin: 0; }
+  .title { font-size: 24px; }
+  .rules-title { font-size: 18px; }
+  .user { position: static; margin-top: 26px; color: #aeb8c7; }
+}
 </style>

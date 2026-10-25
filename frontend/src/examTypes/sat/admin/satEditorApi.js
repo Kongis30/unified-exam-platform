@@ -32,7 +32,9 @@ export const paperApi = {
     activePaperId = Number(paperId)
     const settings = await apiRequest(`/api/admin/papers/${paperId}/sat-settings`, {
       method: 'PUT', body: JSON.stringify({
-        scoringTableCode: payload.scoringType, adaptiveMode: true, restTimeSeconds: 600,
+        scoringTableCode: payload.scoringType,
+        adaptiveMode: payload.adaptiveMode,
+        restTimeSeconds: payload.restTimeSeconds,
       }),
     })
     return success(settings)
@@ -67,6 +69,12 @@ export const paperEditApi = {
   async updateQuestionOrder(moduleId, questionIds) {
     await apiRequest(editorPath(activePaperId, `modules/${moduleId}/question-order`), {
       method: 'PUT', body: JSON.stringify(questionIds),
+    })
+    return success(null)
+  },
+  async saveQuestionLayout(modules) {
+    await apiRequest(editorPath(activePaperId, 'question-layout'), {
+      method: 'PUT', body: JSON.stringify({ modules }),
     })
     return success(null)
   },

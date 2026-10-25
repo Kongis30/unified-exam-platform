@@ -75,6 +75,12 @@ public class SatPaperEditorController {
         editorService.reorderQuestions(paperId, moduleId, questionIds);
     }
 
+    @PutMapping("/question-layout")
+    public void saveQuestionLayout(@PathVariable @Positive long paperId,
+            @Valid @RequestBody SatPaperEditorService.QuestionLayoutWrite request) {
+        editorService.saveQuestionLayout(paperId, request);
+    }
+
     @PostMapping("/questions/{questionId}/copy/{moduleId}")
     public Map<String, Long> copyQuestion(@PathVariable @Positive long paperId,
             @PathVariable @Positive long questionId, @PathVariable @Positive long moduleId) {

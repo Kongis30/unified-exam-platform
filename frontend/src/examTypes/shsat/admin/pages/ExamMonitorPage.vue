@@ -1,10 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AdminLayout from '@/components/admin/AdminLayout.vue';
 import MonitorQuestionDetail from '@shsat/components/MonitorQuestionDetail.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
+import { satAdminMonitorApi } from '@/examTypes/sat/admin/api/monitor';
 
 const LIVE_POLL_INTERVAL_MS = 5000;
 const ANALYTICS_POLL_INTERVAL_MS = 20000;
@@ -16,9 +17,18 @@ const plotHeight = CHART_HEIGHT - PLOT.top - PLOT.bottom;
 
 const route = useRoute();
 const router = useRouter();
+const isSatMonitor = computed(() => route.name === 'sat-admin-exam-monitor');
+const monitorApi = computed(() => isSatMonitor.value ? satAdminMonitorApi : {
+  getLive: (examId, options) => adminApi.getExamMonitorLive(examId, options),
+  getAnalytics: (examId, options) => adminApi.getExamMonitorAnalytics(examId, options),
+  getQuestion: (examId, questionNumber) => adminApi.getExamMonitorQuestion(examId, questionNumber),
+});
 const monitor = shallowRef(null);
 const loading = ref(true);
-const errorMessage = ref('');
+const liveErrorMessage = ref('');
+const analyticsErrorMessage = ref('');
+const hasLiveData = ref(false);
+const hasAnalyticsData = ref(false);
 let liveRefreshTimer = null;
 let analyticsRefreshTimer = null;
 let liveRequestInFlight = false;
@@ -30,6 +40,7 @@ const questionDetail = ref(null);
 const questionDetailLoading = ref(false);
 const questionDetailError = ref('');
 const previewImageUrl = ref('');
+const unavailableSatOptionImages = ref(new Set());
 let questionDetailRequestId = 0;
 
 const questionRows = computed(() => monitor.value?.questionAnalytics || []);
@@ -131,6 +142,7 @@ const accuracyTiles = computed(() => Array.from({ length: questionCount.value },
   return {
     questionNumber,
     accuracy: accuracy === null || accuracy === undefined ? null : Number(accuracy),
+    pendingCount: Number(row?.pendingCount) || 0,
   };
 }));
 
@@ -155,12 +167,13 @@ async function loadLiveMonitor() {
   const controller = new AbortController();
   liveRequestController = controller;
   try {
-    const payload = unwrap(await adminApi.getExamMonitorLive(route.params.examId, { signal: controller.signal }));
+    const payload = unwrap(await monitorApi.value.getLive(route.params.examId, { signal: controller.signal }));
     mergeMonitorPayload(payload);
-    errorMessage.value = '';
+    hasLiveData.value = true;
+    liveErrorMessage.value = '';
   } catch (error) {
     if (error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
-      errorMessage.value = error.message || 'Failed to load exam monitor';
+      liveErrorMessage.value = 'Live progress could not be refreshed.';
     }
   } finally {
     if (liveRequestController === controller) {
@@ -177,12 +190,13 @@ async function loadAnalyticsMonitor() {
   const controller = new AbortController();
   analyticsRequestController = controller;
   try {
-    const payload = unwrap(await adminApi.getExamMonitorAnalytics(route.params.examId, { signal: controller.signal }));
+    const payload = unwrap(await monitorApi.value.getAnalytics(route.params.examId, { signal: controller.signal }));
     mergeMonitorPayload(payload);
-    errorMessage.value = '';
+    hasAnalyticsData.value = true;
+    analyticsErrorMessage.value = '';
   } catch (error) {
     if (error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
-      errorMessage.value = error.message || 'Failed to load exam analytics';
+      analyticsErrorMessage.value = 'Question analytics could not be refreshed.';
     }
   } finally {
     if (analyticsRequestController === controller) {
@@ -230,7 +244,7 @@ async function openQuestionDetail(questionNumber) {
   const requestId = ++questionDetailRequestId;
 
   try {
-    const response = await adminApi.getExamMonitorQuestion(route.params.examId, normalizedQuestionNumber);
+    const response = await monitorApi.value.getQuestion(route.params.examId, normalizedQuestionNumber);
     if (requestId !== questionDetailRequestId) return;
     const payload = unwrap(response);
     questionDetail.value = {
@@ -288,11 +302,25 @@ function formatExamDuration(value) {
   return parts.join(' ');
 }
 
-function formatAccuracy(value) {
-  return value === null ? '—' : `${Math.round(value)}%`;
+function formatAccuracy(value, pendingCount = 0) {
+  if (value !== null) return `${Math.round(value)}%`;
+  return pendingCount > 0 ? 'Pending' : '—';
+}
+
+function accuracyAriaLabel(tile) {
+  if (tile.pendingCount > 0) {
+    return `Open question ${tile.questionNumber} details; ${tile.pendingCount} response${tile.pendingCount === 1 ? '' : 's'} awaiting score`;
+  }
+  return `Open question ${tile.questionNumber} details`;
 }
 
 function goBack() {
+  const returnTo = route.query.returnTo;
+  if (typeof returnTo === 'string' && returnTo.startsWith('/exam-types/SAT/admin')) {
+    router.push(returnTo);
+    return;
+  }
+
   const previousRoute = window.history.state?.back;
 
   if (previousRoute && previousRoute !== '/login') {
@@ -300,6 +328,10 @@ function goBack() {
     return;
   }
 
+  if (isSatMonitor.value) {
+    router.push({ name: 'exam-type', params: { code: 'SAT' }, query: { tab: 'exams' } });
+    return;
+  }
   router.push({ name: 'admin', query: { tab: 'exams' } });
 }
 
@@ -316,18 +348,51 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function accuracyClass(value) {
-  if (value === null) return 'accuracy-tile--empty';
+function getSatOptionParts(value) {
+  const content = String(value ?? '');
+  const imagePattern = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = imagePattern.exec(content))) {
+    if (match.index > lastIndex) parts.push({ type: 'text', value: content.slice(lastIndex, match.index) });
+    parts.push({ type: 'image', alt: match[1] || 'Answer choice image', src: match[2] });
+    lastIndex = imagePattern.lastIndex;
+  }
+
+  if (lastIndex < content.length || parts.length === 0) {
+    parts.push({ type: 'text', value: content.slice(lastIndex) });
+  }
+  return parts;
+}
+
+function markSatOptionImageUnavailable(src) {
+  unavailableSatOptionImages.value = new Set([...unavailableSatOptionImages.value, src]);
+}
+
+function accuracyClass(value, pendingCount = 0) {
+  if (value === null) return pendingCount > 0 ? 'accuracy-tile--pending' : 'accuracy-tile--empty';
   if (value >= 75) return 'accuracy-tile--high';
   if (value > 50) return 'accuracy-tile--medium';
   return 'accuracy-tile--low';
 }
 
-onMounted(async () => {
+watch(() => [route.name, route.params.examId], async () => {
+  if (liveRefreshTimer) window.clearTimeout(liveRefreshTimer);
+  if (analyticsRefreshTimer) window.clearTimeout(analyticsRefreshTimer);
+  cancelMonitorRequests();
+  closeQuestionDetail();
+  monitor.value = null;
+  hasLiveData.value = false;
+  hasAnalyticsData.value = false;
+  liveErrorMessage.value = '';
+  analyticsErrorMessage.value = '';
+  loading.value = true;
   await Promise.all([loadLiveMonitor(), loadAnalyticsMonitor()]);
   scheduleLiveRefresh();
   scheduleAnalyticsRefresh();
-});
+}, { immediate: true });
 
 onBeforeUnmount(() => {
   if (liveRefreshTimer) window.clearTimeout(liveRefreshTimer);
@@ -351,7 +416,9 @@ onBeforeUnmount(() => {
       </div>
 
       <template v-else>
-        <p v-if="errorMessage && !monitor" class="monitor-error">{{ errorMessage }}</p>
+        <p v-if="liveErrorMessage" class="monitor-refresh-alert" role="status">
+          {{ hasLiveData ? `${liveErrorMessage} Showing the last update while we retry automatically.` : `${liveErrorMessage} Retrying automatically.` }}
+        </p>
 
         <section class="exam-info-panel" aria-label="Exam information">
           <div class="exam-info-details">
@@ -381,11 +448,15 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <p v-if="analyticsErrorMessage" class="monitor-refresh-alert" role="status">
+          {{ hasAnalyticsData ? `${analyticsErrorMessage} Showing the last update while we retry automatically.` : `${analyticsErrorMessage} Retrying automatically.` }}
+        </p>
+
         <section class="monitor-chart-grid">
           <article class="monitor-panel">
             <h1>Current Question Distribution</h1>
             <div v-if="!hasCurrentDistribution" class="monitor-chart-empty">
-              No students are currently taking this exam.
+              No live question positions are available. In-progress students may be away from the exam.
             </div>
             <svg v-else class="monitor-chart" :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`" role="img" aria-label="Current question distribution">
               <g v-for="tick in currentQuestionChart.ticks" :key="`current-${tick.value}`">
@@ -448,6 +519,15 @@ onBeforeUnmount(() => {
             <span
               class="accuracy-legend__item"
               tabindex="0"
+              aria-label="Awaiting score"
+              data-tooltip="Responses are saved; scores appear after the exam is submitted."
+            >
+              <i class="legend-swatch legend-swatch--pending"></i>
+              Awaiting score
+            </span>
+            <span
+              class="accuracy-legend__item"
+              tabindex="0"
               aria-label="High accuracy: 75% or above"
               data-tooltip="75% or above"
             >
@@ -480,12 +560,12 @@ onBeforeUnmount(() => {
                 :key="`accuracy-${tile.questionNumber}`"
                 type="button"
                 class="accuracy-tile"
-                :class="accuracyClass(tile.accuracy)"
-                :aria-label="`Open question ${tile.questionNumber} details`"
+                :class="accuracyClass(tile.accuracy, tile.pendingCount)"
+                :aria-label="accuracyAriaLabel(tile)"
                 @click="openQuestionDetail(tile.questionNumber)"
               >
                 <strong>Q{{ tile.questionNumber }}</strong>
-                <span>{{ formatAccuracy(tile.accuracy) }}</span>
+                <span>{{ formatAccuracy(tile.accuracy, tile.pendingCount) }}</span>
               </button>
             </div>
           </div>
@@ -505,6 +585,40 @@ onBeforeUnmount(() => {
 
         <div v-if="questionDetailLoading" class="question-detail-state">Loading question...</div>
         <div v-else-if="questionDetailError" class="question-detail-state question-detail-state--error">{{ questionDetailError }}</div>
+        <div v-else-if="isSatMonitor && questionDetail" class="sat-question-detail">
+          <div class="sat-question-detail__meta">
+            <span v-if="questionDetail.subject">{{ questionDetail.subject }}</span>
+            <span>{{ questionDetail.questionType }}</span>
+          </div>
+          <div v-if="questionDetail.material" class="sat-question-detail__material">
+            <h3>{{ questionDetail.material.title || 'Reading material' }}</h3>
+            <img v-if="questionDetail.material.assetUrl" :src="questionDetail.material.assetUrl" alt="Question material" @click="openImagePreview(questionDetail.material.assetUrl)" />
+            <p v-if="questionDetail.material.materialContent">{{ questionDetail.material.materialContent }}</p>
+          </div>
+          <div class="sat-question-detail__stem">{{ questionDetail.stem }}</div>
+          <ol v-if="questionDetail.options && Object.keys(questionDetail.options).length" class="sat-question-detail__options">
+            <li v-for="(value, key) in questionDetail.options" :key="key">
+              <strong>{{ key }}.</strong>
+              <span v-for="(part, index) in getSatOptionParts(value)" :key="`${key}-${index}`">
+                <template v-if="part.type === 'text'">{{ part.value }}</template>
+                <img
+                  v-else-if="!unavailableSatOptionImages.has(part.src)"
+                  class="sat-question-detail__option-image"
+                  :src="part.src"
+                  :alt="part.alt"
+                  @error="markSatOptionImageUnavailable(part.src)"
+                  @click="openImagePreview(part.src)"
+                />
+                <span v-else class="sat-question-detail__image-unavailable">Image unavailable</span>
+              </span>
+            </li>
+          </ol>
+          <div class="sat-question-detail__answer">
+            <span>Correct answer</span>
+            <strong>{{ questionDetail.correctAnswer || questionDetail.correctAnswerData?.correctAnswer || 'Not available' }}</strong>
+          </div>
+          <p v-if="questionDetail.explanation" class="sat-question-detail__explanation">{{ questionDetail.explanation }}</p>
+        </div>
         <MonitorQuestionDetail
           v-else-if="questionDetail"
           :question="questionDetail"
@@ -552,6 +666,7 @@ onBeforeUnmount(() => {
 .accuracy-legend__item:hover::after, .accuracy-legend__item:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
 .legend-swatch { width: 18px; height: 18px; border-radius: 3px; }
 .legend-swatch--empty, .accuracy-tile--empty { background: #cbd5e3; }
+.legend-swatch--pending, .accuracy-tile--pending { background: #92a5c3; }
 .legend-swatch--high, .accuracy-tile--high { background: #2ecb9f; }
 .legend-swatch--medium, .accuracy-tile--medium { background: #f6bd1d; }
 .legend-swatch--low, .accuracy-tile--low { background: #f36f73; }
@@ -563,7 +678,7 @@ onBeforeUnmount(() => {
 .accuracy-tile span { font-size: 17px; font-weight: 700; }
 .monitor-loading { display: grid; min-height: 520px; place-items: center; }
 .monitor-loading span { width: 30px; height: 30px; border: 3px solid #cbd8e8; border-top-color: #4c82cb; border-radius: 50%; animation: monitor-spin 800ms linear infinite; }
-.monitor-error { margin: 0; padding: 18px; color: #a32938; background: #fff2f3; border: 1px solid #f4c4c9; border-radius: 8px; }
+.monitor-refresh-alert { margin: 0 0 16px; border: 1px solid #f1d39b; border-radius: 8px; padding: 10px 12px; color: #765416; background: #fff8e9; font-size: 14px; line-height: 1.45; }
 .question-detail-backdrop { position: fixed; inset: 0; z-index: 30; display: flex; justify-content: flex-end; background: rgba(16, 27, 47, 0.38); }
 .question-detail-drawer { width: min(680px, 92vw); height: 100%; overflow-y: auto; padding: 24px; background: #ffffff; box-shadow: -10px 0 28px rgba(16, 27, 47, 0.18); }
 .question-detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
@@ -573,6 +688,19 @@ onBeforeUnmount(() => {
 .question-detail-close:hover, .question-detail-close:focus-visible { border-color: #4c82cb; color: #2f6fed; outline: none; }
 .question-detail-state { padding: 32px 12px; color: #53627a; text-align: center; }
 .question-detail-state--error { color: #a32938; }
+.sat-question-detail { display: grid; gap: 18px; color: #1f2c43; }
+.sat-question-detail__meta { display: flex; gap: 8px; color: #536b8e; font-size: 13px; }
+.sat-question-detail__meta span { border-radius: 999px; padding: 5px 10px; background: #eef4ff; }
+.sat-question-detail__material { border: 1px solid #dce6f5; border-radius: 10px; padding: 16px; background: #f8faff; }
+.sat-question-detail__material h3 { margin: 0 0 10px; font-size: 15px; }
+.sat-question-detail__material p, .sat-question-detail__stem, .sat-question-detail__explanation { white-space: pre-wrap; line-height: 1.65; }
+.sat-question-detail__material img { display: block; max-width: 100%; max-height: 260px; object-fit: contain; cursor: zoom-in; }
+.sat-question-detail__options { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; line-height: 1.5; }
+.sat-question-detail__options > li > strong { margin-right: 0.35em; }
+.sat-question-detail__option-image { display: block; max-width: min(100%, 360px); max-height: 180px; margin: 8px 0; object-fit: contain; cursor: zoom-in; }
+.sat-question-detail__image-unavailable { display: inline-flex; margin: 6px 0; border: 1px dashed #cbd5e3; border-radius: 6px; padding: 6px 9px; color: #68778e; background: #f6f8fb; font-size: 13px; }
+.sat-question-detail__answer { display: flex; justify-content: space-between; gap: 16px; border: 1px solid #cfe9db; border-radius: 10px; padding: 12px 14px; color: #176b46; background: #f0faf4; }
+.sat-question-detail__explanation { margin: 0; color: #53627a; }
 .question-image-preview { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 32px; background: rgba(16, 27, 47, 0.72); }
 .question-image-preview img { max-width: min(92vw, 1200px); max-height: 90vh; object-fit: contain; background: #fff; }
 .question-image-preview__close { position: fixed; top: 20px; right: 24px; width: 40px; height: 40px; border: 0; border-radius: 8px; color: #fff; background: rgba(0, 0, 0, 0.4); font-size: 28px; cursor: pointer; }

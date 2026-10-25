@@ -71,10 +71,15 @@ public class SecurityConfiguration {
             .authenticationProvider(authenticationProvider)
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/health", "/api/auth/csrf", "/api/auth/login", "/api/exam-types",
-                    "/uploads/paper-materials/**").permitAll()
+                    "/uploads/paper-materials/**", "/sat-api/uploads/materials/**").permitAll()
                 .requestMatchers("/api/auth/**").authenticated()
                 .requestMatchers("/api/admin/users/**").hasRole("ADMIN")
+                .requestMatchers("/api/admin/sat/papers/**", "/api/admin/papers/*/sat-settings",
+                    "/api/admin/papers/*/sat-settings/**").hasRole("ADMIN")
+                .requestMatchers("/api/admin/sat/reports/exams/*/monitor/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/admin/sat/students/*/attempts/*").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.DELETE, "/api/admin/exams/*").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/admin/classes/*").hasRole("ADMIN")
                 .requestMatchers("/api/admin/classes/**").hasAnyRole("ADMIN", "TEACHER")
                 .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "TEACHER")
                 .requestMatchers("/api/student/exams/*/attempts", "/api/student/attempts/**")

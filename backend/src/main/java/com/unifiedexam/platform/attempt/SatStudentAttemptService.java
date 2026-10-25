@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -43,6 +44,127 @@ public class SatStudentAttemptService {
         StudentAttemptService.AttemptView attempt = attempts.start(examId, null, username);
         ensureState(attempt.id(), attempt.paperId());
         return snapshot(attempt.id(), username);
+    }
+
+    /** 将已封存 SAT/PSAT 试卷映射到隐藏的练习场次，再复用统一作答生命周期。 */
+    @Transactional
+    public SatAttemptView startPractice(long paperId, String username) {
+        long examId = practiceExamId(paperId, username);
+        StudentAttemptService.AttemptView attempt = attempts.startPractice(examId, username);
+        ensureState(attempt.id(), attempt.paperId());
+        return snapshot(attempt.id(), username);
+    }
+
+    /** 提供可练习试卷；只列出已封存且包含题目的 SAT/PSAT 版本。 */
+    public List<PracticePaperView> practicePapers(String username) {
+        requireStudent(username);
+        return jdbc.query("""
+            SELECT p.id, p.title, p.description, p.exam_type_code, p.default_duration_seconds,
+                   g.name AS group_name, COUNT(pi.id) AS question_count
+            FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id
+            JOIN paper_sections s ON s.paper_id = p.id
+            LEFT JOIN paper_items pi ON pi.section_id = s.id
+            WHERE p.exam_type_code IN ('SAT', 'PSAT') AND p.status = 'READY'
+            GROUP BY p.id, p.title, p.description, p.exam_type_code, p.default_duration_seconds, g.name
+            HAVING COUNT(pi.id) > 0
+            ORDER BY g.sort_order, g.name, p.title, p.id
+            """, (rs, row) -> new PracticePaperView(rs.getLong("id"), rs.getString("title"),
+                rs.getString("description"), rs.getString("exam_type_code"), rs.getString("group_name"),
+                nullableInt(rs, "default_duration_seconds"), rs.getInt("question_count")));
+    }
+
+    /** 返回学生本人已完成的练习历史，避免练习成绩混入正式考试成绩。 */
+    public PracticeHistoryPage practiceHistory(String username, int page, int size) {
+        requireStudent(username);
+        int currentPage = Math.max(1, page);
+        int pageSize = Math.max(1, Math.min(100, size));
+        long studentId = jdbc.queryForObject("SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT'", Long.class, username);
+        Long total = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM attempts a
+            WHERE a.student_user_id = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
+              AND (EXISTS(SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = a.exam_id)
+                OR EXISTS(SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = a.exam_id))
+            """, Long.class, studentId);
+        List<PracticeAttemptView> records = jdbc.query("""
+            SELECT a.id AS attempt_id, e.paper_id, p.title AS paper_title, p.exam_type_code, a.started_at,
+                   a.submitted_at, ar.total_points, ar.max_points,
+                   COALESCE(SUM(aa.time_spent_seconds), 0) AS time_spent_seconds
+            FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
+            LEFT JOIN attempt_results ar ON ar.attempt_id = a.id
+            LEFT JOIN attempt_answers aa ON aa.attempt_id = a.id
+            WHERE a.student_user_id = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
+              AND (EXISTS(SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = a.exam_id)
+                OR EXISTS(SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = a.exam_id))
+            GROUP BY a.id, e.paper_id, p.title, p.exam_type_code, a.started_at, a.submitted_at, ar.total_points, ar.max_points
+            ORDER BY a.submitted_at DESC, a.id DESC LIMIT ? OFFSET ?
+            """, (rs, row) -> new PracticeAttemptView(rs.getLong("attempt_id"), rs.getLong("paper_id"),
+                rs.getString("paper_title"), rs.getString("exam_type_code"), toInstant(rs.getTimestamp("started_at")),
+                toInstant(rs.getTimestamp("submitted_at")), rs.getBigDecimal("total_points"),
+                rs.getBigDecimal("max_points"), rs.getLong("time_spent_seconds")),
+            studentId, pageSize, (currentPage - 1) * pageSize);
+        long count = total == null ? 0 : total;
+        return new PracticeHistoryPage(currentPage, pageSize, count, records);
+    }
+
+    /** 只允许删除本人已提交的 SAT/PSAT 练习；数据库级联清除答案、结果和模块状态。 */
+    @Transactional
+    public void deletePracticeAttempt(long attemptId, String username) {
+        requireStudent(username);
+        List<Long> owned = jdbc.query("""
+            SELECT a.id FROM attempts a JOIN users u ON u.id = a.student_user_id
+            WHERE a.id = ? AND u.username = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
+              AND (EXISTS(SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = a.exam_id)
+                OR EXISTS(SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = a.exam_id))
+            FOR UPDATE
+            """, (rs, row) -> rs.getLong(1), attemptId, username);
+        if (owned.isEmpty()) throw notFound("Practice record not found.");
+        jdbc.update("DELETE FROM attempts WHERE id = ?", attemptId);
+    }
+
+    private long practiceExamId(long paperId, String username) {
+        requireStudent(username);
+        Long studentId = jdbc.query("SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT' AND status = 'ACTIVE'",
+            rs -> rs.next() ? rs.getLong(1) : null, username);
+        PracticePaper paper = jdbc.query("""
+            SELECT p.id, p.exam_type_code, p.title, p.status
+            FROM papers p WHERE p.id = ? FOR UPDATE
+            """, rs -> rs.next() ? new PracticePaper(rs.getLong("id"), rs.getString("exam_type_code"),
+                rs.getString("title"), rs.getString("status")) : null, paperId);
+        if (paper == null || !List.of("SAT", "PSAT").contains(paper.examTypeCode()) || !"READY".equals(paper.status())) {
+            throw notFound("Practice paper not found.");
+        }
+        Long existing = jdbc.query("SELECT practice_exam_id FROM sat_practice_paper_templates WHERE paper_id = ?",
+            rs -> rs.next() ? rs.getLong(1) : null, paperId);
+        if (existing != null) return existing;
+
+        jdbc.update("""
+            INSERT INTO exams
+                (paper_id, scoring_profile_id, title, description, status, target_scope, opens_at, closes_at,
+                 duration_seconds, attempt_limit, answer_visibility, score_visibility, allow_review, created_by, published_at)
+            SELECT id, default_scoring_profile_id, ?, 'Self practice', 'PUBLISHED', 'SELECTED',
+                   TIMESTAMPADD(YEAR, -100, CURRENT_TIMESTAMP(6)), TIMESTAMPADD(YEAR, 100, CURRENT_TIMESTAMP(6)),
+                   default_duration_seconds, 1, 'AFTER_SUBMIT', 'AFTER_SUBMIT', TRUE, ?, CURRENT_TIMESTAMP(6)
+            FROM papers WHERE id = ?
+            """, paper.title(), studentId, paperId);
+        Long examId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        jdbc.update("INSERT INTO sat_practice_paper_templates (paper_id, practice_exam_id) VALUES (?, ?)", paperId, examId);
+        return examId;
+    }
+
+    private void requireStudent(String username) {
+        Boolean student = jdbc.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM users WHERE username = ? AND role_code = 'STUDENT' AND status = 'ACTIVE')
+            """, Boolean.class, username);
+        if (!Boolean.TRUE.equals(student)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Student account required.");
+    }
+
+    private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
+    }
+
+    private Instant toInstant(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
     }
 
     public SatAttemptView get(long attemptId, String username) {
@@ -87,8 +209,18 @@ public class SatStudentAttemptService {
         Boolean hasAccess = jdbc.queryForObject("""
             SELECT EXISTS(SELECT 1 FROM attempts a JOIN exams e ON e.id = a.exam_id
                 JOIN paper_items pi ON pi.question_id = ? JOIN paper_sections s ON s.id = pi.section_id AND s.paper_id = e.paper_id
+                JOIN sat_attempt_state state ON state.attempt_id = a.id
                 WHERE a.student_user_id = (SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT')
-                  AND a.is_practice = FALSE)
+                  AND a.is_practice = FALSE AND (
+                    (a.status = 'IN_PROGRESS' AND a.expires_at > CURRENT_TIMESTAMP(6)
+                      AND state.active_module_section_id = pi.section_id AND state.awaiting_break = FALSE
+                      AND state.module_started_at IS NOT NULL
+                      AND TIMESTAMPDIFF(SECOND, state.module_started_at, CURRENT_TIMESTAMP(6))
+                        < CAST(JSON_UNQUOTE(JSON_EXTRACT(s.settings_json, '$.timeLimitSeconds')) AS UNSIGNED))
+                    OR (a.status = 'SUBMITTED' AND e.allow_review = TRUE
+                      AND (e.answer_visibility = 'AFTER_SUBMIT' OR
+                           (e.answer_visibility = 'AFTER_CLOSE' AND e.closes_at <= CURRENT_TIMESTAMP(6))))
+                  ))
             """, Boolean.class, questionId, username);
         if (!Boolean.TRUE.equals(hasAccess)) throw notFound("Question not found.");
         return jdbc.query("""
@@ -110,12 +242,28 @@ public class SatStudentAttemptService {
 
     /** 构造旧 SAT 报告页的数据结构，同时只允许查看本人已提交的正式考试。 */
     public JsonNode report(long attemptId, String username) {
+        return report(attemptId, username, false);
+    }
+
+    /** 管理员和教师从学生成绩页查看完整 SAT 报告，不受学生端的成绩开放时间限制。 */
+    public JsonNode reportForStaff(long attemptId) {
+        String username = jdbc.query("""
+            SELECT u.username FROM attempts a JOIN users u ON u.id = a.student_user_id WHERE a.id = ?
+            """, rs -> rs.next() ? rs.getString(1) : null, attemptId);
+        if (username == null) throw notFound("Report not found.");
+        return report(attemptId, username, true);
+    }
+
+    private JsonNode report(long attemptId, String username, boolean staffView) {
         StudentAttemptService.AttemptView attempt = attempts.get(attemptId, username);
         requireSat(attempt.examTypeCode());
         if (!"SUBMITTED".equalsIgnoreCase(attempt.status())) throw conflict("The exam report is not ready yet.");
         ObjectNode report = mapper.createObjectNode();
         ReportIdentity identity = jdbc.query("""
-            SELECT u.display_name, e.title, p.title AS paper_title, p.id AS paper_id, s.scoring_table_code,
+            SELECT u.real_name, e.title, p.title AS paper_title, p.id AS paper_id, s.scoring_table_code,
+                   r.algorithm_version, d.source_score_json,
+                   d.rw_module1_raw, d.rw_module2_raw, d.math_module1_raw, d.math_module2_raw,
+                   d.rw_module1_seconds, d.rw_module2_seconds, d.math_module1_seconds, d.math_module2_seconds,
                    COALESCE(state.focus_violation_count, 0) AS focus_violation_count,
                    (e.score_visibility = 'AFTER_SUBMIT' OR
                     (e.score_visibility = 'AFTER_CLOSE' AND e.closes_at <= CURRENT_TIMESTAMP(6))) AS score_visible,
@@ -123,19 +271,33 @@ public class SatStudentAttemptService {
                     (e.answer_visibility = 'AFTER_CLOSE' AND e.closes_at <= CURRENT_TIMESTAMP(6)))) AS answers_visible
             FROM attempts a JOIN users u ON u.id = a.student_user_id JOIN exams e ON e.id = a.exam_id
             JOIN papers p ON p.id = e.paper_id JOIN sat_paper_settings s ON s.paper_id = p.id
+            LEFT JOIN attempt_results r ON r.attempt_id = a.id
+            LEFT JOIN sat_attempt_details d ON d.attempt_id = a.id
             LEFT JOIN sat_attempt_state state ON state.attempt_id = a.id
             WHERE a.id = ? AND u.username = ?
-            """, rs -> rs.next() ? new ReportIdentity(rs.getString("display_name"), rs.getString("title"),
+            """, rs -> rs.next() ? new ReportIdentity(rs.getString("real_name"), rs.getString("title"),
                 rs.getString("paper_title"), rs.getLong("paper_id"), rs.getString("scoring_table_code"),
-                rs.getInt("focus_violation_count"), rs.getBoolean("score_visible"), rs.getBoolean("answers_visible")) : null,
+                rs.getInt("focus_violation_count"), rs.getBoolean("score_visible"), rs.getBoolean("answers_visible"),
+                "SAT_LEGACY".equals(rs.getString("algorithm_version")), rs.getString("source_score_json"),
+                nullableInt(rs, "rw_module1_raw"), nullableInt(rs, "rw_module2_raw"),
+                nullableInt(rs, "math_module1_raw"), nullableInt(rs, "math_module2_raw"),
+                nullableInt(rs, "rw_module1_seconds"), nullableInt(rs, "rw_module2_seconds"),
+                nullableInt(rs, "math_module1_seconds"), nullableInt(rs, "math_module2_seconds")) : null,
             attemptId, username);
         if (identity == null) throw notFound("Report not found.");
+        if (staffView) {
+            identity = new ReportIdentity(identity.studentName(), identity.examName(), identity.paperName(), identity.paperId(),
+                identity.scoringType(), identity.focusViolationCount(), true, true, identity.legacyImported(),
+                identity.sourceScoreJson(), identity.rw1Raw(), identity.rw2Raw(), identity.math1Raw(), identity.math2Raw(),
+                identity.rw1Seconds(), identity.rw2Seconds(), identity.math1Seconds(), identity.math2Seconds());
+        }
         if (!identity.scoreVisible()) throw conflict("The score report is not available yet.");
+        boolean answerDetailsVisible = identity.answersVisible();
 
         ArrayNode answers = report.putArray("answers");
         Map<String, ModuleReportStats> statsByModule = new LinkedHashMap<>();
         Map<String, SkillReportStats> skills = new LinkedHashMap<>();
-        jdbc.query("""
+        String reportItemsSql = """
             SELECT pi.id AS item_id, q.id AS question_id, pi.display_number, pi.max_points, q.stem, q.question_type_code,
                    q.render_json, q.answer_key_json, q.explanation, ps.section_code, ps.title AS module_title,
                    ps.id AS module_id, ps.settings_json, aa.answer_json, aa.is_correct, aa.time_spent_seconds
@@ -143,65 +305,74 @@ public class SatStudentAttemptService {
             JOIN paper_sections ps ON ps.id = pi.section_id JOIN questions q ON q.id = pi.question_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
             WHERE ai.attempt_id = ? ORDER BY ai.served_order
-            """, rs -> {
-                while (rs.next()) {
-                    JsonNode settings = readJson(rs.getString("settings_json"));
-                    JsonNode render = readJson(rs.getString("render_json"));
-                    JsonNode answer = readJson(rs.getString("answer_json"));
-                    JsonNode key = readJson(rs.getString("answer_key_json"));
-                    String subject = settings.path("subject").asText("RW").equalsIgnoreCase("MATH")
-                        || settings.path("subject").asText("").equalsIgnoreCase("Math") ? "Math" : "RW";
-                    int moduleNumber = settings.path("moduleNumber").asInt(1);
-                    String module = ("Math".equals(subject) ? "Math" : "RW") + moduleNumber;
-                    int spend = rs.getInt("time_spent_seconds");
-                    Boolean correct = rs.getObject("is_correct") == null ? null : rs.getBoolean("is_correct");
-                    JsonNode chosen = answer.path("value");
-                    String tags = render.path("sat").path("tags").asText("");
-                    ArrayNode tagPath = mapper.createArrayNode();
-                    for (String tag : tags.split("[>/]") ) if (!tag.isBlank()) tagPath.add(tag.trim());
-                    if (identity.answersVisible()) {
-                        ObjectNode row = answers.addObject();
-                        row.put("questionId", rs.getLong("question_id"));
-                        row.put("qid", rs.getLong("question_id"));
-                        row.put("paperItemId", rs.getLong("item_id"));
-                        row.put("module", module);
-                        row.put("moduleId", rs.getLong("module_id"));
-                        row.set("tagPath", tagPath);
-                        row.put("tagLabel", tagPath.isEmpty() ? "Uncategorized" : tagPath.get(tagPath.size() - 1).asText());
-                        row.put("spendSeconds", spend);
-                        if (chosen.isMissingNode() || chosen.isNull()) row.putNull("chosen");
-                        else row.put("chosen", chosen.asText(chosen.toString()));
-                        if (correct == null) row.putNull("isCorrect"); else row.put("isCorrect", correct ? 1 : 0);
-                        row.put("correct", key.path("correctAnswer").asText(""));
-                        row.put("question", rs.getString("stem"));
-                        row.set("options", render.path("options"));
-                        row.put("explanation", rs.getString("explanation"));
+            """;
+        // 这里需要自行遍历结果集；显式使用 ResultSetExtractor，避免被推断为逐行回调后跳过首行。
+        ResultSetExtractor<Void> collectReportItems = rs -> {
+            while (rs.next()) {
+                JsonNode settings = readJson(rs.getString("settings_json"));
+                JsonNode render = readJson(rs.getString("render_json"));
+                JsonNode answer = readJson(rs.getString("answer_json"));
+                JsonNode key = readJson(rs.getString("answer_key_json"));
+                String subject = settings.path("subject").asText("RW").equalsIgnoreCase("MATH")
+                    || settings.path("subject").asText("").equalsIgnoreCase("Math") ? "Math" : "RW";
+                int moduleNumber = settings.path("moduleNumber").asInt(1);
+                String module = ("Math".equals(subject) ? "Math" : "RW") + moduleNumber;
+                int spend = rs.getInt("time_spent_seconds");
+                Boolean correct = rs.getObject("is_correct") == null ? null : rs.getBoolean("is_correct");
+                JsonNode chosen = answer.path("value");
+                String tags = render.path("sat").path("tags").asText("");
+                ArrayNode tagPath = mapper.createArrayNode();
+                for (String tag : tags.split("[>/]") ) if (!tag.isBlank()) tagPath.add(tag.trim());
+                if (answerDetailsVisible) {
+                    ObjectNode row = answers.addObject();
+                    row.put("questionId", rs.getLong("question_id"));
+                    row.put("qid", rs.getLong("question_id"));
+                    row.put("paperItemId", rs.getLong("item_id"));
+                    row.put("module", module);
+                    row.put("moduleId", rs.getLong("module_id"));
+                    row.set("tagPath", tagPath);
+                    row.put("tagLabel", tagPath.isEmpty() ? "Uncategorized" : tagPath.get(tagPath.size() - 1).asText());
+                    row.put("spendSeconds", spend);
+                    if (chosen.isMissingNode() || chosen.isNull()) row.putNull("chosen");
+                    else row.put("chosen", chosen.asText(chosen.toString()));
+                    if (correct == null) row.putNull("isCorrect"); else row.put("isCorrect", correct ? 1 : 0);
+                    row.put("correct", key.path("correctAnswer").asText(""));
+                    row.put("question", rs.getString("stem"));
+                    row.set("options", render.path("options"));
+                    row.put("explanation", rs.getString("explanation"));
 
-                        List<String> tagsForSkill = new ArrayList<>();
-                        tagPath.forEach(tag -> tagsForSkill.add(tag.asText()));
-                        String skillKey = tagsForSkill.isEmpty() ? "Uncategorized" : String.join(" > ", tagsForSkill);
-                        SkillReportStats skill = skills.computeIfAbsent(skillKey, ignored -> new SkillReportStats(
-                            List.copyOf(tagsForSkill), tagsForSkill.isEmpty() ? "Uncategorized" : tagsForSkill.get(tagsForSkill.size() - 1)));
-                        skill.total++;
-                        if (Boolean.TRUE.equals(correct)) skill.correct++;
-                    }
-                    ModuleReportStats moduleStats = statsByModule.computeIfAbsent(module, ignored -> new ModuleReportStats());
-                    moduleStats.questions++;
-                    moduleStats.spendSeconds += spend;
-                    if (Boolean.TRUE.equals(correct)) moduleStats.correct++;
+                    List<String> tagsForSkill = new ArrayList<>();
+                    tagPath.forEach(tag -> tagsForSkill.add(tag.asText()));
+                    String skillKey = tagsForSkill.isEmpty() ? "Uncategorized" : String.join(" > ", tagsForSkill);
+                    SkillReportStats skill = skills.computeIfAbsent(skillKey, ignored -> new SkillReportStats(
+                        List.copyOf(tagsForSkill), tagsForSkill.isEmpty() ? "Uncategorized" : tagsForSkill.get(tagsForSkill.size() - 1)));
+                    skill.total++;
+                    if (Boolean.TRUE.equals(correct)) skill.correct++;
                 }
-            }, attemptId);
+                ModuleReportStats moduleStats = statsByModule.computeIfAbsent(module, ignored -> new ModuleReportStats());
+                moduleStats.questions++;
+                moduleStats.spendSeconds += spend;
+                if (Boolean.TRUE.equals(correct)) moduleStats.correct++;
+            }
+            return null;
+        };
+        jdbc.query(reportItemsSql, collectReportItems, attemptId);
         report.put("userName", identity.studentName());
         report.put("examName", identity.examName());
         report.put("paperName", identity.paperName());
         report.put("paperId", identity.paperId());
         report.put("scoringType", identity.scoringType());
         report.put("totalScore", "PSAT".equals(identity.scoringType()) ? 1520 : 1600);
-        report.put("mode", "exam");
+        report.put("mode", attempt.practice() ? "practice" : "exam");
         report.put("abnormalCount", identity.focusViolationCount());
         report.put("answersVisible", identity.answersVisible());
         int paperQuestionCount = statsByModule.values().stream().mapToInt(value -> value.questions).sum();
         fillSummary(report.putObject("summary"), statsByModule, identity.scoringType(), paperQuestionCount);
+        if (identity.legacyImported()) {
+            applyLegacyReportSummary(report.path("summary"), readJson(identity.sourceScoreJson()),
+                identity.rw1Raw(), identity.rw2Raw(), identity.math1Raw(), identity.math2Raw(),
+                identity.rw1Seconds(), identity.rw2Seconds(), identity.math1Seconds(), identity.math2Seconds());
+        }
         fillTimeAnalysis(report.putObject("timeAnalysis"), statsByModule);
         ArrayNode knowledge = report.putArray("knowledgeBreakdown");
         skills.values().forEach(skill -> {
@@ -255,7 +426,7 @@ public class SatStudentAttemptService {
             boolean breakAfterReadingWriting = "RW".equals(current.subject()) && "MATH".equals(next.subject());
             jdbc.update("""
                 UPDATE sat_attempt_state SET active_module_section_id = ?, module_started_at = ?,
-                    active_question_number = NULL, completed_modules_json = CAST(? AS JSON), awaiting_break = ?
+                    completed_modules_json = CAST(? AS JSON), awaiting_break = ?
                 WHERE attempt_id = ?
                 """, breakAfterReadingWriting ? current.id() : next.id(),
                 breakAfterReadingWriting ? null : Timestamp.from(Instant.now()), json(completed), breakAfterReadingWriting, attemptId);
@@ -273,7 +444,7 @@ public class SatStudentAttemptService {
         if (index < 0 || index + 1 >= modules.size()) throw conflict("The next module is unavailable.");
         jdbc.update("""
             UPDATE sat_attempt_state SET active_module_section_id = ?, module_started_at = CURRENT_TIMESTAMP(6),
-                active_question_number = NULL, awaiting_break = FALSE WHERE attempt_id = ?
+                awaiting_break = FALSE WHERE attempt_id = ?
             """, modules.get(index + 1).id(), attemptId);
         return snapshot(attemptId, username);
     }
@@ -281,16 +452,29 @@ public class SatStudentAttemptService {
     @Transactional
     public SatAttemptView updatePresence(long attemptId, int questionNumber, String username) {
         SatState state = lockState(attemptId, username);
-        jdbc.update("UPDATE sat_attempt_state SET active_question_number = ? WHERE attempt_id = ? AND awaiting_break = FALSE",
-            questionNumber, attemptId);
+        requireInProgress(state);
+        if (state.awaitingBreak() || state.activeModuleId() == null) {
+            throw conflict("There is no active module to report.");
+        }
+        Integer questionCount = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM paper_items WHERE section_id = ?", Integer.class, state.activeModuleId());
+        if (questionCount == null || questionNumber > questionCount) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The current question is not in this module.");
+        }
+        jdbc.update("""
+            INSERT INTO sat_attempt_presence
+                (attempt_id, exam_id, active_module_section_id, active_question_number, question_entered_at, last_seen_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+            ON DUPLICATE KEY UPDATE
+                question_entered_at = IF(
+                    active_module_section_id <=> VALUES(active_module_section_id)
+                    AND active_question_number <=> VALUES(active_question_number),
+                    question_entered_at, CURRENT_TIMESTAMP(6)),
+                active_module_section_id = VALUES(active_module_section_id),
+                active_question_number = VALUES(active_question_number),
+                last_seen_at = CURRENT_TIMESTAMP(6)
+            """, attemptId, state.examId(), state.activeModuleId(), questionNumber);
         return snapshot(attemptId, username);
-    }
-
-    @Transactional
-    public int recordFocusViolation(long attemptId, String username) {
-        lockState(attemptId, username);
-        jdbc.update("UPDATE sat_attempt_state SET focus_violation_count = focus_violation_count + 1 WHERE attempt_id = ?", attemptId);
-        return jdbc.queryForObject("SELECT focus_violation_count FROM sat_attempt_state WHERE attempt_id = ?", Integer.class, attemptId);
     }
 
     @Transactional
@@ -318,7 +502,7 @@ public class SatStudentAttemptService {
         boolean submitted = "SUBMITTED".equals(attempt.status());
         int restSeconds = jdbc.queryForObject("SELECT rest_time_seconds FROM sat_paper_settings WHERE paper_id = ?", Integer.class, attempt.paperId());
         return new SatAttemptView(attempt.id(), attempt.examId(), attempt.paperId(), attempt.examTitle(), attempt.examTypeCode(),
-            submitted ? "finished" : "ongoing", active == null ? null : active.id(), remainingSeconds(state),
+            submitted ? "finished" : "ongoing", attempt.practice(), active == null ? null : active.id(), remainingSeconds(state),
             state.awaitingBreak(), restSeconds, state.focusViolationCount(), moduleViews, questions, savedAnswers);
     }
 
@@ -384,7 +568,9 @@ public class SatStudentAttemptService {
             SELECT EXISTS(SELECT 1 FROM attempts a JOIN exams e ON e.id = a.exam_id
                 JOIN papers p ON p.id = e.paper_id JOIN users u ON u.id = a.student_user_id
                 WHERE p.id = ? AND u.username = ? AND u.role_code = 'STUDENT' AND a.is_practice = FALSE
-                  AND a.status = 'SUBMITTED' AND e.allow_review = TRUE)
+                  AND a.status = 'SUBMITTED' AND e.allow_review = TRUE
+                  AND (e.answer_visibility = 'AFTER_SUBMIT' OR
+                       (e.answer_visibility = 'AFTER_CLOSE' AND e.closes_at <= CURRENT_TIMESTAMP(6))))
             """, Boolean.class, paperId, username);
         if (!Boolean.TRUE.equals(allowed)) throw notFound("SAT paper not found.");
     }
@@ -417,6 +603,36 @@ public class SatStudentAttemptService {
         summary.put("totalScaled", rwScaled + mathScaled);
     }
 
+    /** 已导入尝试的总分以旧系统封存字段为准，避免与逐题答案计数冲突。 */
+    static void applyLegacyReportSummary(JsonNode summaryNode, JsonNode sourceScore,
+            Integer rw1Raw, Integer rw2Raw, Integer math1Raw, Integer math2Raw,
+            Integer rw1Seconds, Integer rw2Seconds, Integer math1Seconds, Integer math2Seconds) {
+        if (!(summaryNode instanceof ObjectNode summary)) return;
+        int totalRaw = 0;
+        putIfPresent(summary, "rw1Raw", rw1Raw); if (rw1Raw != null) totalRaw += rw1Raw;
+        putIfPresent(summary, "rw2Raw", rw2Raw); if (rw2Raw != null) totalRaw += rw2Raw;
+        putIfPresent(summary, "math1Raw", math1Raw); if (math1Raw != null) totalRaw += math1Raw;
+        putIfPresent(summary, "math2Raw", math2Raw); if (math2Raw != null) totalRaw += math2Raw;
+        if (rw1Raw != null && rw2Raw != null && math1Raw != null && math2Raw != null) summary.put("totalRaw", totalRaw);
+        putIfPresent(summary, "rw1Spend", rw1Seconds);
+        putIfPresent(summary, "rw2Spend", rw2Seconds);
+        putIfPresent(summary, "math1Spend", math1Seconds);
+        putIfPresent(summary, "math2Spend", math2Seconds);
+
+        copyNumber(sourceScore, "rw_total_scaled", summary, "ebrwScaled");
+        copyNumber(sourceScore, "math_total_scaled", summary, "mathScaled");
+        copyNumber(sourceScore, "total_score", summary, "totalScaled");
+    }
+
+    private static void putIfPresent(ObjectNode target, String field, Integer value) {
+        if (value != null) target.put(field, value);
+    }
+
+    private static void copyNumber(JsonNode source, String sourceField, ObjectNode target, String targetField) {
+        JsonNode value = source.path(sourceField);
+        if (value.isNumber()) target.set(targetField, value);
+    }
+
     private void fillTimeAnalysis(ObjectNode analysis, Map<String, ModuleReportStats> stats) {
         int totalSeconds = stats.values().stream().mapToInt(value -> value.spendSeconds).sum();
         int totalQuestions = stats.values().stream().mapToInt(value -> value.questions).sum();
@@ -441,14 +657,14 @@ public class SatStudentAttemptService {
 
     private SatState state(long attemptId) {
         return jdbc.query("""
-            SELECT a.paper_id, state.active_module_section_id, state.active_question_number,
+            SELECT e.id AS exam_id, e.paper_id, state.active_module_section_id,
                    state.module_started_at, state.completed_modules_json, state.awaiting_break,
                    state.focus_violation_count, e.duration_seconds, p.exam_type_code, a.status
             FROM sat_attempt_state state JOIN attempts a ON a.id = state.attempt_id
             JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             WHERE state.attempt_id = ?
-            """, rs -> rs.next() ? new SatState(rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
-                (Integer) rs.getObject("active_question_number"), rs.getTimestamp("module_started_at"),
+            """, rs -> rs.next() ? new SatState(rs.getLong("exam_id"), rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
+                rs.getTimestamp("module_started_at"),
                 rs.getString("completed_modules_json"), rs.getBoolean("awaiting_break"), rs.getInt("focus_violation_count"),
                 rs.getObject("duration_seconds") == null ? null : rs.getInt("duration_seconds"), rs.getString("exam_type_code"),
                 rs.getString("status")) : null, attemptId);
@@ -458,7 +674,7 @@ public class SatStudentAttemptService {
         StudentAttemptService.AttemptView owned = attempts.get(attemptId, username);
         requireSat(owned.examTypeCode());
         SatState state = jdbc.query("""
-            SELECT a.paper_id, state.active_module_section_id, state.active_question_number,
+            SELECT e.id AS exam_id, e.paper_id, state.active_module_section_id,
                    state.module_started_at, state.completed_modules_json, state.awaiting_break,
                    state.focus_violation_count, e.duration_seconds, p.exam_type_code, a.status
             FROM sat_attempt_state state JOIN attempts a ON a.id = state.attempt_id
@@ -466,8 +682,8 @@ public class SatStudentAttemptService {
             WHERE state.attempt_id = ? AND a.student_user_id = (
                 SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT' AND status = 'ACTIVE'
             ) FOR UPDATE
-            """, rs -> rs.next() ? new SatState(rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
-                (Integer) rs.getObject("active_question_number"), rs.getTimestamp("module_started_at"),
+            """, rs -> rs.next() ? new SatState(rs.getLong("exam_id"), rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
+                rs.getTimestamp("module_started_at"),
                 rs.getString("completed_modules_json"), rs.getBoolean("awaiting_break"), rs.getInt("focus_violation_count"),
                 rs.getObject("duration_seconds") == null ? null : rs.getInt("duration_seconds"), rs.getString("exam_type_code"),
                 rs.getString("status")) : null,
@@ -534,17 +750,26 @@ public class SatStudentAttemptService {
     public record SatQuestionMetadata(String subject, String typeName) { }
     public record SatSavedAnswer(long questionId, JsonNode answer, int spendSeconds, boolean isMarked) { }
     public record SatAttemptView(long attemptId, long examId, long paperId, String examTitle, String examTypeCode,
-            String status, Long currentModuleId, int remainingSeconds, boolean awaitingBreak, int restTimeSeconds,
+            String status, boolean practice, Long currentModuleId, int remainingSeconds, boolean awaitingBreak, int restTimeSeconds,
             int abnormalCount, List<SatModule> modules, List<SatQuestion> questions, List<SatSavedAnswer> savedAnswers) { }
+    public record PracticePaperView(long id, String title, String description, String examTypeCode, String groupName,
+            Integer durationSeconds, int questionCount) { }
+    public record PracticeHistoryPage(int current, int size, long total, List<PracticeAttemptView> records) { }
+    public record PracticeAttemptView(long attemptId, long paperId, String paperTitle, String examTypeCode,
+                                      Instant startedAt, Instant submittedAt, java.math.BigDecimal rawScore,
+                                      java.math.BigDecimal rawMaximum, long timeSpentSeconds) { }
 
-    private record SatState(long paperId, Long activeModuleId, Integer activeQuestionNumber, Timestamp moduleStartedAt,
+    private record PracticePaper(long id, String examTypeCode, String title, String status) { }
+    private record SatState(long examId, long paperId, Long activeModuleId, Timestamp moduleStartedAt,
             String completedModulesJson, boolean awaitingBreak, int focusViolationCount, Integer examDurationSeconds,
             String examTypeCode, String status) { }
     private record ModuleRow(long id, String code, String title, String subject, int moduleNumber,
             int sortOrder, int durationSeconds, int questionCount) { }
     private record AnswerMetadata(int timeSpentSeconds, boolean marked) { }
     private record ReportIdentity(String studentName, String examName, String paperName, long paperId,
-            String scoringType, int focusViolationCount, boolean scoreVisible, boolean answersVisible) { }
+            String scoringType, int focusViolationCount, boolean scoreVisible, boolean answersVisible,
+            boolean legacyImported, String sourceScoreJson, Integer rw1Raw, Integer rw2Raw, Integer math1Raw,
+            Integer math2Raw, Integer rw1Seconds, Integer rw2Seconds, Integer math1Seconds, Integer math2Seconds) { }
     private static final class ModuleReportStats {
         private int questions;
         private int correct;
