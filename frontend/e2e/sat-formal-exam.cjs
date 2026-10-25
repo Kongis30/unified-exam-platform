@@ -295,6 +295,15 @@ async function main() {
       'practice results do not enter formal SAT score history');
     assert.equal(scoresAfterPractice.statistics.sat.attempts, 2,
       'practice results do not change formal SAT attempt statistics');
+    await teacher.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}/students/${studentId}/scores?scoreMode=RAW`);
+    await teacher.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
+    const teacherScoreRows = teacher.locator('.sat-score-history-table tbody tr');
+    await teacherScoreRows.first().waitFor();
+    assert.equal(await teacherScoreRows.first().getByRole('button', { name: /Actions for/ }).count(), 0,
+      'teachers do not see score deletion actions');
+    const teacherDelete = await raw(teacher,
+      `/api/admin/sat/students/${studentId}/attempts/${completedScores[0].attemptId}`, 'DELETE');
+    assert.equal(teacherDelete.status, 403, 'teachers cannot delete a formal SAT score attempt');
     await student.goto(`${baseUrl}/student/systems/SAT`);
     const practiceRow = student.locator('.practice-history-row').filter({ hasText: practicePaper.title });
     await practiceRow.waitFor();
@@ -481,6 +490,9 @@ async function main() {
     await deleteDialog.waitFor();
     await deleteDialog.getByRole('button', { name: 'Delete attempt' }).click();
     await psatScoreRow.waitFor({ state: 'detached' });
+    const duplicateDelete = await raw(admin,
+      `/api/admin/sat/students/${studentId}/attempts/${psatStart.attemptId}`, 'DELETE');
+    assert.equal(duplicateDelete.status, 404, 'repeating an admin delete reports the attempt as missing');
     await admin.locator('.sat-score-chart-toolbar select').waitFor({ state: 'detached' });
     assert.equal(new URL(admin.url()).searchParams.has('scoreType'), false,
       'when the filtered assessment type has no attempts, the view returns to an available type');
@@ -528,6 +540,7 @@ async function main() {
         'PSAT release type, student launch, fill-in autosave/reload, answer grading, and PSAT report scoring identity',
         'SAT practice start, report/history entry, and exclusion from formal score history',
         'administrator and teacher denial for student practice APIs and student workspace route',
+        'teacher cannot access SAT attempt deletion in UI or API; duplicate admin delete is safe',
         'empty student score and class trend states on mobile',
         'per-type student statistics, score filter, and fallback when a type has no attempts',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',
