@@ -269,11 +269,17 @@ async function main() {
     let psatState = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}`);
     const readingModules = psatState.modules.filter(module => module.subject === 'RW');
     assert.equal(readingModules.length, 2, 'PSAT has two Reading and Writing modules');
-    for (const module of readingModules) {
+    for (const [moduleIndex, module] of readingModules.entries()) {
       assert.equal(psatState.currentModuleId, module.id, 'Reading and Writing modules follow the defined exam order');
       psatState = await api(student,
         `/api/student/sat-attempts/${psatStart.attemptId}/modules/${module.id}/submit`, 'POST',
         { answers: [], abnormalCount: 0 });
+      if (moduleIndex === 0) {
+        const staleModuleSave = await raw(student,
+          `/api/student/sat-attempts/${psatStart.attemptId}/modules/${module.id}/save`, 'PUT',
+          { answers: [], abnormalCount: 0 });
+        assert.equal(staleModuleSave.status, 409, 'a completed module rejects late answer saves');
+      }
     }
     assert.equal(psatState.awaitingBreak, true, 'PSAT provides the break between Reading and Writing and Math');
     psatState = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}/resume-break`, 'POST');
