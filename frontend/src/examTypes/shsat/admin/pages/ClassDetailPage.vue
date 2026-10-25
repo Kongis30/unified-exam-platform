@@ -499,6 +499,10 @@ function formatExamTarget(exam) {
     return ids.length ? `Classes: ${ids.join(', ')}` : 'Specific classes';
   }
 
+  if (targetType === 'SPECIFIC_STUDENTS') {
+    return 'Selected students';
+  }
+
   return targetType;
 }
 

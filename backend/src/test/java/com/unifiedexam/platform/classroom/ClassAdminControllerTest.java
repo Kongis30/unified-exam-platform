@@ -92,10 +92,56 @@ class ClassAdminControllerTest {
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("ROW_NUMBER()")
                 && sql.contains("a.is_practice = FALSE") && sql.contains("p.exam_type_code IN (?, ?)")
+                && sql.contains("ts.student_user_id = cm.student_user_id")
                 && sql.contains("source_score_json") && sql.contains("rb.breakdown_code = ps.section_code")
                 && sql.contains("'$.moduleNumber')) AS UNSIGNED) = 1")),
             any(RowMapper.class),
             eq(12L), eq("SAT"), eq("PSAT"));
+    }
+
+    @Test
+    void classCardCountsExamsAssignedToItsStudents() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
+
+        new ClassAdminController(jdbcTemplate).listClasses(List.of("SAT", "PSAT"));
+
+        verify(jdbcTemplate).query(
+            org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("COUNT(DISTINCT a.exam_id)")
+                && sql.contains("FROM exam_target_students ts")
+                && sql.contains("ts.student_user_id = m.student_user_id")),
+            any(RowMapper.class), eq("SAT"), eq("PSAT"));
+    }
+
+    @Test
+    void classDetailsCountExamsAssignedToItsStudents() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
+            .thenReturn(List.of(new ClassAdminController.ClassView(12L, "SAT Class", null, "ACTIVE", 0, 4, 3)));
+
+        var result = new ClassAdminController(jdbcTemplate).getClass(12L, List.of("SAT", "PSAT"));
+
+        assertEquals(3, result.examCount());
+        verify(jdbcTemplate).query(
+            org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("FROM exam_target_students ts")
+                && sql.contains("ts.student_user_id = m.student_user_id")),
+            any(RowMapper.class), eq("SAT"), eq("PSAT"), eq(12L));
+    }
+
+    @Test
+    void classExamListIncludesReleasesAssignedToCurrentStudents() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
+
+        new ClassAdminController(jdbcTemplate).listClassExams(12L, List.of("SAT"));
+
+        verify(jdbcTemplate).query(
+            org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("ELSE 'SPECIFIC_STUDENTS'")
+                && sql.contains("FROM exam_target_students ts")
+                && sql.contains("cm.class_id = ? AND cm.left_at IS NULL")
+                && sql.contains("ses.is_practice_archive = TRUE")),
+            any(RowMapper.class), eq(12L), eq("SAT"), eq(12L), eq(12L));
     }
 
     @Test

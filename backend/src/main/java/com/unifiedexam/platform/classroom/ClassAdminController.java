@@ -62,6 +62,9 @@ public class ClassAdminController {
                    AND a.is_practice = FALSE
                    AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
                        SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = c.id
+                   ) OR EXISTS (
+                       SELECT 1 FROM exam_target_students ts
+                       WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
                    ))
                    %s) AS exam_count
             FROM classes c ORDER BY c.sort_order, c.id DESC
@@ -103,17 +106,28 @@ public class ClassAdminController {
         String typePlaceholders = String.join(", ", Collections.nCopies(types.size(), "?"));
         String sql = """
             SELECT e.id, e.title, e.description, e.status,
-                   CASE WHEN e.target_scope = 'ALL_STUDENTS' THEN 'ALL_STUDENTS' ELSE 'SPECIFIC_CLASSES' END AS target_type,
+                   CASE WHEN e.target_scope = 'ALL_STUDENTS' THEN 'ALL_STUDENTS'
+                        WHEN EXISTS (SELECT 1 FROM exam_target_classes tc
+                                     WHERE tc.exam_id = e.id AND tc.class_id = ?) THEN 'SPECIFIC_CLASSES'
+                        ELSE 'SPECIFIC_STUDENTS' END AS target_type,
                    e.opens_at, e.closes_at,
                    e.duration_seconds, e.attempt_limit, p.title AS paper_name,
                    COALESCE((SELECT JSON_ARRAYAGG(tc.class_id) FROM exam_target_classes tc WHERE tc.exam_id = e.id), JSON_ARRAY()) AS target_class_ids
             FROM exams e JOIN papers p ON p.id = e.paper_id
             WHERE p.exam_type_code IN (%s) AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
                 SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = ?
-            ))
+            ) OR EXISTS (
+                SELECT 1 FROM exam_target_students ts
+                JOIN class_memberships cm ON cm.student_user_id = ts.student_user_id
+                WHERE ts.exam_id = e.id AND cm.class_id = ? AND cm.left_at IS NULL
+            )) AND NOT EXISTS (
+                SELECT 1 FROM sat_exam_settings ses
+                WHERE ses.exam_id = e.id AND ses.is_practice_archive = TRUE
+            )
             ORDER BY e.created_at DESC, e.id DESC
             """.formatted(typePlaceholders);
-        Object[] parameters = Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId)).toArray();
+        Object[] parameters = Stream.concat(Stream.of((Object) classId),
+            Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId, classId))).toArray();
         return jdbcTemplate.query(sql, (rs, rowNum) -> new ClassExamView(rs.getLong("id"), rs.getString("title"),
                 rs.getString("paper_name"), rs.getString("target_type"), rs.getString("target_class_ids"),
                 "PUBLISHED".equals(rs.getString("status")), rs.getString("status"),
@@ -167,6 +181,9 @@ public class ClassAdminController {
                   AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
                       SELECT 1 FROM exam_target_classes tc
                       WHERE tc.exam_id = e.id AND tc.class_id = cm.class_id
+                  ) OR EXISTS (
+                      SELECT 1 FROM exam_target_students ts
+                      WHERE ts.exam_id = e.id AND ts.student_user_id = cm.student_user_id
                   ))
             )
             SELECT * FROM ranked_attempts
@@ -412,6 +429,9 @@ public class ClassAdminController {
                    AND a.is_practice = FALSE
                    AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
                        SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = c.id
+                   ) OR EXISTS (
+                       SELECT 1 FROM exam_target_students ts
+                       WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
                    ))
                    %s) AS exam_count
             FROM classes c WHERE c.id = ?
