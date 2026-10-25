@@ -233,6 +233,43 @@ async function main() {
     const blockedStart = await raw(student, `/api/student/exams/${formalExam.id}/sat-attempt`, 'POST');
     assert.equal(blockedStart.status, 409, 'the attempt limit is enforced after both allowed attempts');
 
+    const practicePaper = (await api(student, '/api/student/sat-practice-papers'))
+      .find(row => Number(row.id) === Number(paperId));
+    assert.ok(practicePaper, 'the selected SAT paper is available for student practice');
+    await student.goto(`${baseUrl}/student/systems/SAT`);
+    const practiceStartResponse = student.waitForResponse(response =>
+      response.url().includes(`/api/student/sat-practice-papers/${paperId}/attempts`) &&
+      response.request().method() === 'POST');
+    await student.getByRole('button', { name: `Start practice: ${practicePaper.title}` }).click();
+    await student.waitForURL(`**/student/sat/exams/${paperId}?mode=practice`);
+    const practiceStartSnapshot = await practiceStartResponse;
+    assert.equal(practiceStartSnapshot.status(), 200, 'the student practice start request succeeds');
+    const practiceStart = await practiceStartSnapshot.json();
+    assert.ok(practiceStart.practice && practiceStart.currentModuleId,
+      'practice begins in its first module');
+    await student.locator('.answer-options').waitFor({ timeout: 15_000 });
+    if (await student.getByRole('heading', { name: 'Fullscreen Required' }).count()) {
+      await student.getByRole('button', { name: 'Enter Fullscreen' }).click();
+    }
+    const practiceAttemptId = practiceStart.attemptId;
+    const finishedPractice = await finishAllModules(practiceAttemptId);
+    assert.equal(finishedPractice.status, 'finished');
+    const practiceReport = await api(student, `/api/student/sat-attempts/${practiceAttemptId}/report`);
+    assert.equal(practiceReport.mode, 'practice', 'the practice result is clearly identified as practice');
+    const scoresAfterPractice = await api(admin, `/api/admin/sat/students/${studentId}/scores`);
+    assert.equal(scoresAfterPractice.scores.some(row => Number(row.attemptId) === practiceAttemptId), false,
+      'practice results do not enter formal SAT score history');
+    assert.equal(scoresAfterPractice.statistics.sat.attempts, 2,
+      'practice results do not change formal SAT attempt statistics');
+    await student.goto(`${baseUrl}/student/systems/SAT`);
+    const practiceRow = student.locator('.practice-history-row').filter({ hasText: practicePaper.title });
+    await practiceRow.waitFor();
+    await practiceRow.getByRole('button', { name: 'View report' }).click();
+    await student.getByRole('heading', { name: 'Score Report' }).waitFor({ timeout: 15_000 });
+    await student.locator('.mode-badge', { hasText: 'Practice' }).waitFor();
+    await student.getByRole('link', { name: 'Back to SAT exams' }).click();
+    await student.getByRole('heading', { name: 'Your exams' }).waitFor();
+
     await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/1/students/${studentId}/scores?scoreMode=RAW`);
     await admin.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
     await admin.locator('.sat-score-history-table tbody tr').nth(0).waitFor();
@@ -449,6 +486,7 @@ async function main() {
       checks: ['question navigation', 'offline answer sync after reconnect', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
         'multiple attempts in score history, report return state, mobile table layout',
         'PSAT release type, student launch, fill-in autosave/reload, answer grading, and PSAT report scoring identity',
+        'SAT practice start, report/history entry, and exclusion from formal score history',
         'empty student score and class trend states on mobile',
         'per-type student statistics, score filter, and fallback when a type has no attempts',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',
