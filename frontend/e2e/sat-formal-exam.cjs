@@ -217,6 +217,8 @@ async function main() {
     assert.equal(psatAttempt.status, 'finished');
     const psatReport = await api(student, `/api/student/sat-attempts/${psatStart.attemptId}/report`);
     assert.equal(psatReport.scoringType, 'PSAT', 'PSAT submissions use the PSAT scoring identity');
+    assert.equal(psatReport.summary.totalRaw, 0);
+    assert.equal(psatReport.summary.totalScaled, 320, 'zero raw answers use the PSAT scale floor');
 
     await student.goto(`${baseUrl}/student/systems/SAT`);
     await student.locator('.student-exam-list article.paper-row')
