@@ -35,7 +35,7 @@ public class SatStudentAttemptService {
     }
 
     /** 开始或续考：先由通用服务校验考试窗口、报名资格与次数，再初始化 SAT 模块状态。 */
-    @Transactional
+    @Transactional(noRollbackFor = StudentAttemptService.ExpiredAttemptStartConflictException.class)
     public SatAttemptView start(long examId, String username) {
         String examType = jdbc.query("""
             SELECT p.exam_type_code FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ?

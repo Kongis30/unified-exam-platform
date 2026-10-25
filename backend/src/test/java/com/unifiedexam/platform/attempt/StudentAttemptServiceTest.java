@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.unifiedexam.platform.examtype.ExamTypeRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -13,6 +15,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class StudentAttemptServiceTest {
+
+    @Test
+    void expiredAttemptConflictCommitsTheExpiryUpdateWhileReturningConflict() throws Exception {
+        Transactional transaction = StudentAttemptService.class
+            .getMethod("start", long.class, String.class, String.class)
+            .getAnnotation(Transactional.class);
+
+        assertTrue(java.util.Arrays.asList(transaction.noRollbackFor())
+            .contains(StudentAttemptService.ExpiredAttemptStartConflictException.class));
+        assertEquals(409, new StudentAttemptService.ExpiredAttemptStartConflictException("Expired")
+            .getStatusCode().value());
+    }
 
     @Test
     void expiresTimedOutAttemptBeforeItCanBeResumed() {

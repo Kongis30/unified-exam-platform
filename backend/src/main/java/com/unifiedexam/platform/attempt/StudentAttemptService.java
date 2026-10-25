@@ -39,7 +39,7 @@ public class StudentAttemptService {
     }
 
     /** 锁定考试行，串行化同一场考试的并发开考请求并创建固定题目顺序。 */
-    @Transactional
+    @Transactional(noRollbackFor = ExpiredAttemptStartConflictException.class)
     public AttemptView start(long examId, String firstSection, String username) {
         return start(examId, firstSection, username, false);
     }
@@ -94,7 +94,7 @@ public class StudentAttemptService {
             if (!Boolean.TRUE.equals(eligible)) throw notFound("Exam not found.");
         }
 
-        expireTimedOutAttempts(examId, studentId, practice);
+        int expiredAttempts = expireTimedOutAttempts(examId, studentId, practice);
         Long existingAttempt = jdbcTemplate.query("""
             SELECT id FROM attempts WHERE exam_id = ? AND student_user_id = ? AND status = 'IN_PROGRESS' AND is_practice = ?
                 AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP(6))
@@ -114,10 +114,16 @@ public class StudentAttemptService {
         }
 
         if (!practice) {
-            if (!Boolean.TRUE.equals(open)) throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam is not open for starting.");
+            if (!Boolean.TRUE.equals(open)) {
+                if (expiredAttempts > 0) throw new ExpiredAttemptStartConflictException("This exam is not open for starting.");
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam is not open for starting.");
+            }
 
             Integer attemptsUsed = countUsedFormalAttempts(examId, studentId);
             if (attemptsUsed != null && attemptsUsed >= exam.attemptLimit()) {
+                if (expiredAttempts > 0) {
+                    throw new ExpiredAttemptStartConflictException("You have used all available attempts for this exam.");
+                }
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "You have used all available attempts for this exam.");
             }
         }
@@ -172,6 +178,13 @@ public class StudentAttemptService {
             WHERE exam_id = ? AND student_user_id = ? AND is_practice = FALSE
               AND status IN ('SUBMITTED', 'COMPLETED', 'EXPIRED')
             """, Integer.class, examId, studentId);
+    }
+
+    /** 保留刚刚提交的过期状态，同时仍向学生返回正常的 409 冲突。 */
+    static final class ExpiredAttemptStartConflictException extends ResponseStatusException {
+        ExpiredAttemptStartConflictException(String reason) {
+            super(HttpStatus.CONFLICT, reason);
+        }
     }
 
     /** 为已验证的 SHSAT 错题任务创建只含本轮未清除题目的独立练习。 */
