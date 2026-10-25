@@ -6,4 +6,4 @@ Start the local backend and Vite frontend, install the Playwright Chromium brows
 E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:sat
 ```
 
-Set `E2E_BASE_URL` when the frontend is not at `http://localhost:5175`; set `E2E_CHROMIUM_PATH` to use a locally installed Chrome executable. The test creates a temporary student and SAT/PSAT formal exam releases, then deletes them during cleanup. It checks the PSAT label in the student list and verifies that a PSAT attempt retains its scoring identity. Do not point it at production data.
+Set `E2E_BASE_URL` when the frontend is not at `http://localhost:5175`; set `E2E_CHROMIUM_PATH` to use a locally installed Chrome executable. The test creates a temporary student, class, and SAT/PSAT formal exam releases, then removes them during cleanup. It checks the PSAT label and scoring identity, plus SAT/PSAT class trend aggregation and tooltip behavior. Do not point it at production data.

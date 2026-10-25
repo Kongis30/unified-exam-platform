@@ -81,9 +81,8 @@ async function loadTrend() {
 function tooltipStyle(point) {
   const side = point.x <= chart.value.width * 0.25 ? 'left'
     : point.x >= chart.value.width * 0.75 ? 'right' : 'center'
-  const left = side === 'left' ? '12px'
-    : side === 'right' ? 'calc(100% - 12px)' : `${(point.x / chart.value.width) * 100}%`
-  const translateX = side === 'left' ? '0' : side === 'right' ? '-100%' : '-50%'
+  const left = side === 'right' ? 'calc(100% - 12px)' : `${(point.x / chart.value.width) * 100}%`
+  const translateX = side === 'left' ? '12px' : side === 'right' ? 'calc(-100% - 12px)' : '-50%'
   const top = `${(point.y / chart.value.height) * 100}%`
   const translateY = point.y < 100 ? '8px' : 'calc(-100% - 10px)'
   return { left, top, transform: `translate(${translateX}, ${translateY})` }

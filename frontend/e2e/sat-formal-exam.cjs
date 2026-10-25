@@ -26,6 +26,9 @@ async function main() {
   let studentId;
   const examIds = [];
   let paperId;
+  let classId;
+  let classCreated = false;
+  let classMembershipAdded = false;
 
   const csrf = page => page.evaluate(async () => (await (await fetch('/api/auth/csrf')).json()).token);
   const raw = async (page, path, method = 'GET', body) => {
@@ -96,6 +99,13 @@ async function main() {
       username, password, realName: 'SAT Parity Student', roleCode: 'STUDENT', email: null, phone: null,
     });
     studentId = created.id;
+    const classroom = await api(admin, '/api/admin/classes?examTypeCodes=SAT&examTypeCodes=PSAT', 'POST', {
+      name: `SAT parity class ${Date.now()}`, description: 'Temporary SAT score trend verification', sortOrder: 999,
+    });
+    classId = classroom.id;
+    classCreated = true;
+    await api(admin, `/api/admin/classes/${classId}/students/batch`, 'POST', { studentUserIds: [studentId] });
+    classMembershipAdded = true;
     const papers = await api(admin, '/api/admin/exam-types/SAT/papers');
     const paper = papers.find(row => row.status === 'READY' && row.questionCount > 0);
     assert.ok(paper, 'a ready SAT paper with questions is available');
@@ -234,6 +244,45 @@ async function main() {
     assert.equal(psatReport.summary.totalRaw, 0);
     assert.equal(psatReport.summary.totalScaled, 320, 'zero raw answers use the PSAT scale floor');
 
+    const trend = await api(admin,
+      `/api/admin/classes/${classId}/score-trend?examTypeCodes=SAT&examTypeCodes=PSAT`);
+    const testTrend = trend.filter(row => [formalExam.id, psatExam.id].includes(row.examId));
+    assert.equal(testTrend.length, 2, 'class trend includes one SAT and one PSAT exam');
+    const satTrend = testTrend.find(row => row.examId === formalExam.id);
+    const psatTrend = testTrend.find(row => row.examId === psatExam.id);
+    assert.equal(satTrend.studentCount, 1, 'repeated attempts are reduced to one student score per exam');
+    assert.equal(satTrend.averageRawScore, 0);
+    assert.equal(psatTrend.averageScaledScore, 320);
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}`);
+    await admin.getByRole('heading', { name: 'Class Exam Score Trend' }).waitFor();
+    const trendPointLabels = await admin.locator('.class-score-chart g[role="img"][tabindex="0"]')
+      .evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')));
+    const satPointIndex = trendPointLabels.findIndex(label => label?.includes(formalExam.title));
+    const psatPointIndex = trendPointLabels.findIndex(label => label?.includes(psatExam.title));
+    assert.notEqual(satPointIndex, -1, 'SAT exam appears as a chart point');
+    assert.notEqual(psatPointIndex, -1, 'PSAT exam appears as a chart point');
+    await admin.locator('.class-score-chart circle.class-score-chart__point').nth(satPointIndex).hover();
+    const scoreTooltip = admin.locator('.class-score-chart__tooltip');
+    await scoreTooltip.waitFor();
+    assert.match(await scoreTooltip.textContent(), new RegExp(formalExam.title));
+    const firstPointBox = await admin.locator('.class-score-chart circle.class-score-chart__point').nth(satPointIndex).boundingBox();
+    const firstTooltipBox = await scoreTooltip.boundingBox();
+    assert.ok(firstTooltipBox.x >= firstPointBox.x + firstPointBox.width,
+      'the chart tooltip stays beside the hovered point instead of covering it');
+    await admin.locator('#class-score-metric').selectOption('raw');
+    await admin.locator('.class-score-chart circle.class-score-chart__point').nth(satPointIndex).hover();
+    assert.match(await scoreTooltip.textContent(), /Average raw score: 0/);
+    const classTables = admin.locator('.sat-class-detail-section table');
+    await admin.getByRole('heading', { name: 'Exam Releases' }).waitFor();
+    await admin.getByRole('heading', { name: 'Students' }).waitFor();
+    assert.equal(await classTables.count(), 2, 'class detail provides separate releases and students tables');
+    assert.equal(await classTables.nth(0).locator('tbody tr').count(), 2);
+    assert.equal(await classTables.nth(1).locator('tbody tr').count(), 1);
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const classPageWidth = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(classPageWidth.page <= classPageWidth.viewport, 'class score trend has no page overflow at 390px');
+
     await student.goto(`${baseUrl}/student/systems/SAT`);
     await student.locator('.student-exam-list article.paper-row')
       .filter({ hasText: formalExam.title }).getByRole('button', { name: 'View attempt' }).click();
@@ -270,11 +319,14 @@ async function main() {
       checks: ['question navigation', 'offline answer sync after reconnect', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
         'multiple attempts in score history, report return state, mobile table layout',
         'PSAT release type, student launch, and PSAT report scoring identity',
+        'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',
         'formal submission, score report, history, attempt limit', 'closed-window retry returns 409 after forced submission'],
     }));
   } finally {
     try {
       for (const examId of examIds) await api(admin, `/api/admin/exams/${examId}`, 'DELETE');
+      if (classMembershipAdded) await api(admin, `/api/admin/classes/${classId}/students/${studentId}`, 'DELETE');
+      if (classCreated) await api(admin, `/api/admin/classes/${classId}`, 'DELETE');
       if (studentId) await api(admin, `/api/admin/users/${studentId}`, 'DELETE');
       console.log(JSON.stringify({ cleanup: 'PASS', examIds, studentId }));
     } catch (error) {
