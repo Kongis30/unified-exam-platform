@@ -350,7 +350,8 @@ async function main() {
     assert.equal(satTrend.averageRawScore, 0);
     assert.equal(psatTrend.averageRawScore, psatReport.summary.totalRaw,
       'class score trend includes the raw points earned on the PSAT fill-in question');
-    assert.equal(typeof psatTrend.averageScaledScore, 'number', 'the PSAT trend includes a scaled score');
+    assert.equal(psatTrend.averageScaledScore, psatReport.summary.totalScaled,
+      `PSAT report and class trend use the same scaled score: ${JSON.stringify({ report: psatReport.summary, trend: psatTrend })}`);
     await admin.setViewportSize({ width: 1440, height: 1000 });
     await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}`);
     await admin.getByRole('heading', { name: 'Class Exam Score Trend' }).waitFor();
