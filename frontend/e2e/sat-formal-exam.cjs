@@ -1,0 +1,205 @@
+const assert = require('node:assert/strict');
+const { chromium } = require('playwright');
+
+const baseUrl = process.env.E2E_BASE_URL || 'http://localhost:5175';
+const adminUsername = process.env.E2E_ADMIN_USERNAME;
+const adminPassword = process.env.E2E_ADMIN_PASSWORD;
+
+if (!adminUsername || !adminPassword) {
+  throw new Error('Set E2E_ADMIN_USERNAME and E2E_ADMIN_PASSWORD before running this test.');
+}
+
+async function main() {
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.E2E_CHROMIUM_PATH ? { executablePath: process.env.E2E_CHROMIUM_PATH } : {}),
+  });
+  const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const studentContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const admin = await adminContext.newPage();
+  const student = await studentContext.newPage();
+  const pageErrors = [];
+  student.on('pageerror', error => pageErrors.push(error.message));
+
+  const username = `sat_parity_${Date.now()}`;
+  const password = `sat-e2e-${Date.now()}`;
+  let studentId;
+  const examIds = [];
+  let paperId;
+
+  const csrf = page => page.evaluate(async () => (await (await fetch('/api/auth/csrf')).json()).token);
+  const raw = async (page, path, method = 'GET', body) => {
+    const token = await csrf(page);
+    return page.evaluate(async ({ path, method, body, token }) => {
+      const response = await fetch(path, {
+        method,
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json',
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(!['GET', 'HEAD'].includes(method) ? { 'X-XSRF-TOKEN': token } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return { status: response.status, text: await response.text() };
+    }, { path, method, body, token });
+  };
+  const api = async (page, path, method = 'GET', body) => {
+    const response = await raw(page, path, method, body);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`${method} ${path}: ${response.status} ${response.text}`);
+    }
+    return response.text ? JSON.parse(response.text) : null;
+  };
+  const login = async (page, name, secret) => {
+    await page.goto(`${baseUrl}/login`);
+    await page.getByLabel('Username').fill(name);
+    await page.getByLabel('Password').fill(secret);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL(url => !url.pathname.endsWith('/login'));
+  };
+  const createExam = async (title, closesAt, attemptLimit) => {
+    const now = Date.now();
+    const release = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
+      title,
+      description: 'Temporary SAT parity verification',
+      opensAt: new Date(now - 60_000).toISOString(),
+      closesAt: new Date(closesAt).toISOString(),
+      durationSeconds: 3600,
+      attemptLimit,
+      targetScope: 'SELECTED',
+    });
+    const examId = release.summary.id;
+    examIds.push(examId);
+    await api(admin, `/api/admin/exams/${examId}/targets`, 'PUT', {
+      classIds: [], studentUserIds: [studentId],
+    });
+    await api(admin, `/api/admin/exams/${examId}/publish`, 'POST');
+    return { id: examId, ...release.summary };
+  };
+
+  try {
+    await login(admin, adminUsername, adminPassword);
+    const created = await api(admin, '/api/admin/users', 'POST', {
+      username, password, realName: 'SAT Parity Student', roleCode: 'STUDENT', email: null, phone: null,
+    });
+    studentId = created.id;
+    const papers = await api(admin, '/api/admin/exam-types/SAT/papers');
+    const paper = papers.find(row => row.status === 'READY' && row.questionCount > 0);
+    assert.ok(paper, 'a ready SAT paper with questions is available');
+    paperId = paper.id ?? paper.summary?.id;
+
+    const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 1);
+    await login(student, username, password);
+    await student.goto(`${baseUrl}/student/systems/SAT`);
+    await student.getByRole('heading', { name: 'Your exams' }).waitFor();
+    await student.getByText(formalExam.title, { exact: true }).waitFor();
+    await student.getByRole('button', { name: /Start exam/ }).click();
+    await student.waitForURL(`**/student/sat/exams/${formalExam.id}`);
+    await student.locator('.answer-options').waitFor({ timeout: 15_000 });
+    if (await student.getByRole('heading', { name: 'Fullscreen Required' }).count()) {
+      await student.getByRole('button', { name: 'Enter Fullscreen' }).click();
+    }
+    await student.locator('.option-item').first().click();
+    await student.getByRole('button', { name: 'Mark for Review' }).click();
+
+    const attemptList = await api(student, '/api/student/exams');
+    const attemptId = attemptList.find(row => row.id === formalExam.id).activeAttemptId;
+    assert.ok(attemptId, 'starting the exam creates an attempt');
+    let state;
+    let saved;
+    for (let retry = 0; retry < 12; retry++) {
+      state = await api(student, `/api/student/sat-attempts/${attemptId}`);
+      saved = state.savedAnswers.find(answer => Number(answer.questionId) === Number(state.questions[0].id));
+      if (saved?.answer && saved.isMarked) break;
+      await student.waitForTimeout(250);
+    }
+    const firstQuestionId = state.questions[0].id;
+    assert.ok(saved?.answer, 'the selected answer is autosaved');
+    assert.equal(saved.isMarked, true, 'the review mark is autosaved');
+    const secondsBeforeReload = state.remainingSeconds;
+
+    await student.reload();
+    await student.locator('.answer-options').waitFor({ timeout: 15_000 });
+    await student.locator('.option-item.selected').first().waitFor({ timeout: 10_000 });
+    await student.locator('.mark-review-btn.marked').waitFor({ timeout: 10_000 });
+    state = await api(student, `/api/student/sat-attempts/${attemptId}`);
+    saved = state.savedAnswers.find(answer => Number(answer.questionId) === Number(firstQuestionId));
+    assert.ok(saved?.answer, 'the selected answer is restored after reload');
+    assert.equal(saved.isMarked, true, 'the review mark is restored after reload');
+    assert.ok(state.remainingSeconds <= secondsBeforeReload, 'server timer continues through reload');
+
+    for (let index = 0; index < state.modules.length; index++) {
+      state = await api(student, `/api/student/sat-attempts/${attemptId}`);
+      if (state.awaitingBreak) {
+        state = await api(student, `/api/student/sat-attempts/${attemptId}/resume-break`, 'POST');
+      }
+      assert.ok(state.currentModuleId, `module ${index + 1} is available in the fixed SAT path`);
+      state = await api(student, `/api/student/sat-attempts/${attemptId}/modules/${state.currentModuleId}/submit`,
+        'POST', { answers: [], abnormalCount: 0 });
+    }
+    assert.equal(state.status, 'finished', 'the last module completes the formal attempt');
+    const report = await api(student, `/api/student/sat-attempts/${attemptId}/report`);
+    assert.equal(report.mode, 'exam');
+    assert.equal(report.answersVisible, true);
+    assert.ok(report.summary, 'the report includes a score summary');
+    assert.equal(typeof report.summary.totalRaw, 'number', 'the report includes a calculated raw score');
+    const history = await api(student, '/api/student/exams');
+    const completed = history.find(row => row.id === formalExam.id);
+    assert.equal(completed.latestAttemptId, attemptId);
+    assert.equal(completed.attemptsUsed, 1);
+    const secondStart = await raw(student, `/api/student/exams/${formalExam.id}/sat-attempt`, 'POST');
+    assert.equal(secondStart.status, 409, 'the attempt limit is enforced');
+
+    await student.goto(`${baseUrl}/student/systems/SAT`);
+    await student.getByRole('button', { name: 'View attempt' }).click();
+    await student.getByRole('heading', { name: 'Score Report' }).waitFor({ timeout: 15_000 });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const mobileWidth = await student.evaluate(() => ({
+      page: document.documentElement.scrollWidth,
+      viewport: window.innerWidth,
+    }));
+    assert.ok(mobileWidth.page <= mobileWidth.viewport, 'score report has no page-level horizontal overflow at 390px');
+
+    // 让正式考试保持在未打开的状态，验证迟到的续考请求会先完成并评分原尝试。
+    const deadlineExam = await createExam(`SAT deadline retry ${Date.now()}`, Date.now() + 25_000, 2);
+    const deadlineStart = await api(student, `/api/student/exams/${deadlineExam.id}/sat-attempt`, 'POST');
+    const deadlineAttemptId = deadlineStart.attemptId;
+    const deadlineDetail = await api(student, `/api/student/attempts/${deadlineAttemptId}`);
+    const waitMs = new Date(deadlineDetail.expiresAt).getTime() - Date.now() + 1_000;
+    assert.ok(waitMs > 0 && waitMs < 30_000, 'deadline attempt is bounded by its exam window');
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+    const lateStart = await raw(student, `/api/student/exams/${deadlineExam.id}/sat-attempt`, 'POST');
+    assert.equal(lateStart.status, 409, 'a closed exam cannot be restarted');
+    const finished = await api(student, `/api/student/sat-attempts/${deadlineAttemptId}`);
+    assert.equal(finished.status, 'finished', 'the expired attempt is finalized before start is rejected');
+    assert.equal(finished.currentModuleId, null);
+    assert.equal(finished.modules.length, 4);
+    const deadlineReport = await api(student, `/api/student/sat-attempts/${deadlineAttemptId}/report`);
+    assert.equal(deadlineReport.mode, 'exam');
+    assert.ok(deadlineReport.summary);
+    assert.deepEqual(pageErrors, [], `browser errors: ${pageErrors.join('; ')}`);
+
+    console.log(JSON.stringify({
+      result: 'PASS', formalExamId: formalExam.id, deadlineExamId: deadlineExam.id,
+      attemptId, deadlineAttemptId, modules: state.modules.length,
+      checks: ['answer and review mark autosave/reload', 'module order and RW-to-Math break',
+        'formal submission, score report, history, attempt limit', 'closed-window retry returns 409 after forced submission'],
+    }));
+  } finally {
+    try {
+      for (const examId of examIds) await api(admin, `/api/admin/exams/${examId}`, 'DELETE');
+      if (studentId) await api(admin, `/api/admin/users/${studentId}`, 'DELETE');
+      console.log(JSON.stringify({ cleanup: 'PASS', examIds, studentId }));
+    } catch (error) {
+      console.error('CLEANUP_FAILURE', error.message);
+      process.exitCode = 2;
+    }
+    await browser.close();
+  }
+}
+
+main().catch(error => {
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});

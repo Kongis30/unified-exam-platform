@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:e2e:sat": "node e2e/sat-formal-exam.cjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",
+    "playwright": "^1.64.1",
     "vite": "^7.1.7"
   }
 }
