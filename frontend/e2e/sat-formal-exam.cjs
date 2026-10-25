@@ -285,6 +285,12 @@ async function main() {
     await admin.setViewportSize({ width: 1440, height: 1000 });
     await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}/students/${studentId}/scores?scoreType=PSAT&scoreMode=RAW`);
     await admin.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
+    const scoreTypeStats = admin.locator('.sat-score-stat-type');
+    assert.match(await scoreTypeStats.nth(0).textContent(), /SAT[\s\S]*Attempts[\s\S]*2/);
+    assert.match(await scoreTypeStats.nth(1).textContent(), /PSAT[\s\S]*Attempts[\s\S]*1/);
+    assert.equal(await admin.locator('.sat-score-chart-toolbar select').inputValue(), 'PSAT');
+    assert.equal(await admin.locator('.sat-score-chart circle.sat-score-chart__point').count(), 1,
+      'the PSAT filter shows only the PSAT score in its trend');
     const psatScoreRow = admin.locator('.sat-score-history-table tbody tr').filter({ hasText: psatExam.title });
     await psatScoreRow.waitFor();
     await psatScoreRow.getByRole('button', { name: `Actions for ${psatExam.title}` }).click();
@@ -293,6 +299,9 @@ async function main() {
     await deleteDialog.waitFor();
     await deleteDialog.getByRole('button', { name: 'Delete attempt' }).click();
     await psatScoreRow.waitFor({ state: 'detached' });
+    await admin.locator('.sat-score-chart-toolbar select').waitFor({ state: 'detached' });
+    assert.equal(new URL(admin.url()).searchParams.has('scoreType'), false,
+      'when the filtered assessment type has no attempts, the view returns to an available type');
     const remainingScores = await api(admin, `/api/admin/sat/students/${studentId}/scores`);
     assert.equal(remainingScores.scores.filter(row => row.examId === psatExam.id && row.examTypeCode === 'PSAT').length, 0,
       'deleting a PSAT result removes its score history row');
@@ -335,6 +344,7 @@ async function main() {
       checks: ['question navigation', 'offline answer sync after reconnect', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
         'multiple attempts in score history, report return state, mobile table layout',
         'PSAT release type, student launch, and PSAT report scoring identity',
+        'per-type student statistics, score filter, and fallback when a type has no attempts',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',
         'admin deletes a PSAT attempt from student score history',
         'formal submission, score report, history, attempt limit', 'closed-window retry returns 409 after forced submission'],
