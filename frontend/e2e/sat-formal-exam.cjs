@@ -282,6 +282,22 @@ async function main() {
     await admin.setViewportSize({ width: 390, height: 844 });
     const classPageWidth = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(classPageWidth.page <= classPageWidth.viewport, 'class score trend has no page overflow at 390px');
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}/students/${studentId}/scores?scoreType=PSAT&scoreMode=RAW`);
+    await admin.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
+    const psatScoreRow = admin.locator('.sat-score-history-table tbody tr').filter({ hasText: psatExam.title });
+    await psatScoreRow.waitFor();
+    await psatScoreRow.getByRole('button', { name: `Actions for ${psatExam.title}` }).click();
+    await admin.getByRole('menu').getByRole('button', { name: 'Delete attempt' }).click();
+    const deleteDialog = admin.getByRole('dialog', { name: 'Delete exam attempt?' });
+    await deleteDialog.waitFor();
+    await deleteDialog.getByRole('button', { name: 'Delete attempt' }).click();
+    await psatScoreRow.waitFor({ state: 'detached' });
+    const remainingScores = await api(admin, `/api/admin/sat/students/${studentId}/scores`);
+    assert.equal(remainingScores.scores.filter(row => row.examId === psatExam.id && row.examTypeCode === 'PSAT').length, 0,
+      'deleting a PSAT result removes its score history row');
+    const deletedReport = await raw(student, `/api/student/sat-attempts/${psatStart.attemptId}/report`);
+    assert.equal(deletedReport.status, 404, 'the deleted attempt no longer exposes a report');
 
     await student.goto(`${baseUrl}/student/systems/SAT`);
     await student.locator('.student-exam-list article.paper-row')
@@ -320,6 +336,7 @@ async function main() {
         'multiple attempts in score history, report return state, mobile table layout',
         'PSAT release type, student launch, and PSAT report scoring identity',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',
+        'admin deletes a PSAT attempt from student score history',
         'formal submission, score report, history, attempt limit', 'closed-window retry returns 409 after forced submission'],
     }));
   } finally {
