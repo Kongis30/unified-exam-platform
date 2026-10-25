@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.unifiedexam.platform.attempt.SatStudentAttemptService;
 import com.unifiedexam.platform.attempt.StudentAttemptService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.web.server.ResponseStatusException;
@@ -13,8 +14,10 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -55,6 +58,12 @@ class SatStudentPracticeServiceTest {
         assertEquals(9L, history.records().get(0).attemptId());
         assertEquals("SAT", history.records().get(0).examTypeCode());
         assertEquals(new java.math.BigDecimal("42"), history.records().get(0).rawScore());
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).queryForObject(sql.capture(), eq(Long.class), eq(42L));
+        assertPracticeHistoryLinks(sql.getValue());
+        verify(jdbc).query(sql.capture(), any(RowMapper.class), any(Object[].class));
+        assertPracticeHistoryLinks(sql.getValue());
     }
 
     @Test
@@ -79,6 +88,16 @@ class SatStudentPracticeServiceTest {
 
         service.deletePracticeAttempt(9L, "student");
 
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).query(sql.capture(), any(RowMapper.class), eq(9L), eq("student"));
+        assertPracticeHistoryLinks(sql.getValue());
         verify(jdbc).update("DELETE FROM attempts WHERE id = ?", 9L);
+    }
+
+    /** 迁移归档与可重复练习模板都必须能进入本人历史和删除校验。 */
+    private void assertPracticeHistoryLinks(String sql) {
+        assertTrue(sql.contains("sat_practice_papers spp") && sql.contains("sat_practice_paper_templates spt"));
+        assertTrue(sql.contains("spp.practice_exam_id = a.exam_id") && sql.contains("spt.practice_exam_id = a.exam_id"));
+        assertTrue(sql.contains("a.is_practice = TRUE") && sql.contains("a.status = 'SUBMITTED'"));
     }
 }
