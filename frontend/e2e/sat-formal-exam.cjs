@@ -178,6 +178,22 @@ async function main() {
     assert.deepEqual(teacherPageErrors, [], `teacher route-guard errors: ${teacherPageErrors.join('; ')}`);
 
     const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 2);
+    const filteredExamList = `/exam-types/SAT/admin?tab=exams&examSearch=${encodeURIComponent(formalExam.title)}&examPageSize=20`;
+    await admin.goto(`${baseUrl}${filteredExamList}`);
+    await admin.getByRole('heading', { name: 'Exam Releases' }).waitFor();
+    await admin.locator('.release-search-input').waitFor();
+    const resultsUrl = `${baseUrl}/exam-types/SAT/admin/exams/${formalExam.id}/results?returnTo=${encodeURIComponent(filteredExamList)}`;
+    await admin.goto(resultsUrl);
+    await admin.getByRole('heading', { name: 'Student Results' }).waitFor();
+    await admin.getByRole('button', { name: '← Back to Exam Releases' }).click();
+    await admin.waitForURL(`${baseUrl}${filteredExamList}`);
+    assert.equal(await admin.locator('.release-search-input').inputValue(), formalExam.title,
+      'returning from results restores the exam search');
+    assert.equal(await admin.locator('.exam-list-pagination select').first().inputValue(), '20',
+      'returning from results restores the page size');
+    assert.equal(await admin.getByRole('tab', { name: 'Exam Release' }).getAttribute('aria-selected'), 'true',
+      'returning from results restores the selected admin tab');
+
     await login(student, username, password);
     await student.goto(`${baseUrl}/student/systems/SAT`);
     await student.getByRole('heading', { name: 'Your exams' }).waitFor();
