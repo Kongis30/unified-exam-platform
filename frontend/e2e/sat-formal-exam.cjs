@@ -77,6 +77,18 @@ async function main() {
     await api(admin, `/api/admin/exams/${examId}/publish`, 'POST');
     return { id: examId, ...release.summary };
   };
+  const finishAllModules = async attemptId => {
+    let state = await api(student, `/api/student/sat-attempts/${attemptId}`);
+    for (let index = 0; index < state.modules.length; index++) {
+      if (state.awaitingBreak) {
+        state = await api(student, `/api/student/sat-attempts/${attemptId}/resume-break`, 'POST');
+      }
+      assert.ok(state.currentModuleId, `module ${index + 1} is available in the fixed SAT path`);
+      state = await api(student, `/api/student/sat-attempts/${attemptId}/modules/${state.currentModuleId}/submit`,
+        'POST', { answers: [], abnormalCount: 0 });
+    }
+    return state;
+  };
 
   try {
     await login(admin, adminUsername, adminPassword);
@@ -89,7 +101,7 @@ async function main() {
     assert.ok(paper, 'a ready SAT paper with questions is available');
     paperId = paper.id ?? paper.summary?.id;
 
-    const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 1);
+    const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 2);
     await login(student, username, password);
     await student.goto(`${baseUrl}/student/systems/SAT`);
     await student.getByRole('heading', { name: 'Your exams' }).waitFor();
@@ -102,6 +114,19 @@ async function main() {
     }
     await student.locator('.option-item').first().click();
     await student.getByRole('button', { name: 'Mark for Review' }).click();
+
+    const questionSelector = student.locator('.question-selector-btn');
+    if (await student.locator('.question-status-panel .question-status-btn').count() < 2) {
+      await questionSelector.click();
+    }
+    const questionButtons = student.locator('.question-status-panel .question-status-btn');
+    if (await questionButtons.count() > 1) {
+      await questionButtons.nth(1).click();
+      assert.match(await questionSelector.textContent(), /Question 2 of/);
+      await questionSelector.click();
+      await questionButtons.first().click();
+      assert.match(await questionSelector.textContent(), /Question 1 of/);
+    }
 
     const attemptList = await api(student, '/api/student/exams');
     const attemptId = attemptList.find(row => row.id === formalExam.id).activeAttemptId;
@@ -129,15 +154,7 @@ async function main() {
     assert.equal(saved.isMarked, true, 'the review mark is restored after reload');
     assert.ok(state.remainingSeconds <= secondsBeforeReload, 'server timer continues through reload');
 
-    for (let index = 0; index < state.modules.length; index++) {
-      state = await api(student, `/api/student/sat-attempts/${attemptId}`);
-      if (state.awaitingBreak) {
-        state = await api(student, `/api/student/sat-attempts/${attemptId}/resume-break`, 'POST');
-      }
-      assert.ok(state.currentModuleId, `module ${index + 1} is available in the fixed SAT path`);
-      state = await api(student, `/api/student/sat-attempts/${attemptId}/modules/${state.currentModuleId}/submit`,
-        'POST', { answers: [], abnormalCount: 0 });
-    }
+    state = await finishAllModules(attemptId);
     assert.equal(state.status, 'finished', 'the last module completes the formal attempt');
     const report = await api(student, `/api/student/sat-attempts/${attemptId}/report`);
     assert.equal(report.mode, 'exam');
@@ -148,8 +165,40 @@ async function main() {
     const completed = history.find(row => row.id === formalExam.id);
     assert.equal(completed.latestAttemptId, attemptId);
     assert.equal(completed.attemptsUsed, 1);
-    const secondStart = await raw(student, `/api/student/exams/${formalExam.id}/sat-attempt`, 'POST');
-    assert.equal(secondStart.status, 409, 'the attempt limit is enforced');
+
+    const secondStart = await api(student, `/api/student/exams/${formalExam.id}/sat-attempt`, 'POST');
+    assert.notEqual(secondStart.attemptId, attemptId, 'a second allowed attempt gets a distinct record');
+    const secondAttempt = await finishAllModules(secondStart.attemptId);
+    assert.equal(secondAttempt.status, 'finished');
+    const scores = await api(admin, `/api/admin/sat/students/${studentId}/scores`);
+    const completedScores = scores.scores.filter(row => row.status === 'COMPLETED' && row.examId === formalExam.id);
+    assert.equal(completedScores.length, 2, 'score history retains both attempts for one exam');
+    assert.equal(scores.statistics.sat.attempts, 2);
+    const blockedStart = await raw(student, `/api/student/exams/${formalExam.id}/sat-attempt`, 'POST');
+    assert.equal(blockedStart.status, 409, 'the attempt limit is enforced after both allowed attempts');
+
+    await admin.goto(`${baseUrl}/exam-types/SAT/admin/classes/1/students/${studentId}/scores?scoreMode=RAW`);
+    await admin.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
+    await admin.locator('.sat-score-history-table tbody tr').nth(0).waitFor();
+    assert.equal(await admin.locator('.sat-score-history-table tbody tr').count(), 2);
+    await admin.getByRole('button', { name: 'Raw score' }).waitFor();
+    await admin.locator('.sat-score-history-table .sat-score-report-button').first().click();
+    await admin.getByRole('heading', { name: 'Score Report' }).waitFor({ timeout: 15_000 });
+    await admin.getByRole('button', { name: /Back to results/ }).click();
+    await admin.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
+    assert.equal(new URL(admin.url()).searchParams.get('scoreMode'), 'RAW', 'returning from a report preserves the score scale');
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const historyWidth = await admin.evaluate(() => {
+      const table = document.querySelector('.sat-score-table-scroll');
+      return {
+        page: document.documentElement.scrollWidth,
+        viewport: window.innerWidth,
+        table: table ? { client: table.clientWidth, content: table.scrollWidth } : null,
+      };
+    });
+    assert.ok(historyWidth.page <= historyWidth.viewport, 'score history has no page-level horizontal overflow at 390px');
+    assert.ok(historyWidth.table && historyWidth.table.content > historyWidth.table.client,
+      'score history columns remain reachable through the table’s own horizontal scroller at 390px');
 
     await student.goto(`${baseUrl}/student/systems/SAT`);
     await student.getByRole('button', { name: 'View attempt' }).click();
@@ -182,8 +231,9 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS', formalExamId: formalExam.id, deadlineExamId: deadlineExam.id,
-      attemptId, deadlineAttemptId, modules: state.modules.length,
-      checks: ['answer and review mark autosave/reload', 'module order and RW-to-Math break',
+      attemptId, secondAttemptId: secondStart.attemptId, deadlineAttemptId, modules: state.modules.length,
+      checks: ['question navigation', 'answer and review mark autosave/reload', 'module order and RW-to-Math break',
+        'multiple attempts in score history, report return state, mobile table layout',
         'formal submission, score report, history, attempt limit', 'closed-window retry returns 409 after forced submission'],
     }));
   } finally {
