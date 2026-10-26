@@ -190,7 +190,7 @@ async function loadPage() {
 }
 
 function goBack() {
-  router.push({ name: 'admin', query: { tab: 'classes' } });
+  router.push({ name: 'shsat-admin', query: { tab: 'classes' } });
 }
 
 function resetClassExamPage() {

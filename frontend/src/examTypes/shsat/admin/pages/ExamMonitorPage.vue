@@ -335,7 +335,7 @@ function goBack() {
     router.push({ name: 'exam-type', params: { code: 'SAT' }, query: { tab: 'exams' } });
     return;
   }
-  router.push({ name: 'admin', query: { tab: 'exams' } });
+  router.push({ name: 'shsat-admin', query: { tab: 'exams' } });
 }
 
 function formatDateTime(value) {

@@ -38,6 +38,7 @@
 - [ ] 管理员首页 Available Exams：刷新、折叠/展开及刷新后记忆；卡片只展示开放期内可进入的考试，显示时间、试卷、时长、状态；`Start Exam` 进入考试、退出返回原处；空状态正确。
 - [ ] 管理员首页 Assigned Review：刷新、折叠/记忆、任务卡片 `View Progress`、返回原标签位置；任务人数、完成数与详情一致。
 - [ ] 管理标签：`Paper Management`、`Exam Release`、`Review Assignments`、`Classes` 切换后滚动位置稳定，路由返回时恢复标签/筛选；教师只见获授权操作。
+- [x] SHSAT 无历史返回兜底：发现多个页面 push 到不存在的路由名 `admin`，修正为 `shsat-admin` 并附带目标标签。用新浏览器页直达后分别点击 Class Detail、Monitor、Paper Preview、Paper Editor 的返回按钮，均到达正确 SHSAT 后台标签；页面脚本错误为 0。完整返回上一页栈的行为仍需从各入口复核。
 - [x] **G1 History 三标签已补齐。** 桌面/窄屏空状态截图及含真实临时尝试的历史数据已验证；刷新、报告入口、标签过滤尚需继续逐按钮验收（证据见第 8 节）。
 - [ ] 学生 Available Exams：刷新/错误重试、按考试窗口和名额呈现 Upcoming/Available/In progress/Completed/Ended；`Start/Continue/View attempt` 分别正确进入、续考、看报告；无资格考试不泄露。
 - [ ] 学生 Assigned Review：待开始、进行中、需重做、完成、截止状态；`Start review`/`Continue`/`Try again`/`View report`、剩余题量和截止时间正确。
@@ -54,8 +55,9 @@
 - [ ] 组操作 `Rename folder`、`Delete empty folder`：编辑、取消、成功刷新；非空不能误删；表内缩进、组名、数量和操作图标视觉一致。
 - [x] 文件夹 CRUD 烟测：空名称显示英文必填错误；新建/重命名写入数据库并刷新后保留；取消创建不产生记录，取消删除保留文件夹，确认删除只删除空文件夹。临时文件夹已清理；浏览器脚本错误为 0。桌面状态截图 `43-folder-validation.png`、`44-folder-renamed.png`、`45-folder-delete-confirm.png`。
 - [ ] `Create Paper`：名称、时长、状态等字段校验；创建后出现在正确分组，能从列表打开编辑。
-- [x] Paper List action 菜单接入：发现 SHSAT AdminHome 漏导入共享 `AdminActionMenu`，导致菜单按钮未渲染、操作项作为普通按钮显示；补齐导入后确认每行显示省略号入口、Delete 排最后、Escape 可关闭；`Export PDF` 可进入导出页。115 题卷 PDF 输出 218,673 bytes、13 页 Letter，抽取文本含章节/题目内容，浏览器脚本错误为 0。封面后的空白页在独立版导出中也明确存在，是双面打印留白，保持一致；截图 `37-paper-export.png`，PDF `37-paper-export.pdf`。`Move`、`Detail`、`Edit Info`、`Edit Paper`、`Preview` 和 Delete 仍需逐项验证。
-- [x] 纸卷只读操作抽测（SHSAT CRASH COURSE TEST 6）：`Detail` 显示纸卷名/分组题数，关闭正常；`Edit Info` 字段正确载入，取消不改数据；`Preview` 可显示题目并用 Back 回到 Paper Management；`Edit Paper` 可加载题树/当前题，未修改时 `Save Changes` 禁用。浏览器脚本错误为 0；桌面截图 `38-paper-detail.png` 至 `41-paper-editor.png`。此测试样卷有 Math 50 题、ELA 0 题，不能代替完整正式卷验收；编辑保存、拖题、导入等写操作仍待验证。
+- [x] 新建/删除试卷烟测：Paper Name 为空显示英文校验；补正后错误即时清除；成功创建后进入该试卷编辑器，ELA/Math 区域显示，列表/API 均可查到；从列表走 10 秒冷静期删除，确认后行消失且详情 API 为 404。临时试卷已删除；截图 `46-paper-create.png`、`47-new-paper-editor.png`、`48-paper-delete-cooldown.png`。此项只验证新建空草稿元数据和删除，不代表添加题目/保存题目通过。
+- [x] Paper List action 菜单接入：发现 SHSAT AdminHome 漏导入共享 `AdminActionMenu`，导致菜单按钮未渲染、操作项作为普通按钮显示；补齐导入后确认每行显示省略号入口、Delete 排最后、Escape 可关闭；`Export PDF` 可进入导出页。115 题卷 PDF 输出 218,673 bytes、13 页 Letter，抽取文本含章节/题目内容，浏览器脚本错误为 0。封面后的空白页在独立版导出中也明确存在，是双面打印留白，保持一致；截图 `37-paper-export.png`，PDF `37-paper-export.pdf`。`Move` 仍待验证。
+- [x] 纸卷只读操作抽测（SHSAT CRASH COURSE TEST 6）：`Detail` 显示纸卷名/分组题数，关闭正常；`Edit Info` 字段正确载入，取消不改数据；`Preview` 可显示题目并用 Back 回到 Paper Management；`Edit Paper` 可加载题树/当前题，未修改时 `Save Changes` 禁用；Delete 对临时新卷显示 10 秒冷静期，期满 UI 删除成功。浏览器脚本错误为 0；桌面截图 `38-paper-detail.png` 至 `41-paper-editor.png`、`48-paper-delete-cooldown.png`。此测试样卷有 Math 50 题、ELA 0 题，不能代替完整正式卷验收；编辑保存、拖题、导入等写操作仍待验证。
 - [ ] 逐卷 Action 菜单：`Move`、`Detail`、`Edit Info`、`Edit Paper`、`Preview`、`Export PDF`、`Delete` 按独立版逐个操作；弹窗可关闭、保存后刷新，删除有影响说明和确认，删除后引用处处理明确；危险动作始终排最后。
 - [ ] 试卷列表：名称、题量、时长、分数、状态/Online 与详情相同；长名称、空字段、离线/草稿、缺失资源显示合理；排序/过滤后菜单仍对准当前行。
 

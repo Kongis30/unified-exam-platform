@@ -1888,7 +1888,7 @@ async function goBack() {
       return;
     }
 
-    router.push({ name: 'admin' });
+    router.push({ name: 'shsat-admin', query: { tab: 'papers' } });
     return;
   }
 

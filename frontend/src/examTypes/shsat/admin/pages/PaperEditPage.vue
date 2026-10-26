@@ -2077,7 +2077,7 @@ function goBack() {
     return;
   }
 
-  router.push({ name: 'admin', query: { tab: 'papers' } });
+  router.push({ name: 'shsat-admin', query: { tab: 'papers' } });
 }
 
 function previewPaper() {
@@ -2094,7 +2094,7 @@ function previewPaper() {
 
 function discardChangesAndGoBack() {
   showLeaveConfirmModal.value = false;
-  router.push({ name: 'admin', query: { tab: 'papers' } });
+  router.push({ name: 'shsat-admin', query: { tab: 'papers' } });
 }
 
 function selectQuestion(question) {

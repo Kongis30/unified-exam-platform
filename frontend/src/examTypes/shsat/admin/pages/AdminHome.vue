@@ -3587,7 +3587,7 @@ onBeforeUnmount(() => {
               <div class="modal-form-grid">
                 <label class="form-field form-field--wide">
                   <span class="form-label">Paper Name</span>
-                  <input v-model="paperEditForm.paperName" class="form-input" placeholder="e.g. SHSAT Practice Test 1" />
+                  <input v-model="paperEditForm.paperName" class="form-input" placeholder="e.g. SHSAT Practice Test 1" @input="errors.papers = ''" />
                 </label>
 
                 <label class="form-field form-field--wide">
