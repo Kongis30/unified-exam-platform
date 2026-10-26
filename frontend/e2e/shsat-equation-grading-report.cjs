@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
 const { chromium } = require('playwright');
 
 const baseUrl = process.env.E2E_BASE_URL || 'http://localhost:5175';
@@ -147,6 +148,18 @@ async function main() {
     await student.getByText('Raw Total', { exact: true }).waitFor();
     assert.equal(await student.locator('.summary-field').filter({ hasText: 'Raw Total' }).locator('.summary-field__value').textContent(), '3 / 3');
     await student.screenshot({ path: `/tmp/shsat-equation-report-${stamp}.png` });
+    await student.evaluate(() => {
+      window.__shsatPrintRequested = false;
+      window.print = () => { window.__shsatPrintRequested = true; };
+    });
+    await student.getByRole('button', { name: 'Print Report', exact: true }).click();
+    assert.equal(await student.evaluate(() => window.__shsatPrintRequested), true,
+      'Print Report opens the browser print flow');
+    const reportPdf = await student.pdf({ format: 'Letter', printBackground: true });
+    assert.ok(reportPdf.subarray(0, 5).toString() === '%PDF-', 'the report produces a valid PDF document');
+    assert.ok(reportPdf.byteLength > 10_000, `the report PDF contains rendered content (${reportPdf.byteLength} bytes)`);
+    const reportPdfPath = `/tmp/shsat-equation-report-${stamp}.pdf`;
+    await fs.writeFile(reportPdfPath, reportPdf);
     await student.setViewportSize({ width: 390, height: 844 });
     const mobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(mobileSize.page <= mobileSize.viewport, 'the equation result report fits a 390px viewport');
@@ -157,6 +170,8 @@ async function main() {
       result: 'PASS', totalScore: result.totalScore, questionResults: result.questions.map(question => [question.partCode, question.correct]),
       mobileSize, pageErrors: pageErrors.length,
       screenshots: [`/tmp/shsat-equation-report-${stamp}.png`, `/tmp/shsat-equation-report-mobile-${stamp}.png`],
+      reportPdf: reportPdfPath,
+      reportPdfBytes: reportPdf.byteLength,
     }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});

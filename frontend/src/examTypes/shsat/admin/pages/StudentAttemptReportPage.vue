@@ -1285,7 +1285,7 @@ onMounted(loadReport);
             </div>
           </AppCard>
 
-          <AppCard title="Time Analysis" subtitle="Review overall pacing for this attempt.">
+          <AppCard class="time-analysis-section" title="Time Analysis" subtitle="Review overall pacing for this attempt.">
             <div v-if="!report.answersVisible && questions.length === 0" class="analysis-empty">
               Per-question timing is unavailable under this exam's review settings. Total time used is shown above.
             </div>
@@ -2216,6 +2216,11 @@ onMounted(loadReport);
     gap: 16px;
   }
 
+  .time-analysis-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   .knowledge-score-item {
     break-inside: avoid;
     page-break-inside: avoid;
@@ -2319,6 +2324,13 @@ onMounted(loadReport);
 
   .question-set-card {
     overflow: visible;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .question-section__header {
+    break-after: avoid;
+    page-break-after: avoid;
   }
 
   .question-table {
@@ -2333,8 +2345,7 @@ onMounted(loadReport);
   }
 
   .question-table tbody {
-    display: grid;
-    gap: 10px;
+    display: block;
   }
 
   .question-table tbody tr {
@@ -2348,6 +2359,9 @@ onMounted(loadReport);
     border: 1px solid var(--color-border);
     border-radius: 8px;
     padding: 10px 12px;
+    margin-bottom: 10px;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .question-table tbody tr.question-row--wrong {

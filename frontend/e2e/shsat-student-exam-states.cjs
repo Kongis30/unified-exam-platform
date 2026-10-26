@@ -59,7 +59,7 @@ async function main() {
     examIds.push(upcoming.id);
     const available = await createPublishedExam(admin, paper.id, eligible.id, 'Available', -5);
     examIds.push(available.id);
-    const retake = await createPublishedExam(admin, paper.id, eligible.id, 'Retake', -5, 2);
+    const retake = await createPublishedExam(admin, paper.id, eligible.id, 'Retake', -5, 3);
     examIds.push(retake.id);
 
     await login(student, eligibleUsername, password);
@@ -89,7 +89,7 @@ async function main() {
     await student.screenshot({ path: `/tmp/shsat-student-exam-states-mobile-${stamp}.png` });
 
     const retakeAttempts = [];
-    for (let attemptNumber = 1; attemptNumber <= 2; attemptNumber += 1) {
+    for (let attemptNumber = 1; attemptNumber <= 3; attemptNumber += 1) {
       const attempt = await api(student, `/api/student/exams/${retake.id}/attempts`, 'POST', { firstSection: 'ELA' });
       retakeAttempts.push(Number(attempt.id));
       const submitted = await api(student, `/api/student/attempts/${attempt.id}/submit`, 'POST');
@@ -97,7 +97,7 @@ async function main() {
     }
     const history = await api(student, '/api/student/attempts/history');
     const retakeHistory = history.filter(item => Number(item.examId) === retake.id);
-    assert.deepEqual(retakeHistory.map(item => Number(item.attemptNumber)), [2, 1],
+    assert.deepEqual(retakeHistory.map(item => Number(item.attemptNumber)), [3, 2, 1],
       'student history sorts repeated attempts latest first');
     assert.deepEqual(retakeHistory.map(item => Number(item.attemptId)), [...retakeAttempts].reverse(),
       'student history exposes the expected attempts for this exam');
@@ -106,7 +106,7 @@ async function main() {
     const viewAttemptButton = retakeCard.getByRole('button', { name: 'View attempt', exact: true });
     await viewAttemptButton.waitFor();
     await viewAttemptButton.click();
-    await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[1]}`);
+    await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[2]}`);
     await student.getByRole('heading', { name: retake.title, exact: true }).waitFor();
     await student.getByText('Your answers are locked. Results will be available according to the exam settings.',
       { exact: true }).waitFor();
@@ -128,9 +128,10 @@ async function main() {
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     await student.getByRole('tab', { name: 'Exam History', exact: true }).click();
     const retakeRows = student.locator('.shsat-history-row').filter({ hasText: retake.title });
-    assert.equal(await retakeRows.count(), 2, 'the student sees both retakes in Exam History');
-    await retakeRows.nth(0).getByText('Attempt #2', { exact: false }).waitFor();
-    await retakeRows.nth(1).getByText('Attempt #1', { exact: false }).waitFor();
+    assert.equal(await retakeRows.count(), 3, 'the student sees all three retakes in Exam History');
+    await retakeRows.nth(0).getByText('Attempt #3', { exact: false }).waitFor();
+    await retakeRows.nth(1).getByText('Attempt #2', { exact: false }).waitFor();
+    await retakeRows.nth(2).getByText('Attempt #1', { exact: false }).waitFor();
     await student.screenshot({ path: `/tmp/shsat-student-retake-history-${stamp}.png` });
     await student.setViewportSize({ width: 390, height: 844 });
     const historyMobileSize = await student.evaluate(() => ({
@@ -145,7 +146,7 @@ async function main() {
     const refreshedHistory = student.waitForResponse(response => response.url().endsWith('/api/student/attempts/history'));
     await historyRefresh.click();
     assert.equal((await refreshedHistory).status(), 200, 'history refresh reloads completed attempts successfully');
-    assert.equal(await retakeRows.count(), 2, 'refresh preserves both attempts in latest-first history');
+    assert.equal(await retakeRows.count(), 3, 'refresh preserves all attempts in latest-first history');
     await student.evaluate(() => window.scrollTo(0, 420));
     const historyScrollY = await student.evaluate(() => window.scrollY);
     const historyPageBeforeReport = await student.evaluate(() => ({
@@ -154,7 +155,7 @@ async function main() {
       attemptRows: document.querySelectorAll('.shsat-history-row').length,
     }));
     await retakeRows.nth(0).getByRole('button', { name: 'View report', exact: true }).click();
-    await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[1]}/report`);
+    await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[2]}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
     await student.evaluate(() => window.scrollTo(0, 0));
     await student.screenshot({ path: `/tmp/shsat-student-history-report-${stamp}.png` });
@@ -186,7 +187,7 @@ async function main() {
 
     await login(outsider, outsiderUsername, password);
     const foreignReportStatus = await outsider.evaluate(async attemptId =>
-      (await fetch(`/api/student/attempts/${attemptId}/report`)).status, retakeAttempts[1]);
+      (await fetch(`/api/student/attempts/${attemptId}/report`)).status, retakeAttempts[2]);
     assert.ok([403, 404].includes(foreignReportStatus),
       'another student cannot read a report outside their own account');
     await outsider.goto(`${baseUrl}/student/systems/SHSAT`);
