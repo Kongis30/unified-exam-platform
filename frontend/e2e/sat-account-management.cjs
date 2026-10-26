@@ -89,9 +89,20 @@ async function main() {
     const studentContext = await browser.newContext();
     const student = await studentContext.newPage();
     try {
+      await student.goto(`${baseUrl}/login`);
+      await student.getByLabel('Username').fill(username);
+      await student.getByLabel('Password').fill(`${resetPassword}-wrong`);
+      await student.locator('button[type="submit"]').click();
+      await student.locator('.error-text').waitFor();
+      assert.equal(await student.locator('.error-text').innerText(), 'Invalid username or password.');
+
       await login(student, username, resetPassword);
       await student.goto(baseUrl);
       await student.getByText(/Choose your exam system|SAT|SHSAT/).first().waitFor();
+      await student.reload();
+      await student.getByRole('button', { name: username, exact: true }).click();
+      await student.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
+      await student.waitForURL(url => url.pathname.endsWith('/login'));
     } finally {
       await studentContext.close();
     }
@@ -99,6 +110,19 @@ async function main() {
     await row.getByRole('button', { name: 'Account actions' }).click();
     await admin.getByRole('menuitem', { name: 'Disable' }).click();
     await row.getByText('Disabled', { exact: true }).waitFor();
+    const disabledContext = await browser.newContext();
+    const disabledUser = await disabledContext.newPage();
+    try {
+      await disabledUser.goto(`${baseUrl}/login`);
+      await disabledUser.getByLabel('Username').fill(username);
+      await disabledUser.getByLabel('Password').fill(resetPassword);
+      await disabledUser.locator('button[type="submit"]').click();
+      await disabledUser.locator('.error-text').waitFor();
+      assert.equal(await disabledUser.locator('.error-text').innerText(), 'Invalid username or password.');
+      assert.ok(new URL(disabledUser.url()).pathname.endsWith('/login'), 'a disabled account cannot establish a session');
+    } finally {
+      await disabledContext.close();
+    }
     await row.getByRole('button', { name: 'Account actions' }).click();
     await admin.getByRole('menuitem', { name: 'Enable' }).click();
     await row.getByText('Active', { exact: true }).waitFor();
@@ -117,7 +141,8 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['create with editable defaults and optional details', 'alphabetical order, search and role filter',
-        'change role', 'reset password and sign in', 'disable and re-enable', 'five-second delete confirmation'],
+        'change role', 'reset password, invalid-password message, session restore and sign out',
+        'disabled-account login rejection and re-enable', 'five-second delete confirmation'],
       screenshot: '/tmp/sat-account-management-ui.png',
     }));
   } finally {
