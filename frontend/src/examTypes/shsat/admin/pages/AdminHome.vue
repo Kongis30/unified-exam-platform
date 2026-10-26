@@ -4647,6 +4647,7 @@ onBeforeUnmount(() => {
                       type="datetime-local"
                       title="Select end date and time"
                       aria-label="End time"
+                      @input="wrongAnswerTaskFormError = ''"
                       @click="openDateTimePicker($event.currentTarget)"
                     />
                     <button
@@ -5944,6 +5945,10 @@ onBeforeUnmount(() => {
   width: min(760px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
+}
+
+.wrong-task-modal .form-input {
+  font: inherit;
 }
 
 .wrong-task-exam-select {

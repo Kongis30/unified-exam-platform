@@ -67,12 +67,12 @@ public class ShsatWrongAnswerTaskService {
             """ + filter + " GROUP BY t.id ORDER BY t.created_at DESC, t.id DESC",
             (rs, rowNum) -> new TaskView(rs.getLong("id"), rs.getLong("exam_id"), rs.getString("exam_title"),
                 rs.getString("paper_name"), rs.getLong("class_id"), rs.getString("class_name"),
-                rs.getString("title"), rs.getString("description"), localDateTime(rs.getTimestamp("starts_at")),
-                localDateTime(rs.getTimestamp("ends_at")), rs.getString("status"), rs.getInt("assigned_count"),
+                rs.getString("title"), rs.getString("description"), localDateTime(rs, "starts_at"),
+                localDateTime(rs, "ends_at"), rs.getString("status"), rs.getInt("assigned_count"),
                 rs.getInt("assigned_count") - rs.getInt("no_source_count") - rs.getInt("no_wrong_count"),
                 rs.getInt("completed_count"), rs.getInt("in_progress_count"), rs.getInt("not_started_count"),
                 rs.getInt("retry_count"), rs.getInt("ended_count"), rs.getInt("no_source_count"), rs.getInt("no_wrong_count"),
-                localDateTime(rs.getTimestamp("created_at"))), parameters);
+                localDateTime(rs, "created_at")), parameters);
     }
 
     @Transactional
@@ -166,7 +166,7 @@ public class ShsatWrongAnswerTaskService {
                     rs.getString("real_name"), null, nullableLong(rs, "source_attempt_id"), null, practiceAttemptId,
                     rs.getString("status"), questionCount, Math.max(0, questionCount - metrics.cleared()), metrics.cleared(),
                     metrics.roundCount(), metrics.answered(), metrics.correct(), metrics.wrong(), metrics.unanswered(),
-                    metrics.accuracy(), localDateTime(rs.getTimestamp("created_at")), metrics.completedAt());
+                    metrics.accuracy(), localDateTime(rs, "created_at"), metrics.completedAt());
             }, taskId);
         return new TaskDetail(task, assignments);
     }
@@ -199,10 +199,10 @@ public class ShsatWrongAnswerTaskService {
                 boolean inProgress = "IN_PROGRESS".equals(rs.getString("practice_status"));
                 return new StudentTaskView(rs.getLong("id"), rs.getLong("task_id"), rs.getLong("exam_id"),
                     rs.getString("exam_title"), rs.getString("title"), rs.getString("description"),
-                    localDateTime(rs.getTimestamp("starts_at")), localDateTime(rs.getTimestamp("ends_at")),
+                    localDateTime(rs, "starts_at"), localDateTime(rs, "ends_at"),
                     assignmentStatus,
                     count, cleared, Math.max(0, count - cleared), practiceId,
-                    (isTaskAvailable(rs.getString("task_status"), rs.getTimestamp("starts_at"), rs.getTimestamp("ends_at"))
+                    (isTaskAvailable(rs.getString("task_status"), localDateTime(rs, "starts_at"), localDateTime(rs, "ends_at"))
                         && count > cleared) || inProgress);
             }, studentId);
     }
@@ -219,7 +219,7 @@ public class ShsatWrongAnswerTaskService {
             WHERE a.id = ? FOR UPDATE
             """, rs -> rs.next() ? new StudentAssignment(rs.getLong("id"), rs.getLong("student_user_id"),
                 rs.getString("status"), nullableLong(rs, "source_attempt_id"), rs.getString("question_numbers_json"),
-                rs.getString("task_status"), rs.getTimestamp("starts_at"), rs.getTimestamp("ends_at")) : null, assignmentId);
+                rs.getString("task_status"), localDateTime(rs, "starts_at"), localDateTime(rs, "ends_at")) : null, assignmentId);
         if (assignment == null || assignment.studentId() != studentId) throw notFound();
         Long inProgress = jdbcTemplate.query("""
             SELECT id FROM attempts WHERE shsat_wrong_answer_assignment_id = ? AND status = 'IN_PROGRESS'
@@ -300,8 +300,8 @@ public class ShsatWrongAnswerTaskService {
         }
     }
 
-    private boolean isTaskAvailable(String status, java.sql.Timestamp startsAt, java.sql.Timestamp endsAt) {
-        return ShsatWrongAnswerTaskPolicy.isAvailable(status, localDateTime(startsAt), localDateTime(endsAt), LocalDateTime.now());
+    private boolean isTaskAvailable(String status, LocalDateTime startsAt, LocalDateTime endsAt) {
+        return ShsatWrongAnswerTaskPolicy.isAvailable(status, startsAt, endsAt, LocalDateTime.now());
     }
 
     private String resolveStudentStatus(String taskStatus, String assignmentStatus, String attemptStatus, int remaining) {
@@ -315,6 +315,11 @@ public class ShsatWrongAnswerTaskService {
 
     private LocalDateTime localDateTime(java.sql.Timestamp timestamp) {
         return timestamp == null ? null : timestamp.toLocalDateTime();
+    }
+
+    // DATETIME 保存本地时间，不经过 Timestamp 的时区换算，避免把任务窗口平移数小时。
+    private LocalDateTime localDateTime(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        return rs.getObject(column, LocalDateTime.class);
     }
 
     private ResponseStatusException notFound() {
@@ -339,7 +344,7 @@ public class ShsatWrongAnswerTaskService {
             String description, LocalDateTime startAt, LocalDateTime endAt, String status, int totalQuestions,
             int clearedQuestionCount, int remainingQuestionCount, Long practiceAttemptId, boolean canStart) { }
     private record StudentAssignment(long id, long studentId, String status, Long sourceAttemptId,
-            String questionNumbersJson, String taskStatus, java.sql.Timestamp startsAt, java.sql.Timestamp endsAt) { }
+            String questionNumbersJson, String taskStatus, LocalDateTime startsAt, LocalDateTime endsAt) { }
     private record AssignmentMetrics(int cleared, int roundCount, int answered, int correct, int wrong,
             int unanswered, java.math.BigDecimal accuracy, LocalDateTime completedAt) { }
 }

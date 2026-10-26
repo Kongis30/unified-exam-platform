@@ -15,7 +15,8 @@
     "test:e2e:shsat:class-order": "node e2e/shsat-class-order.cjs",
     "test:e2e:shsat:paper-group-order": "node e2e/shsat-paper-group-order.cjs",
     "test:e2e:shsat:exam-release-actions": "node e2e/shsat-exam-release-actions.cjs",
-    "test:e2e:shsat:exam-release-create-form": "node e2e/shsat-exam-release-create-form.cjs"
+    "test:e2e:shsat:exam-release-create-form": "node e2e/shsat-exam-release-create-form.cjs",
+    "test:e2e:shsat:review-assignment-flow": "node e2e/shsat-review-assignment-flow.cjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

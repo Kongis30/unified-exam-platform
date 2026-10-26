@@ -2242,6 +2242,13 @@ watch(() => props.code, (code) => {
 @media (max-width: 700px) { .practice-history-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; } .practice-history-score { grid-column: 2; justify-self: start; text-align: left; } .practice-history-actions { grid-column: 2 / -1; } }
 @media (max-width: 700px) { .student-practice-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; } .student-practice-list .paper-mark { grid-column: 1; grid-row: 1; } .student-practice-list .paper-copy { grid-column: 2; grid-row: 1; } .student-practice-list .paper-row .compact-button { grid-column: 2; justify-self: start; } }
 @media (max-width: 700px) {
+  .student-review-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; }
+  .student-review-list .paper-mark { grid-column: 1; grid-row: 1 / span 3; align-self: start; }
+  .student-review-list .paper-copy { grid-column: 2; grid-row: 1; }
+  .student-review-list .status-pill { grid-column: 2; justify-self: start; }
+  .student-review-list .paper-row .compact-button { grid-column: 2; justify-self: start; min-height: 40px; font-size: 13px; }
+}
+@media (max-width: 700px) {
   .student-exam-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; }
   .student-exam-list .paper-mark { grid-column: 1; grid-row: 1 / span 3; align-self: start; }
   .student-exam-list .paper-copy { grid-column: 2; grid-row: 1; }
