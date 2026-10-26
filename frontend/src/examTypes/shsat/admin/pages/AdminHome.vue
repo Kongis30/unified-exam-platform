@@ -3069,7 +3069,7 @@ onBeforeUnmount(() => {
 
         <p v-if="errors.initial" class="error-text">{{ errors.initial }}</p>
 
-        <AppCard class="available-exams-card" title="Available Exams" subtitle="Admins can participate in published exams from this dashboard.">
+        <AppCard class="available-exams-card" title="Available Exams" subtitle="Start a practice attempt for a published exam from this dashboard.">
         <button
           class="collapse-arrow-button"
           type="button"
