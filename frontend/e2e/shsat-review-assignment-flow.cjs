@@ -150,6 +150,42 @@ async function main() {
     assert.ok(details.assignments[0].totalQuestions > 0, 'unanswered source questions are assigned for review');
 
     await admin.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    const adminExamCard = admin.locator('.admin-exam-card').filter({ hasText: examTitle });
+    assert.equal(await adminExamCard.locator('.admin-exam-card__status').innerText(), 'Open');
+    for (const label of ['Available', 'Submission', 'Duration']) {
+      await adminExamCard.locator('.admin-exam-card__meta').getByText(label, { exact: true }).waitFor();
+    }
+    const startAdminExamButton = adminExamCard.getByRole('button', { name: 'Start Exam', exact: true });
+    assert.equal(await startAdminExamButton.isEnabled(), true);
+    await startAdminExamButton.click();
+    await admin.waitForURL(url => url.pathname === `/student/exams/${examId}`
+      && url.searchParams.get('returnTo')?.includes('/exam-types/SHSAT/admin'));
+    assert.equal(await admin.locator('.admin-layout__header').count(), 0,
+      'the exam interface hides the platform navigation header');
+    await admin.locator('.exam-transition-page--pre-attempt .exam-transition-card__button').click();
+    await admin.getByRole('heading', { name: 'Choose Starting Section', exact: true }).waitFor();
+    await installFullscreenMock(admin);
+    const adminAttemptRequest = admin.waitForResponse(response => response.url().endsWith(`/api/student/exams/${examId}/attempts`)
+      && response.request().method() === 'POST');
+    await admin.getByRole('button', { name: /^ELA/ }).click();
+    const adminAttemptResponse = await adminAttemptRequest;
+    assert.equal(adminAttemptResponse.status(), 200, 'the administrator can start the exam practice flow');
+    const adminPracticeAttempt = await adminAttemptResponse.json();
+    assert.equal(adminPracticeAttempt.practice, true, 'the administrator exam flow creates a practice attempt');
+    await admin.locator('.question-number').waitFor();
+    await admin.screenshot({ path: `/tmp/shsat-admin-start-exam-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await admin.evaluate(() => window.scrollTo(0, 0));
+    await admin.waitForTimeout(200);
+    const adminExamMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(adminExamMobileSize.page <= adminExamMobileSize.viewport, 'the administrator exam practice fits a 390px viewport');
+    await admin.screenshot({ path: `/tmp/shsat-admin-start-exam-mobile-${stamp}.png` });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await admin.getByRole('button', { name: 'Leave exam page', exact: true }).click();
+    const leaveDialog = admin.getByRole('dialog', { name: 'Leave Exam Page' });
+    await leaveDialog.getByRole('button', { name: 'Leave', exact: true }).click();
+    await admin.waitForURL(url => url.pathname === '/exam-types/SHSAT/admin');
+
     const dashboardReviewCard = admin.locator('.dashboard-review-card');
     const dashboardTask = dashboardReviewCard.locator('.dashboard-review-task').filter({ hasText: taskTitle });
     await dashboardTask.waitFor();
@@ -436,7 +472,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'admin Start Exam launches SHSAT practice, hides platform nav, and returns to dashboard', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
@@ -467,6 +503,22 @@ async function login(page, username, password) {
   await page.getByLabel('Password').fill(password);
   await page.locator('button[type="submit"]').click();
   await page.waitForURL(url => !url.pathname.endsWith('/login'));
+}
+
+async function installFullscreenMock(page) {
+  await page.evaluate(() => {
+    let activeElement = null;
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => activeElement });
+    Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: true });
+    document.documentElement.requestFullscreen = async function () {
+      activeElement = this;
+      document.dispatchEvent(new Event('fullscreenchange'));
+    };
+    document.exitFullscreen = async () => {
+      activeElement = null;
+      document.dispatchEvent(new Event('fullscreenchange'));
+    };
+  });
 }
 
 async function api(page, path, method = 'GET', body) {
