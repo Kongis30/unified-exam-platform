@@ -6764,6 +6764,13 @@ select.form-input {
 }
 
 @media (max-width: 560px) {
+  .notice {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    width: min(360px, calc(100vw - 24px));
+  }
+
   .edit-header__main {
     align-items: stretch;
     flex-direction: column;

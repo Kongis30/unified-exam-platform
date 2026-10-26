@@ -5290,6 +5290,23 @@ onBeforeUnmount(() => {
   border-color: #fecaca;
 }
 
+@media (max-width: 600px) {
+  .action-toast {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    width: min(360px, calc(100vw - 24px));
+  }
+
+  .exam-releases-card > .card-top-actions,
+  .exam-history-card > .card-top-actions {
+    position: static;
+    width: 100%;
+    justify-content: flex-end;
+    margin: -4px 0 12px;
+  }
+}
+
 .check-row,
 .check-line {
   color: var(--color-muted);

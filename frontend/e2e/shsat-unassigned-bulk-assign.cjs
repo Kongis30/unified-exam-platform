@@ -101,6 +101,14 @@ async function main() {
     await retryDialog.locator('select').selectOption(String(classId));
     await retryDialog.getByRole('button', { name: 'Assign Students', exact: true }).click();
     await page.getByText('Students Assigned', { exact: true }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const toastPosition = await page.locator('.action-toast').evaluate(element => ({
+      bottom: getComputedStyle(element).bottom,
+      y: element.getBoundingClientRect().y,
+    }));
+    assert.equal(toastPosition.bottom, '12px', 'mobile action notifications are anchored to the lower screen edge');
+    assert.ok(toastPosition.y > 140, 'mobile action notifications stay below the two-row platform navigation');
+    await page.screenshot({ path: `/tmp/shsat-admin-toast-mobile-${stamp}.png` });
 
     const members = await api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`);
     assert.deepEqual(new Set(members.map(item => Number(item.userId || item.id))),

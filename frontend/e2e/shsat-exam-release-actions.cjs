@@ -68,6 +68,15 @@ async function main() {
       'the Assigned To column identifies the selected student');
     await row.evaluate(element => element.scrollIntoView({ block: 'center' }));
     await admin.screenshot({ path: `/tmp/shsat-exam-release-published-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const mobilePageWidth = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(mobilePageWidth.page <= mobilePageWidth.viewport, 'the mobile release page has no horizontal overflow');
+    assert.equal(await overlaps(
+      admin.locator('.exam-releases-card .app-card__title'),
+      admin.locator('.exam-releases-card > .card-top-actions'),
+    ), false, 'the mobile Create Exam and refresh controls do not overlap the card title');
+    await admin.screenshot({ path: `/tmp/shsat-exam-release-mobile-${stamp}.png` });
+    await admin.setViewportSize({ width: 1440, height: 900 });
     const audienceFilter = admin.getByRole('combobox', { name: 'Target type' });
     await audienceFilter.selectOption('SPECIFIC_STUDENTS');
     await row.waitFor();
@@ -191,6 +200,16 @@ async function raw(page, path, method = 'GET', body) {
     });
     return { status: result.status, text: await result.text() };
   }, { path, method, body, token });
+}
+
+async function overlaps(first, second) {
+  const firstBox = await first.boundingBox();
+  const secondBox = await second.boundingBox();
+  return firstBox && secondBox
+    && firstBox.x < secondBox.x + secondBox.width
+    && firstBox.x + firstBox.width > secondBox.x
+    && firstBox.y < secondBox.y + secondBox.height
+    && firstBox.y + firstBox.height > secondBox.y;
 }
 
 main().catch(error => { console.error(error.stack || error); process.exit(1); });

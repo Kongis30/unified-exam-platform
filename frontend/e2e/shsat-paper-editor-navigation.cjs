@@ -322,6 +322,17 @@ async function main() {
       throw new Error(`Question import did not close the dialog. Dialog: ${dialogText}\nAPI failures: ${failures}`);
     }
     await page.getByText('1 questions added from', { exact: false }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileNoticePosition = await page.locator('.notice').evaluate(element => ({
+      bottom: getComputedStyle(element).bottom,
+      y: element.getBoundingClientRect().y,
+    }));
+    assert.equal(mobileNoticePosition.bottom, '12px', 'the mobile success notification is anchored to the lower screen edge');
+    assert.ok(mobileNoticePosition.y > 140, 'the mobile success notification stays below the two-row platform navigation');
+    const notificationPageWidth = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(notificationPageWidth.page <= notificationPageWidth.viewport, 'the mobile editor notification causes no horizontal overflow');
+    await page.screenshot({ path: `/tmp/shsat-paper-editor-notice-mobile-${stamp}.png` });
+    await page.setViewportSize({ width: 1440, height: 1000 });
     const importedPaper = await api(page, `/api/admin/papers/${paperId}`);
     const importedQuestions = readQuestions(importedPaper);
     assert.equal(importedQuestions.length, 2, 'confirming import adds one source question');
@@ -401,7 +412,7 @@ async function main() {
         'question deletion cancel and confirm', '390px editor layout'],
       mobileSize,
       pageErrors: pageErrors.length,
-      screenshots: ['clean', 'saved', 'preview', 'import', 'import-mobile', 'mobile']
+      screenshots: ['clean', 'saved', 'preview', 'import', 'import-mobile', 'mobile-success-notice', 'mobile']
         .map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`),
     }));
   } finally {
