@@ -67,7 +67,8 @@
 - [x] 修复带题目试卷删除 500：保存一题后删除会被 `paper_sections` 的父子 `RESTRICT` 外键阻止；删除服务现在先移除子分组，再级联删除父试卷，并清理不再被其它纸卷引用的题目。保存闭环临时试卷删除返回 200，随后详情查询已不存在；关联已有考试记录的删除约束仍按下方项目继续验收。
 - [x] SHSAT 已就绪试卷删除级联：核对独立 SHSAT 行为后，修复统一版错误地拒绝删除 READY 试卷的问题。创建临时 READY 试卷、考试、学生尝试和错题复习任务后删除试卷，确认关联考试/尝试/复习任务均被清理，账号和班级归属保留；临时数据清理完成。Java 17 下后端 90 项测试通过；另对 SAT 已引用 READY 试卷做回归，仍正确返回 409 且保留试卷。浏览器确认弹窗截图仍待补。
 - [x] 逐卷 Action 菜单 `Move`：从 `SHSAT CRASH COURSE` 将 TEST 6 暂移入 `Default Folder`，列表计数从 6/2 变为 5/3；刷新页面后仍在目标组，再移回原文件夹，计数恢复且行内容完整。无浏览器错误，未改动试卷内容。截图 `139-paper-move-restored.png`。
-- [ ] 逐卷 Action 菜单其余 `Detail`、`Edit Info`、`Edit Paper`、`Preview`、`Export PDF`、`Delete` 继续逐项按独立版核验；弹窗关闭/保存刷新、删除影响提示和确认及引用处理需覆盖；危险动作始终排最后。
+- [x] Paper List `Detail` / `Edit Info` / `Preview`：详情接口显示正确的纸卷元数据；发现分科标签误用预设题数（本卷总数 50、ELA 0、Math 50，却显示 50/50），改为按实际题目归属计数并核对为 0/50；Edit Info 的名称/描述/时长载入正常，取消不写入；Preview 显示 50 道 Mathematics 题目，Back 返回 Paper Management，页面无脚本错误。截图 `140-paper-preview.png`、`141-paper-detail.png`。
+- [ ] `Edit Paper`、`Export PDF`、`Delete` 继续逐项回归；弹窗关闭/保存刷新、删除影响提示与确认及引用处理需覆盖；危险动作始终排最后。PDF 导出曾单独通过（见 Paper Export 项），本轮未重跑。
 - [ ] 试卷列表：名称、题量、时长、分数、状态/Online 与详情相同；长名称、空字段、离线/草稿、缺失资源显示合理；排序/过滤后菜单仍对准当前行。
 
 ## 3. SHSAT 试卷编辑器、预览、导出

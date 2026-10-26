@@ -2044,6 +2044,10 @@ function closePaperDetailModal() {
   showPaperDetailModal.value = false;
 }
 
+function getPaperPartQuestionCount(partId) {
+  return (paperDetail.value?.questions || []).filter((question) => String(question.partId) === String(partId)).length;
+}
+
 async function loadExams() {
   loading.exams = true;
   errors.exams = '';
@@ -3346,7 +3350,7 @@ onBeforeUnmount(() => {
                 </dl>
                 <div v-if="paperDetail.parts?.length" class="tag-list">
                   <span v-for="part in paperDetail.parts" :key="part.partId" class="soft-tag">
-                    {{ part.partName || `Part ${part.partNumber}` }}: {{ part.questionCount || 0 }}
+                    {{ part.partName || `Part ${part.partNumber}` }}: {{ getPaperPartQuestionCount(part.partId) }}
                   </span>
                 </div>
               </div>
