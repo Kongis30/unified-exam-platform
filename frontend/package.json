@@ -21,6 +21,7 @@
     "test:e2e:shsat:exam-release-create-form": "node e2e/shsat-exam-release-create-form.cjs",
     "test:e2e:shsat:review-assignment-flow": "node e2e/shsat-review-assignment-flow.cjs",
     "test:e2e:shsat:review-completion": "node e2e/shsat-review-completion.cjs",
+    "test:e2e:shsat:two-section-exam": "node e2e/shsat-two-section-exam.cjs",
     "test:e2e:shsat:historical-delete": "node e2e/shsat-historical-exam-delete.cjs",
     "test:e2e:shsat:teacher-workspace": "node e2e/shsat-teacher-workspace.cjs"
   },
