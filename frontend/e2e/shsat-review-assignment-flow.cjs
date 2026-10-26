@@ -149,6 +149,41 @@ async function main() {
     assert.equal(details.assignments[0].sourceAttemptId, attemptId);
     assert.ok(details.assignments[0].totalQuestions > 0, 'unanswered source questions are assigned for review');
 
+    await admin.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    const dashboardReviewCard = admin.locator('.dashboard-review-card');
+    const dashboardTask = dashboardReviewCard.locator('.dashboard-review-task').filter({ hasText: taskTitle });
+    await dashboardTask.waitFor();
+    const dashboardCounts = dashboardTask.locator('.dashboard-review-task__details > div');
+    assert.equal(await dashboardCounts.nth(0).locator('dd').innerText(), '0 / 1');
+    assert.equal(await dashboardCounts.nth(1).locator('dd').innerText(), '1');
+    const reviewRefreshResponse = admin.waitForResponse(response => response.url().endsWith('/api/admin/wrong-answer-tasks'));
+    await dashboardReviewCard.getByRole('button', { name: 'Refresh review assignments' }).click();
+    assert.equal((await reviewRefreshResponse).status(), 200, 'the dashboard refresh reloads review assignment summaries');
+    await dashboardTask.getByRole('button', { name: 'View Progress', exact: true }).waitFor();
+    await dashboardTask.scrollIntoViewIfNeeded();
+    await admin.screenshot({ path: `/tmp/shsat-review-assignment-dashboard-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await dashboardTask.scrollIntoViewIfNeeded();
+    await admin.waitForTimeout(200);
+    const dashboardMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(dashboardMobileSize.page <= dashboardMobileSize.viewport, 'the dashboard review card fits a 390px viewport');
+    await admin.screenshot({ path: `/tmp/shsat-review-assignment-dashboard-mobile-${stamp}.png` });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    const dashboardCollapse = dashboardReviewCard.getByRole('button', { name: 'Collapse assigned review' });
+    await dashboardCollapse.click();
+    await admin.reload();
+    await dashboardReviewCard.getByRole('button', { name: 'Expand assigned review' }).waitFor();
+    assert.equal(await dashboardTask.count(), 0, 'the collapsed dashboard hides its review task cards after refresh');
+    await dashboardReviewCard.getByRole('button', { name: 'Expand assigned review' }).click();
+    await dashboardTask.waitFor();
+    await dashboardTask.getByRole('button', { name: 'View Progress', exact: true }).click();
+    await admin.waitForURL(url => url.pathname.endsWith(`/wrong-answer-tasks/${taskId}`));
+    await admin.getByRole('heading', { name: taskTitle, exact: true }).waitFor();
+    await admin.getByRole('button', { name: 'Back to Review Assignments', exact: true }).click();
+    await admin.waitForURL(url => url.pathname.endsWith('/exam-types/SHSAT/admin')
+      && url.searchParams.get('tab') === 'wrong-answer-tasks');
+    await admin.getByRole('tab', { name: 'Review Assignments', exact: true }).waitFor();
+
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     const studentTasks = await api(student, '/api/student/wrong-answer-tasks');
     const studentTask = studentTasks.find(item => item.assignmentId === details.assignments[0].assignmentId);
@@ -401,7 +436,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
