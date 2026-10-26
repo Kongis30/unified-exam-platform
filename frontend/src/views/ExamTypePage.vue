@@ -327,6 +327,9 @@ async function loadStudentExams() {
 
 const shsatFormalHistory = computed(() => studentAttemptHistory.value.filter((item) => !item.practice))
 const shsatWrongAnswerBooks = computed(() => shsatFormalHistory.value.filter((item) => Number(item.reviewCount) > 0))
+const activeReviewTasks = computed(() => studentReviewTasks.value.filter((task) => task.status !== 'COMPLETED'))
+const completedReviewTasks = computed(() => studentReviewTasks.value
+  .filter((task) => task.status === 'COMPLETED' && task.practiceAttemptId))
 const latestWrongAnswerPractice = computed(() => {
   const latest = new Map()
   for (const item of studentAttemptHistory.value) {
@@ -345,6 +348,10 @@ function selectStudentHistoryTab(tab) {
 function viewShsatAttempt(item) {
   router.push({ name: 'student-attempt-report', params: { attemptId: item.attemptId },
     query: { returnTo: '/student/systems/SHSAT', returnLabel: 'Back to SHSAT' } })
+}
+
+function viewCompletedReviewReport(task) {
+  if (task.practiceAttemptId) viewShsatAttempt({ attemptId: task.practiceAttemptId })
 }
 
 function viewShsatWrongAnswers(item) {
@@ -2136,9 +2143,9 @@ watch(() => props.code, (code) => {
           <AppButton type="button" variant="danger" :disabled="deletingPracticeAttemptId !== null" @click="deletePracticeRecord">{{ deletingPracticeAttemptId !== null ? 'Deleting…' : 'Delete record' }}</AppButton>
         </template>
       </AppModal>
-      <AppCard v-if="props.code === 'SHSAT' && studentReviewTasks.length" class="management-card student-review-list">
+      <AppCard v-if="props.code === 'SHSAT' && activeReviewTasks.length" class="management-card student-review-list">
         <div class="card-heading"><div><span class="eyebrow">SHSAT REVIEW</span><h2>Review assignments</h2></div></div>
-        <article v-for="task in studentReviewTasks" :key="task.assignmentId" class="paper-row">
+        <article v-for="task in activeReviewTasks" :key="task.assignmentId" class="paper-row">
           <div class="paper-mark">↻</div>
           <div class="paper-copy">
             <strong>{{ task.title }}</strong>
@@ -2171,7 +2178,7 @@ watch(() => props.code, (code) => {
           <button v-for="tab in [
             { key: 'history', label: 'Exam History' },
             { key: 'wrong-answers', label: 'Wrong Answer Book', count: shsatWrongAnswerBooks.length },
-            { key: 'review-tasks', label: 'Review Tasks', count: studentReviewTasks.length },
+            { key: 'review-tasks', label: 'Review Task History', count: completedReviewTasks.length },
           ]" :key="tab.key" class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === tab.key }"
             type="button" role="tab" :aria-selected="activeHistoryTab === tab.key" @click="selectStudentHistoryTab(tab.key)">
             {{ tab.label }} <span v-if="tab.count" class="history-tab__count">{{ tab.count }}</span>
@@ -2199,13 +2206,12 @@ watch(() => props.code, (code) => {
           <p v-if="!shsatWrongAnswerBooks.length && !historyLoading && !historyError" class="table-empty">No wrong answers are available for review.</p>
         </div>
         <div v-else class="shsat-history-list">
-          <article v-for="task in studentReviewTasks" :key="task.assignmentId" class="shsat-history-row">
-            <div class="paper-copy"><strong>{{ task.title }}</strong><small>{{ task.examTitle }} · {{ task.remainingQuestionCount }} questions remaining · {{ task.status.replaceAll('_', ' ') }}</small></div>
-            <AppButton variant="secondary" :disabled="!task.canStart || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
-              {{ startingReviewTaskId === task.assignmentId ? 'Starting…' : task.status === 'IN_PROGRESS' ? 'Continue' : task.status === 'RETRY_REQUIRED' ? 'Try again' : 'Start review' }}
-            </AppButton>
+          <article v-for="task in completedReviewTasks" :key="task.assignmentId" class="shsat-history-row">
+            <div class="paper-copy"><strong>{{ task.title }}</strong><small>{{ task.examTitle }} · {{ task.clearedQuestionCount }} / {{ task.totalQuestions }} questions cleared</small></div>
+            <span class="status-pill is-active">Completed</span>
+            <AppButton variant="secondary" @click="viewCompletedReviewReport(task)">View report</AppButton>
           </article>
-          <p v-if="!studentReviewTasks.length && !historyLoading && !historyError" class="table-empty">No review tasks have been assigned.</p>
+          <p v-if="!completedReviewTasks.length && !historyLoading && !historyError" class="table-empty">No completed review assignments yet.</p>
         </div>
       </AppCard>
     </template>
@@ -2229,6 +2235,7 @@ watch(() => props.code, (code) => {
 .history-tab__count { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border-radius: 999px; padding: 0 5px; background: #edf3ff; color: var(--color-primary-strong); font-size: 12px; }
 .shsat-history-list { display: grid; }
 .shsat-history-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(110px, auto) auto; align-items: center; gap: 18px; border-bottom: 1px solid var(--color-border); padding: 14px 2px; }
+.shsat-history-row > .status-pill { justify-self: start; }
 .shsat-history-row:last-child { border-bottom: 0; }
 .shsat-history-score { display: grid; gap: 3px; text-align: right; font-variant-numeric: tabular-nums; }
 .shsat-history-score strong { color: var(--color-text); font-size: 15px; }

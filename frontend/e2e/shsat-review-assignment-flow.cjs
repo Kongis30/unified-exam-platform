@@ -228,16 +228,74 @@ async function main() {
     const continueReview = student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle });
     await continueReview.getByRole('button', { name: 'Continue' }).click();
     await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}` && Number(url.searchParams.get('practiceAttemptId')) === practiceAttemptId);
+    const completedAttempt = await api(student, `/api/student/attempts/${practiceAttemptId}/submit`, 'POST');
+    assert.ok(['SUBMITTED', 'COMPLETED'].includes(completedAttempt.status), 'the review attempt can be submitted and reported');
+    await student.route('**/api/student/wrong-answer-tasks', async route => {
+      const response = await route.fetch();
+      const tasks = await response.json();
+      const completedTask = tasks.find(item => item.assignmentId === details.assignments[0].assignmentId);
+      completedTask.status = 'COMPLETED';
+      completedTask.clearedQuestionCount = completedTask.totalQuestions;
+      completedTask.remainingQuestionCount = 0;
+      await route.fulfill({ response, json: tasks });
+    });
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    await student.getByRole('tab', { name: /Review Task History/ }).click();
+    const completedTaskRow = student.locator('.shsat-history-row').filter({ hasText: taskTitle });
+    await completedTaskRow.getByText(`${details.assignments[0].totalQuestions} / ${details.assignments[0].totalQuestions} questions cleared`).waitFor();
+    assert.equal(await student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle }).count(), 0,
+      'completed assignments no longer appear among active review tasks');
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-completed-history-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    await student.evaluate(() => window.scrollTo(0, 0));
+    await student.waitForTimeout(200);
+    const completedHistoryMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(completedHistoryMobileSize.page <= completedHistoryMobileSize.viewport,
+      'the completed review history fits a 390px viewport');
+    await completedTaskRow.scrollIntoViewIfNeeded();
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-completed-history-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await completedTaskRow.getByRole('button', { name: 'View report', exact: true }).click();
+    await student.waitForURL(url => url.pathname === `/student/attempts/${practiceAttemptId}/report`);
+    await Promise.race([
+      student.getByText('Result Summary', { exact: true }).waitFor(),
+      student.locator('.attempt-report__state--error').waitFor(),
+    ]);
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-completed-report-${stamp}.png` });
+    if (await student.locator('.attempt-report__state--error').count()) {
+      throw new Error(`Completed assignment report failed: ${await student.locator('.attempt-report__state--error').innerText()}`);
+    }
+    assert.equal(await student.locator('.attempt-report__state--error').count(), 0,
+      'a completed review assignment retains a working student report link');
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-completed-report-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    await student.evaluate(() => window.scrollTo(0, 0));
+    await student.waitForTimeout(200);
+    const completedReportMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(completedReportMobileSize.page <= completedReportMobileSize.viewport,
+      'the completed review report fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-completed-report-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await student.getByRole('button', { name: 'Back to SHSAT', exact: true }).click();
+    await student.waitForURL(url => url.pathname === '/student/systems/SHSAT');
+    await student.getByRole('tab', { name: /Review Task History/ }).waitFor();
+    assert.equal(await student.getByRole('tab', { name: /Review Task History/ }).getAttribute('aria-selected'), 'true',
+      'returning from the report preserves the selected history tab');
+    await student.unroute('**/api/student/wrong-answer-tasks');
+    await student.reload();
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
       studentMobileSize,
       progressMobileSize,
       reportMobileSize,
+      completedHistoryMobileSize,
+      completedReportMobileSize,
       pageErrors: errors.length,
     }));
   } finally {
