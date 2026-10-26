@@ -26,15 +26,18 @@ async function main() {
   teacher.on('pageerror', error => teacherPageErrors.push(error.message));
 
   const username = `sat_parity_${Date.now()}`;
+  const secondaryStudentUsername = `sat_parity_additional_${Date.now()}`;
   const teacherUsername = `sat_parity_teacher_${Date.now()}`;
   const password = `sat-e2e-${Date.now()}`;
   let studentId;
+  let secondaryStudentId;
   let teacherId;
   const examIds = [];
   let paperId;
   let classId;
   let classCreated = false;
   let classMembershipAdded = false;
+  let secondaryClassMembershipAdded = false;
 
   const csrf = page => page.evaluate(async () => (await (await fetch('/api/auth/csrf')).json()).token);
   const raw = async (page, path, method = 'GET', body) => {
@@ -119,6 +122,11 @@ async function main() {
       username, password, realName: 'SAT Parity Student', roleCode: 'STUDENT', email: null, phone: null,
     });
     studentId = created.id;
+    const additionalStudent = await api(admin, '/api/admin/users', 'POST', {
+      username: secondaryStudentUsername, password, realName: 'SAT Parity Additional Student',
+      roleCode: 'STUDENT', email: null, phone: null,
+    });
+    secondaryStudentId = additionalStudent.id;
     const createdTeacher = await api(admin, '/api/admin/users', 'POST', {
       username: teacherUsername, password, realName: 'SAT Parity Teacher', roleCode: 'TEACHER', email: null, phone: null,
     });
@@ -186,6 +194,18 @@ async function main() {
     await teacher.getByRole('button').filter({ hasText: className }).click();
     await teacher.getByRole('heading', { name: className, exact: true }).waitFor();
     await teacher.getByRole('button', { name: 'Edit class' }).waitFor();
+    await teacher.getByRole('button', { name: 'Add student' }).click();
+    await teacher.getByRole('heading', { name: 'Add students' }).waitFor();
+    await teacher.getByLabel('Search students').fill('SAT Parity Additional Student');
+    await teacher.getByText('No classes yet', { exact: true }).waitFor();
+    await teacher.getByRole('checkbox', { name: 'Select SAT Parity Additional Student' }).check();
+    const enrollmentResponse = teacher.waitForResponse(response =>
+      response.url().includes(`/api/admin/classes/${classId}/students/batch`) && response.request().method() === 'POST');
+    await teacher.getByRole('button', { name: 'Add 1 student' }).click();
+    const enrollmentResult = await enrollmentResponse;
+    assert.equal(enrollmentResult.status(), 200, 'teacher can enroll a student into any SAT class');
+    secondaryClassMembershipAdded = true;
+    await teacher.getByText('SAT Parity Additional Student', { exact: true }).waitFor();
     assert.deepEqual(teacherPageErrors, [], `teacher route-guard errors: ${teacherPageErrors.join('; ')}`);
 
     const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 2);
@@ -499,7 +519,8 @@ async function main() {
     await admin.getByRole('heading', { name: 'Students' }).waitFor();
     assert.equal(await classTables.count(), 2, 'class detail provides separate releases and students tables');
     assert.equal(await classTables.nth(0).locator('tbody tr').count(), 2);
-    assert.equal(await classTables.nth(1).locator('tbody tr').count(), 1);
+    assert.equal(await classTables.nth(1).locator('tbody tr').count(), 2,
+      'the class table reflects both enrolled test students');
     await admin.setViewportSize({ width: 390, height: 844 });
     const classPageWidth = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(classPageWidth.page <= classPageWidth.viewport, 'class score trend has no page overflow at 390px');
@@ -570,6 +591,7 @@ async function main() {
         'PSAT release type, student launch, fill-in autosave/reload, answer grading, and PSAT report scoring identity',
         'SAT practice start, report/history entry, and exclusion from formal score history',
         'administrator and teacher denial for student practice APIs and student workspace route',
+        'teacher can manage all SAT classes and add students through the searchable enrollment table',
         'teacher cannot access SAT attempt deletion in UI or API; duplicate admin delete is safe',
         'empty student score and class trend states on mobile',
         'per-type student statistics, score filter, and fallback when a type has no attempts',
@@ -581,10 +603,12 @@ async function main() {
     try {
       for (const examId of examIds) await api(admin, `/api/admin/exams/${examId}`, 'DELETE');
       if (classMembershipAdded) await api(admin, `/api/admin/classes/${classId}/students/${studentId}`, 'DELETE');
+      if (secondaryClassMembershipAdded) await api(admin, `/api/admin/classes/${classId}/students/${secondaryStudentId}`, 'DELETE');
       if (classCreated) await api(admin, `/api/admin/classes/${classId}`, 'DELETE');
       if (studentId) await api(admin, `/api/admin/users/${studentId}`, 'DELETE');
+      if (secondaryStudentId) await api(admin, `/api/admin/users/${secondaryStudentId}`, 'DELETE');
       if (teacherId) await api(admin, `/api/admin/users/${teacherId}`, 'DELETE');
-      console.log(JSON.stringify({ cleanup: 'PASS', examIds, studentId }));
+      console.log(JSON.stringify({ cleanup: 'PASS', examIds, studentId, secondaryStudentId }));
     } catch (error) {
       console.error('CLEANUP_FAILURE', error.message);
       process.exitCode = 2;
