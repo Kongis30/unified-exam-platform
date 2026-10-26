@@ -15,3 +15,11 @@ E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:sat:accounts
 ```
 
 This test creates and removes a temporary account. It covers editable default credentials, optional contact details, role changes, password reset and login, account status, search/filtering, and the five-second permanent-delete confirmation. Do not point it at production data.
+
+To verify SHSAT Paper Management folder, Online/Offline, and combined name filters, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:paper-filters
+```
+
+This test uses the seeded `SHSAT CRASH COURSE` paper group and does not modify data.

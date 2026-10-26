@@ -53,7 +53,7 @@
 ## 2. Paper Management：每组与每卷
 
 - [ ] 搜索框与 `Search`、文件夹筛选、Online 状态筛选：单独/组合使用，清空与刷新后结果和计数正确，空结果提示清楚。
-- [ ] `Create Folder`：名称必填/重复/取消/确认；组列表更新；文件夹默认折叠、展开/收起与记忆。
+- [ ] `Create Folder`：名称必填/重复/取消/确认；组列表更新；文件夹默认折叠且可展开/收起。展开状态刷新后重置为折叠，与独立版实现一致；不要求跨刷新记忆。
 - [ ] 分组拖动排序：首组、中间组、末组互换，拖入第二组或拖出第二组均持久化；刷新/重新登录顺序一致；每个组恰好一次，默认组规则正确。
 - [x] 分组顺序回归抽测：在真实 SHSAT Paper Management 页面将第二个可拖动分组移到第三个位置；刷新后 UI 顺序与后端 `sortOrder` 一致，所有 7 个 group ID 唯一且完整；测试后通过正式排序接口恢复原顺序并复核成功。桌面截图 `42-paper-groups-reordered.png`。首/末组、反方向拖动、重新登录持久化仍待覆盖。
 - [x] 分组第二位双向回归：真实拖动第三组进入第二位、第二组移到末位；拖动后 UI 与服务端顺序完全一致，刷新后仍保持；之后将所有 7 组恢复至测试前顺序并复核。无页面脚本错误。截图 `114-paper-group-drag-result.png`。这次覆盖了用户报告的“目标是第二组”场景；首组互换和重新登录后的持久化仍待测。
@@ -214,6 +214,7 @@
 - [x] **认证刷新与角色入口复测（2026-10-27）**：管理员登录 SHSAT 后台并刷新，仍保持登录且页面数据正常；临时教师刷新后仍保持后台会话，只显示 Exam Release、Review Assignments、Classes，调用统一账号 API 返回 403；临时学生刷新后仍停留系统选择页，可进入 SHSAT 学生工作区，看到正确空状态。所有临时账号已删除，浏览器脚本错误为 0。截图 `/tmp/shsat-admin-refresh-session-20261027.png`、`/tmp/shsat-teacher-workspace-20261027.png`、`/tmp/shsat-teacher-workspace-mobile-20261027.png`、`/tmp/shsat-student-system-select-20261027.png`、`/tmp/shsat-student-home-20261027.png`、`/tmp/shsat-student-home-mobile-20261027.png`；教师/学生窄屏页面根宽度均为 390px。此项只覆盖登录后刷新与角色入口，不代表会话过期、退出及登录错误路径已全部验收。
 - [x] **Paper Management 文件夹 CRUD 回归（2026-10-27）**：管理员从页面新建临时分组并填写说明，刷新后仍存在；重命名后刷新仍保留新名称；从确认弹窗删除空分组后，页面及分组 API 均查无该项。临时分组已清理，页面脚本错误为 0。截图 `/tmp/shsat-paper-folder-renamed-20261027.png`。此项未覆盖重名校验、取消操作、非空分组删除限制与排序拖动。
 - [x] 文件夹表单边界回归：空名称显示英文必填提示；重复已有分组名显示英文冲突提示；取消后对话框关闭且未创建记录。页面脚本错误为 0。非空分组删除限制与排序拖动仍待验收。
+- [x] **SHSAT Paper List 筛选回归（2026-10-27）**：对照独立版查询参数，在统一版发现 Online/Offline 选择未应用；现 `getPapers` 按 READY 状态过滤。用真实 SHSAT CRASH COURSE 数据核对：Online 4 卷、Offline 2 卷；文件夹、状态、名称组合筛选均匹配，浏览器脚本错误为 0。E2E 回归保存在 `frontend/e2e/shsat-paper-filters.cjs`，桌面截图 `/tmp/shsat-paper-filter-online-20261027.png`、`/tmp/shsat-paper-filter-offline-20261027.png`。清空筛选、空结果提示与筛选后刷新行为仍待验收。
 
 ## 9. 建议执行顺序与完成门槛
 

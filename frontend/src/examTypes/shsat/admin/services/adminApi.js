@@ -247,7 +247,8 @@ export const adminApi = {
     return papers.filter((paper) => {
       const matchesGroup = !params.groupId || String(paper.paperGroupId || '') === String(params.groupId);
       const matchesKeyword = !params.keyword || `${paper.paperName} ${paper.paperCode}`.toLowerCase().includes(params.keyword.toLowerCase());
-      return matchesGroup && matchesKeyword;
+      const matchesOnline = !params.online || paper.online === (params.online === 'true');
+      return matchesGroup && matchesKeyword && matchesOnline;
     });
   },
 

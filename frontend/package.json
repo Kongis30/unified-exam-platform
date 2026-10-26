@@ -8,6 +8,7 @@
     "build": "vite build",
     "test:e2e:sat": "node e2e/sat-formal-exam.cjs",
     "test:e2e:sat:accounts": "node e2e/sat-account-management.cjs",
+    "test:e2e:shsat:paper-filters": "node e2e/shsat-paper-filters.cjs",
     "preview": "vite preview"
   },
   "dependencies": {
