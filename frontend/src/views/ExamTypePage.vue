@@ -42,6 +42,7 @@ const studentReviewTasks = ref([])
 const studentAttemptHistory = ref([])
 const historyLoading = ref(false)
 const historyError = ref('')
+const studentExamError = ref('')
 const activeHistoryTab = ref(localStorage.getItem('shsat.student-history-tab') || 'history')
 const startingWrongAnswerAttemptId = ref(null)
 const startingReviewTaskId = ref(null)
@@ -266,41 +267,61 @@ async function loadPage() {
 
 async function loadStudentExams() {
   const workspaceCodes = new Set(workspaceTypes.value.map((item) => item.code))
-  studentExams.value = (await listStudentExams())
-    .filter((exam) => workspaceCodes.has(exam.examTypeCode))
-  if (props.code === 'SAT') {
-    const [practicePapers, practiceHistory] = await Promise.all([
-      satExamApi.listPracticePapers(),
-      satExamApi.listPracticeHistory(practiceHistoryPage.value, 10),
-    ])
-    studentPracticePapers.value = practicePapers
-    studentPracticeHistory.value = practiceHistory.records || []
-    practiceHistoryTotal.value = practiceHistory.total || 0
-  } else {
-    studentPracticePapers.value = []
-    studentPracticeHistory.value = []
-    practiceHistoryTotal.value = 0
-  }
-  if (props.code === 'SHSAT') {
+  const isShsatWorkspace = props.code === 'SHSAT'
+  studentExamError.value = ''
+  if (isShsatWorkspace) {
     historyLoading.value = true
     historyError.value = ''
+  }
+
+  try {
     try {
-      const [tasks, history] = await Promise.all([
-        apiRequest('/api/student/wrong-answer-tasks'),
-        shsatStudentApi.getAttemptHistory(),
-      ])
-      studentReviewTasks.value = tasks
-      studentAttemptHistory.value = history
+      studentExams.value = (await listStudentExams())
+        .filter((exam) => workspaceCodes.has(exam.examTypeCode))
     } catch (requestError) {
+      if (!isShsatWorkspace) throw requestError
+      studentExamError.value = requestError.message || 'Unable to load your assigned exams.'
+    }
+
+    if (props.code === 'SAT') {
+      const [practicePapers, practiceHistory] = await Promise.all([
+        satExamApi.listPracticePapers(),
+        satExamApi.listPracticeHistory(practiceHistoryPage.value, 10),
+      ])
+      studentPracticePapers.value = practicePapers
+      studentPracticeHistory.value = practiceHistory.records || []
+      practiceHistoryTotal.value = practiceHistory.total || 0
+    } else {
+      studentPracticePapers.value = []
+      studentPracticeHistory.value = []
+      practiceHistoryTotal.value = 0
+    }
+
+    if (isShsatWorkspace) {
+      try {
+        const [tasks, history] = await Promise.all([
+          apiRequest('/api/student/wrong-answer-tasks'),
+          shsatStudentApi.getAttemptHistory(),
+        ])
+        studentReviewTasks.value = tasks
+        studentAttemptHistory.value = history
+      } catch (requestError) {
+        historyError.value = requestError.message || 'Unable to load exam history.'
+      }
+    } else {
       studentReviewTasks.value = []
       studentAttemptHistory.value = []
+    }
+  } catch (requestError) {
+    if (isShsatWorkspace) {
       historyError.value = requestError.message || 'Unable to load exam history.'
-    } finally {
+    } else {
+      throw requestError
+    }
+  } finally {
+    if (isShsatWorkspace) {
       historyLoading.value = false
     }
-  } else {
-    studentReviewTasks.value = []
-    studentAttemptHistory.value = []
   }
 }
 
@@ -2138,7 +2159,8 @@ watch(() => props.code, (code) => {
           <button v-if="getStudentExamState(exam).canStart" class="secondary-button compact-button" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">{{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}<span v-if="startingExamId !== exam.id">↗</span></button>
           <button v-if="getStudentExamState(exam).canViewAttempt" class="text-button" @click="viewAttempt(exam)">View attempt</button>
         </article>
-        <p v-if="!studentExams.length && !isLoading" class="table-empty">No exams have been assigned to you yet.</p>
+        <p v-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
+        <p v-if="!studentExams.length && !isLoading && !studentExamError" class="table-empty">No exams have been assigned to you yet.</p>
       </AppCard>
       <AppCard v-if="props.code === 'SHSAT'" class="management-card shsat-student-history">
         <div class="card-heading"><div><span class="eyebrow">YOUR SHSAT RECORDS</span><h2>Exam History</h2><p>Review completed exams, personal wrong answers, and assigned review tasks.</p></div>
@@ -2161,7 +2183,7 @@ watch(() => props.code, (code) => {
             <div class="shsat-history-score"><strong>{{ item.scoreVisible ? (item.totalScore ?? '—') : 'Not available yet' }}</strong><small>Raw score</small></div>
             <AppButton variant="secondary" @click="viewShsatAttempt(item)">View report</AppButton>
           </article>
-          <p v-if="!shsatFormalHistory.length && !historyLoading" class="table-empty">No completed SHSAT exams yet.</p>
+          <p v-if="!shsatFormalHistory.length && !historyLoading && !historyError" class="table-empty">No completed SHSAT exams yet.</p>
         </div>
         <div v-else-if="activeHistoryTab === 'wrong-answers'" class="shsat-history-list">
           <article v-for="item in shsatWrongAnswerBooks" :key="item.attemptId" class="shsat-history-row">
@@ -2174,7 +2196,7 @@ watch(() => props.code, (code) => {
               <AppButton variant="ghost" :disabled="!latestWrongAnswerPractice.get(String(item.attemptId))" @click="viewLatestShsatPractice(item)">Latest practice report</AppButton>
             </div>
           </article>
-          <p v-if="!shsatWrongAnswerBooks.length && !historyLoading" class="table-empty">No wrong answers are available for review.</p>
+          <p v-if="!shsatWrongAnswerBooks.length && !historyLoading && !historyError" class="table-empty">No wrong answers are available for review.</p>
         </div>
         <div v-else class="shsat-history-list">
           <article v-for="task in studentReviewTasks" :key="task.assignmentId" class="shsat-history-row">
@@ -2183,7 +2205,7 @@ watch(() => props.code, (code) => {
               {{ startingReviewTaskId === task.assignmentId ? 'Starting…' : task.status === 'IN_PROGRESS' ? 'Continue' : task.status === 'RETRY_REQUIRED' ? 'Try again' : 'Start review' }}
             </AppButton>
           </article>
-          <p v-if="!studentReviewTasks.length && !historyLoading" class="table-empty">No review tasks have been assigned.</p>
+          <p v-if="!studentReviewTasks.length && !historyLoading && !historyError" class="table-empty">No review tasks have been assigned.</p>
         </div>
       </AppCard>
     </template>

@@ -10,6 +10,7 @@
     "test:e2e:sat:accounts": "node e2e/sat-account-management.cjs",
     "test:e2e:shsat:paper-filters": "node e2e/shsat-paper-filters.cjs",
     "test:e2e:shsat:student-states": "node e2e/shsat-student-exam-states.cjs",
+    "test:e2e:shsat:student-history-retry": "node e2e/shsat-student-history-retry.cjs",
     "test:e2e:shsat:clear-answer": "node e2e/shsat-clear-answer-persistence.cjs",
     "preview": "vite preview",
     "test:e2e:shsat:unassigned-bulk": "node e2e/shsat-unassigned-bulk-assign.cjs",
