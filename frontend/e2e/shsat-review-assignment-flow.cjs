@@ -196,6 +196,12 @@ async function main() {
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     const retryReview = student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle });
     await retryReview.getByText('More Practice Needed', { exact: true }).waitFor();
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-retry-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const retryTaskMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(retryTaskMobileSize.page <= retryTaskMobileSize.viewport, 'the retry task card fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-retry-mobile-${stamp}.png` });
     await retryReview.waitFor({ timeout: 5000 }).catch(async () => {
       await student.screenshot({ path: `/tmp/shsat-review-assignment-retry-debug-${stamp}.png` });
       throw new Error(`Retry task card missing. Student page: ${await student.locator('body').innerText()}`);
@@ -342,6 +348,7 @@ async function main() {
       completedHistoryMobileSize,
       completedReportMobileSize,
       endedTaskMobileSize,
+      retryTaskMobileSize,
       pageErrors: errors.length,
     }));
   } finally {
