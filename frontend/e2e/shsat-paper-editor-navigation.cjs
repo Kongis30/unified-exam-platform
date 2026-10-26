@@ -25,6 +25,8 @@ async function main() {
   const paperTitle = `Editor Navigation ${stamp}`;
   const questionStem = `Editor persistence question ${stamp}`;
   let paperId;
+  let tempUserId;
+  let sourceExamId;
 
   try {
     await login(page);
@@ -202,6 +204,146 @@ async function main() {
       .find(section => section.sectionCode === 'ELA')?.children.some(section => section.sectionCode === `ELA_${customSubTypeCode}`), false,
     'deleting an unused custom secondary type persists');
 
+    const sourcePaperId = 247;
+    const sourcePaper = await api(page, `/api/admin/papers/${sourcePaperId}`);
+    const sourceQuestions = readQuestions(sourcePaper);
+    assert.ok(sourceQuestions.length > 0, 'the ready SHSAT source paper has questions');
+    const existingTargetQuestions = readQuestions(await api(page, `/api/admin/papers/${paperId}`));
+    const targetSections = sourcePaper.sections.map((part, partIndex) => {
+      const partCode = part.settings?.partCode || part.sectionCode;
+      return {
+        sectionCode: partCode,
+        sectionKind: part.sectionKind,
+        title: part.title,
+        sortOrder: partIndex,
+        instructions: part.instructions,
+        settings: part.settings,
+        questions: partCode === 'ELA' ? existingTargetQuestions.map(toQuestionRequest) : [],
+        children: (part.children || []).map((subType, subTypeIndex) => ({
+          sectionCode: `${partCode}_${subType.settings?.subTypeCode || subType.sectionCode}`,
+          sectionKind: subType.sectionKind,
+          title: subType.title,
+          sortOrder: subTypeIndex,
+          instructions: subType.instructions,
+          settings: subType.settings,
+          questions: [],
+          children: [],
+        })),
+      };
+    });
+    await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', { sections: targetSections });
+    const importStudent = await api(page, '/api/admin/users', 'POST', {
+      username: `editorimport${stamp}@jin`,
+      password: `Import-${stamp}-Pass!`,
+      realName: `Editor Import ${stamp}`,
+      roleCode: 'STUDENT',
+      email: null,
+      phone: null,
+    });
+    tempUserId = Number(importStudent.id);
+    const importRelease = await api(page, `/api/admin/papers/${sourcePaperId}/exams`, 'POST', {
+      title: `Editor Import Source ${stamp}`,
+      description: 'Temporary paper editor import verification',
+      opensAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      durationSeconds: 10_800,
+      attemptLimit: 1,
+      targetScope: 'SELECTED',
+    });
+    sourceExamId = Number(importRelease.summary.id);
+    await api(page, `/api/admin/exams/${sourceExamId}/targets`, 'PUT', { classIds: [], studentUserIds: [tempUserId] });
+    await api(page, `/api/admin/exams/${sourceExamId}/publish`, 'POST');
+
+    const sourceAnalytics = await api(page, `/api/admin/reports/exams/${sourceExamId}/monitor/analytics`);
+    const analyticsRows = sourceAnalytics.questionAnalytics || [];
+    assert.ok(analyticsRows.length > 0, 'a published SHSAT exam exposes questions for import');
+    const noAnswerQuestion = analyticsRows.find(row => row.accuracy === null || row.accuracy === undefined) || analyticsRows[0];
+    const sourceQuestionNumber = Number(noAnswerQuestion.questionNumber);
+    const sourceQuestion = sourceQuestions.find(question => Number(question.displayNumber) === sourceQuestionNumber);
+    assert.ok(sourceQuestion, 'question analytics map to a question on the source paper');
+
+    await page.locator('.notice').waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: 'Import from Exam', exact: true }).click();
+    await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
+    const sourceExamSelect = page.locator('.import-source-select select');
+    await page.waitForFunction((examId) => {
+      const select = document.querySelector('.import-source-select select');
+      return select && select.value === String(examId);
+    }, sourceExamId);
+    const questionTypeFilter = page.locator('.import-type-select select');
+    await questionTypeFilter.selectOption({ label: 'Multiple Choice' });
+    assert.ok(await page.locator('.import-question-row').count() > 0,
+      'the question type filter shows matching questions');
+    await questionTypeFilter.selectOption('all');
+    for (const filter of ['Below 50%', '50% to <75%', '75%+']) {
+      await page.getByRole('button', { name: filter, exact: true }).click();
+      await page.getByText('No questions match this filter.', { exact: true }).waitFor();
+    }
+    await page.getByRole('button', { name: 'No answers', exact: true }).click();
+    assert.ok(await page.locator('.import-question-row').count() > 0,
+      'the No answers filter shows unanswered source questions');
+    await page.locator('.import-question-row__preview')
+      .filter({ hasText: new RegExp(`^Q${sourceQuestionNumber}(?:\\s|$)`) }).click();
+    await page.getByText(`Question ${sourceQuestionNumber}`, { exact: true }).waitFor();
+    await page.getByLabel(`Select question ${sourceQuestionNumber}`, { exact: true }).check();
+    assert.equal(await page.getByRole('button', { name: 'Add 1 questions', exact: true }).isEnabled(), true,
+      'selecting a source question enables import');
+    await page.screenshot({ path: `/tmp/shsat-paper-editor-import-${stamp}.png` });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const importMobileSize = await page.evaluate(() => ({
+      pageWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      dialogWidth: document.querySelector('.import-questions-dialog')?.getBoundingClientRect().width || 0,
+    }));
+    assert.ok(importMobileSize.pageWidth <= importMobileSize.viewportWidth
+      && importMobileSize.dialogWidth <= importMobileSize.viewportWidth,
+    `question import dialog fits 390px: ${JSON.stringify(importMobileSize)}`);
+    await page.screenshot({ path: `/tmp/shsat-paper-editor-import-mobile-${stamp}.png` });
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 1,
+      'cancelling import does not change the target paper');
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole('button', { name: 'Import from Exam', exact: true }).click();
+    await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
+    await page.waitForFunction((examId) => {
+      const select = document.querySelector('.import-source-select select');
+      return select && select.value === String(examId);
+    }, sourceExamId);
+    await page.locator('.import-question-row__preview')
+      .filter({ hasText: new RegExp(`^Q${sourceQuestionNumber}(?:\\s|$)`) }).click();
+    await page.getByLabel(`Select question ${sourceQuestionNumber}`, { exact: true }).check();
+    await page.getByRole('button', { name: 'Add 1 questions', exact: true }).click();
+    await page.waitForTimeout(1000);
+    if (await page.locator('.import-questions-dialog').count()) {
+      const dialogText = await page.locator('.import-questions-dialog').innerText();
+      const failures = failedApiResponses.map(response => `${response.status} ${response.url}: ${response.body}`).join('\n');
+      throw new Error(`Question import did not close the dialog. Dialog: ${dialogText}\nAPI failures: ${failures}`);
+    }
+    await page.getByText('1 questions added from', { exact: false }).waitFor();
+    const importedPaper = await api(page, `/api/admin/papers/${paperId}`);
+    const importedQuestions = readQuestions(importedPaper);
+    assert.equal(importedQuestions.length, 2, 'confirming import adds one source question');
+    const importedQuestion = importedQuestions.find(question => question.stem === sourceQuestion.stem);
+    assert.ok(importedQuestion, 'the imported source question retains its original stem');
+    assert.equal(importedQuestion.questionTypeCode, sourceQuestion.questionTypeCode,
+      'the imported question retains its original type');
+    assert.deepEqual(importedQuestion.render, sourceQuestion.render, 'the imported question retains its display data');
+    assert.deepEqual(importedQuestion.answerKey, sourceQuestion.answerKey, 'the imported question retains its answer key');
+    const sourceSection = findQuestionSection(sourcePaper.sections, sourceQuestion.paperItemId);
+    const importedSection = findQuestionSection(importedPaper.sections, importedQuestion.paperItemId);
+    assert.ok(sourceSection && importedSection, 'the imported question remains attached to its section');
+    const sourcePart = sourcePaper.sections.find(part => (part.children || []).includes(sourceSection));
+    const sourcePartCode = sourcePart.settings?.partCode || sourcePart.sectionCode;
+    const sourceSubTypeCode = sourceSection.settings?.subTypeCode
+      || (sourceSection.sectionCode.startsWith(`${sourcePart.sectionCode}_`)
+        ? sourceSection.sectionCode.slice(sourcePart.sectionCode.length + 1)
+        : sourceSection.sectionCode);
+    const semanticSectionCode = `${sourcePartCode}_${sourceSubTypeCode}`;
+    assert.equal(importedSection.sectionCode, semanticSectionCode,
+      'the imported question maps from its legacy section code to the semantic SHSAT label');
+
     await page.getByText('All changes saved.', { exact: true }).waitFor({ state: 'hidden' });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('.question-editor').scrollIntoViewIfNeeded();
@@ -254,13 +396,17 @@ async function main() {
       checks: ['unchanged save disabled', 'scoring rule persists', 'unsaved preview is blocked',
         'Stay preserves edits', 'Leave Without Saving discards edits', 'saved question survives reload',
         'primary and secondary type create/delete', 'official SHSAT labels are protected',
+        'import source, performance filter, preview, cancel, and confirm',
         'preview shows saved question and Back returns to editor', 'per-part add and question navigation',
         'question deletion cancel and confirm', '390px editor layout'],
       mobileSize,
       pageErrors: pageErrors.length,
-      screenshots: ['clean', 'saved', 'preview', 'mobile'].map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`),
+      screenshots: ['clean', 'saved', 'preview', 'import', 'import-mobile', 'mobile']
+        .map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`),
     }));
   } finally {
+    if (sourceExamId) await api(page, `/api/admin/exams/${sourceExamId}`, 'DELETE').catch(() => {});
+    if (tempUserId) await api(page, `/api/admin/users/${tempUserId}`, 'DELETE').catch(() => {});
     if (paperId) await api(page, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
     await browser.close();
   }
@@ -284,6 +430,32 @@ function readQuestions(detail) {
   };
   visit(detail.sections);
   return questions;
+}
+
+function findQuestionSection(sections, paperItemId) {
+  for (const section of sections || []) {
+    if ((section.questions || []).some(question => Number(question.paperItemId) === Number(paperItemId))) return section;
+    const nested = findQuestionSection(section.children, paperItemId);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function toQuestionRequest(question, sortOrder) {
+  return {
+    questionTypeCode: question.questionTypeCode,
+    payloadSchemaVersion: question.payloadSchemaVersion,
+    stem: question.stem,
+    render: question.render,
+    answerKey: question.answerKey,
+    grading: question.grading,
+    explanation: question.explanation,
+    categoryId: question.categoryId,
+    sortOrder,
+    displayNumber: question.displayNumber,
+    maxPoints: question.maxPoints,
+    scoringSectionCode: question.scoringSectionCode,
+  };
 }
 
 async function api(page, path, method = 'GET', body) {

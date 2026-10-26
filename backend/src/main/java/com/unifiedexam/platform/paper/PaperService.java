@@ -154,8 +154,11 @@ public class PaperService {
         if (requested.size() != request.questionNumbers().size()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A question is selected more than once.");
         }
+        List<SectionView> sourceSections = loadSections(sourcePaperId, null);
+        Map<Long, String> sourceSectionCodes = new HashMap<>();
+        collectQuestionSectionCodes(sourceSections, null, sourceSectionCodes);
         Map<Integer, QuestionView> sourceByNumber = new HashMap<>();
-        flatten(loadSections(sourcePaperId, null)).forEach(question -> {
+        flatten(sourceSections).forEach(question -> {
             int number = question.displayNumber() == null ? question.sortOrder() : question.displayNumber();
             sourceByNumber.put(number, question);
         });
@@ -164,13 +167,13 @@ public class PaperService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more selected questions are unavailable.");
         }
         Map<String, Long> targetSections = new HashMap<>();
-        flattenSections(loadSections(targetPaperId, null)).forEach(section -> targetSections.put(section.sectionCode(), section.id()));
+        collectSectionIds(loadSections(targetPaperId, null), null, targetSections);
         int nextDisplayNumber = flatten(loadSections(targetPaperId, null)).stream()
             .map(QuestionView::displayNumber).filter(java.util.Objects::nonNull).mapToInt(Integer::intValue).max().orElse(0) + 1;
         List<Long> insertedIds = new ArrayList<>();
         for (int index = 0; index < selected.size(); index++) {
             QuestionView source = selected.get(index);
-            Long sectionId = targetSections.get(sectionCode(sourcePaperId, source.paperItemId()));
+            Long sectionId = targetSections.get(sourceSectionCodes.get(source.paperItemId()));
             if (sectionId == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "The target paper is missing a matching section.");
             Integer sortOrder = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM paper_items WHERE section_id = ?", Integer.class, sectionId);
             long importedId = insertQuestion(sectionId, new QuestionRequest(source.questionTypeCode(), source.stem(), source.render(),
@@ -200,11 +203,45 @@ public class PaperService {
         return result;
     }
 
-    private String sectionCode(long paperId, long paperItemId) {
-        return jdbcTemplate.query("""
-            SELECT ps.section_code FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ? AND pi.id = ?
-            """, rs -> rs.next() ? rs.getString(1) : null, paperId, paperItemId);
+    /** 递归收集目标卷标签代码，兼容迁移后由设置保存的原始 SHSAT 标签。 */
+    private void collectSectionIds(List<SectionView> sections, SectionView parent, Map<String, Long> sectionIds) {
+        for (SectionView section : sections) {
+            sectionIds.put(sectionCode(section, parent), section.id());
+            collectSectionIds(section.children(), section, sectionIds);
+        }
+    }
+
+    /** 递归建立题目到语义标签代码的映射，供试卷导入时对齐目标结构。 */
+    private void collectQuestionSectionCodes(List<SectionView> sections, SectionView parent,
+                                              Map<Long, String> sectionCodes) {
+        for (SectionView section : sections) {
+            String code = sectionCode(section, parent);
+            section.questions().forEach(question -> sectionCodes.put(question.paperItemId(), code));
+            collectQuestionSectionCodes(section.children(), section, sectionCodes);
+        }
+    }
+
+    private String sectionCode(SectionView section, SectionView parent) {
+        JsonNode settings = section.settings();
+        if ("PART".equals(section.sectionKind())) {
+            return settingText(settings, "partCode", section.sectionCode());
+        }
+        if ("SUBTYPE".equals(section.sectionKind()) && parent != null) {
+            String partCode = settingText(parent.settings(), "partCode", parent.sectionCode());
+            String subtypeCode = settingText(settings, "subTypeCode", null);
+            if (subtypeCode == null || subtypeCode.isBlank()) {
+                String prefix = partCode + "_";
+                subtypeCode = section.sectionCode().startsWith(prefix)
+                    ? section.sectionCode().substring(prefix.length()) : section.sectionCode();
+            }
+            return partCode + "_" + subtypeCode;
+        }
+        return section.sectionCode();
+    }
+
+    private String settingText(JsonNode settings, String key, String fallback) {
+        JsonNode value = settings == null ? null : settings.get(key);
+        return value == null || value.isNull() || value.asText().isBlank() ? fallback : value.asText();
     }
 
     @Transactional
