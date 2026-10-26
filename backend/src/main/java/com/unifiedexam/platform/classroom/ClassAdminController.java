@@ -328,19 +328,56 @@ public class ClassAdminController {
     }
 
     @GetMapping("/{classId}/students")
-    public List<StudentView> listStudents(@PathVariable long classId) {
+    public List<StudentView> listStudents(@PathVariable long classId,
+                                          @RequestParam(required = false) List<String> examTypeCodes) {
         requireClass(classId);
+        List<String> types = validateExamTypeCodes(examTypeCodes);
+        List<Object> parameters = new java.util.ArrayList<>();
+        parameters.add(classId);
+        parameters.addAll(types);
+        parameters.add(classId);
         return jdbcTemplate.query("""
             SELECT u.id, u.username, u.real_name, u.email, m.joined_at, u.status,
-                   sp.gender, sp.notes, sa.time_multiplier
+                   sp.gender, sp.notes, sa.time_multiplier,
+                   stats.average_score, COALESCE(stats.exam_count, 0) AS exam_count
             FROM class_memberships m JOIN users u ON u.id = m.student_user_id
             LEFT JOIN shsat_student_profiles sp ON sp.student_user_id = u.id
             LEFT JOIN shsat_student_accommodations sa ON sa.student_user_id = u.id
+            LEFT JOIN (
+                SELECT m2.student_user_id, COUNT(*) AS exam_count,
+                       AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END) AS average_score
+                FROM class_memberships m2
+                JOIN attempts a ON a.student_user_id = m2.student_user_id
+                JOIN exams e ON e.id = a.exam_id
+                JOIN papers p ON p.id = e.paper_id
+                JOIN attempt_results ar ON ar.attempt_id = a.id
+                LEFT JOIN (
+                    SELECT attempt_id,
+                           CASE WHEN COUNT(*) = COUNT(scaled_score) THEN SUM(scaled_score) ELSE NULL END AS total_score
+                    FROM attempt_result_breakdowns
+                    WHERE parent_breakdown_code IS NULL
+                    GROUP BY attempt_id
+                ) scaled ON scaled.attempt_id = a.id
+                WHERE m2.class_id = ?
+                  AND m2.joined_at <= a.started_at
+                  AND (m2.left_at IS NULL OR a.started_at <= m2.left_at)
+                  AND a.status IN ('SUBMITTED', 'COMPLETED')
+                  AND a.is_practice = FALSE
+                  AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
+                      SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = m2.class_id
+                  ) OR EXISTS (
+                      SELECT 1 FROM exam_target_students ts
+                      WHERE ts.exam_id = e.id AND ts.student_user_id = m2.student_user_id
+                  ))
+                  %s
+                GROUP BY m2.student_user_id
+            ) stats ON stats.student_user_id = m.student_user_id
             WHERE m.class_id = ? AND m.left_at IS NULL ORDER BY u.real_name, u.id
-            """, (rs, rowNum) -> new StudentView(rs.getLong("id"), rs.getString("username"),
+            """.formatted(examTypeFilter(types)), (rs, rowNum) -> new StudentView(rs.getLong("id"), rs.getString("username"),
                 rs.getString("real_name"), rs.getString("email"), rs.getTimestamp("joined_at").toInstant().toString(),
                 rs.getString("gender"), rs.getString("notes"), rs.getBigDecimal("time_multiplier"),
-                "ACTIVE".equals(rs.getString("status"))), classId);
+                "ACTIVE".equals(rs.getString("status")), rs.getBigDecimal("average_score"), rs.getLong("exam_count")),
+            parameters.toArray());
     }
 
     @PutMapping("/{classId}/students/{studentUserId}")
@@ -442,7 +479,39 @@ public class ClassAdminController {
         if (classes.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Class not found.");
         }
-        return classes.get(0);
+        ClassView classroom = classes.get(0);
+        java.util.ArrayList<Object> averageParameters = new java.util.ArrayList<>();
+        averageParameters.add(id);
+        averageParameters.addAll(examTypeCodes);
+        java.math.BigDecimal averageScore = jdbcTemplate.queryForObject("""
+            SELECT AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END)
+            FROM class_memberships m
+            JOIN attempts a ON a.student_user_id = m.student_user_id
+            JOIN exams e ON e.id = a.exam_id
+            JOIN papers p ON p.id = e.paper_id
+            JOIN attempt_results ar ON ar.attempt_id = a.id
+            LEFT JOIN (
+                SELECT attempt_id,
+                       CASE WHEN COUNT(*) = COUNT(scaled_score) THEN SUM(scaled_score) ELSE NULL END AS total_score
+                FROM attempt_result_breakdowns
+                WHERE parent_breakdown_code IS NULL
+                GROUP BY attempt_id
+            ) scaled ON scaled.attempt_id = a.id
+            WHERE m.class_id = ?
+              AND m.left_at IS NULL
+              AND m.joined_at <= a.started_at
+              AND a.status IN ('SUBMITTED', 'COMPLETED')
+              AND a.is_practice = FALSE
+              AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
+                  SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = m.class_id
+              ) OR EXISTS (
+                  SELECT 1 FROM exam_target_students ts
+                  WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
+              ))
+              %s
+            """.formatted(examTypeFilter(examTypeCodes)), java.math.BigDecimal.class, averageParameters.toArray());
+        return new ClassView(classroom.id(), classroom.name(), classroom.description(), classroom.status(),
+            classroom.sortOrder(), classroom.studentCount(), classroom.examCount(), averageScore);
     }
 
     private StudentView findStudent(long classId, long studentUserId) {
@@ -456,7 +525,7 @@ public class ClassAdminController {
             """, rs -> rs.next() ? new StudentView(rs.getLong("id"), rs.getString("username"),
                 rs.getString("real_name"), rs.getString("email"), rs.getTimestamp("joined_at").toInstant().toString(),
                 rs.getString("gender"), rs.getString("notes"), rs.getBigDecimal("time_multiplier"),
-                "ACTIVE".equals(rs.getString("status"))) : null, classId, studentUserId);
+                "ACTIVE".equals(rs.getString("status")), null, 0) : null, classId, studentUserId);
     }
 
     private void requireClass(long classId) {
@@ -518,9 +587,15 @@ public class ClassAdminController {
             @DecimalMin("1.0") java.math.BigDecimal timeMultiplier, Boolean active) { }
     public record ReorderClassesRequest(@NotNull List<@Positive Long> classIds) { }
     public record ClassView(long id, String name, String description, String status, int sortOrder,
-                            int studentCount, int examCount) { }
+                            int studentCount, int examCount, java.math.BigDecimal averageScore) {
+        public ClassView(long id, String name, String description, String status, int sortOrder,
+                         int studentCount, int examCount) {
+            this(id, name, description, status, sortOrder, studentCount, examCount, null);
+        }
+    }
     public record StudentView(long id, String username, String realName, String email, String joinedAt,
-                              String gender, String notes, java.math.BigDecimal timeMultiplier, boolean active) { }
+                              String gender, String notes, java.math.BigDecimal timeMultiplier, boolean active,
+                              java.math.BigDecimal averageScore, long examCount) { }
     public record StudentOption(long id, String username, String realName, String classNames) { }
     public record ClassExamView(long examId, String examTitle, String paperName, String targetType,
                                 String targetIds, boolean published, String status, String startTime,

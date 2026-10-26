@@ -505,11 +505,12 @@ export const adminApi = {
   },
 
   async getClassStudents(classId) {
-    return (await listClassStudents(classId)).map((student) => ({
+    return (await listClassStudents(classId, ['SHSAT'])).map((student) => ({
       studentId: student.id, id: student.id, username: student.username, studentName: student.realName,
       realName: student.realName, email: student.email, studentNumber: student.username,
       gender: student.gender || '', notes: student.notes || '',
       timeMultiplier: Number(student.timeMultiplier || 1), active: student.active !== false, isActive: student.active !== false,
+      averageScore: student.averageScore, examCount: Number(student.examCount || 0),
     }));
   },
 

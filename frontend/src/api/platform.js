@@ -134,8 +134,11 @@ export function deleteClass(classId) {
   return apiRequest(`/api/admin/classes/${classId}`, { method: 'DELETE' })
 }
 
-export function listClassStudents(classId) {
-  return apiRequest(`/api/admin/classes/${classId}/students`)
+export function listClassStudents(classId, examTypeCodes = []) {
+  const params = new URLSearchParams()
+  examTypeCodes.forEach((code) => params.append('examTypeCodes', code))
+  const query = params.size ? `?${params.toString()}` : ''
+  return apiRequest(`/api/admin/classes/${classId}/students${query}`)
 }
 
 export function listClassExams(classId, examTypeCodes = []) {

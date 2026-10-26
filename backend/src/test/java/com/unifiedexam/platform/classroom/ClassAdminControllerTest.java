@@ -118,14 +118,59 @@ class ClassAdminControllerTest {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
             .thenReturn(List.of(new ClassAdminController.ClassView(12L, "SAT Class", null, "ACTIVE", 0, 4, 3)));
+        when(jdbcTemplate.queryForObject(anyString(), eq(java.math.BigDecimal.class), any(Object[].class)))
+            .thenReturn(new java.math.BigDecimal("1280.50"));
 
         var result = new ClassAdminController(jdbcTemplate).getClass(12L, List.of("SAT", "PSAT"));
 
         assertEquals(3, result.examCount());
+        assertEquals(new java.math.BigDecimal("1280.50"), result.averageScore());
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("FROM exam_target_students ts")
                 && sql.contains("ts.student_user_id = m.student_user_id")),
             any(RowMapper.class), eq("SAT"), eq("PSAT"), eq(12L));
+        verify(jdbcTemplate).queryForObject(
+            org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END)")
+                && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED')")
+                && sql.contains("p.exam_type_code IN (?, ?)")),
+            eq(java.math.BigDecimal.class), eq(12L), eq("SAT"), eq("PSAT"));
+    }
+
+    @Test
+    void classStudentsIncludeCompletedExamStatsForSelectedExamTypes() throws Exception {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            RowMapper<ClassAdminController.StudentView> mapper = invocation.getArgument(1);
+            ResultSet row = mock(ResultSet.class);
+            when(row.getLong("id")).thenReturn(31L);
+            when(row.getString("username")).thenReturn("student@jin");
+            when(row.getString("real_name")).thenReturn("Sample Student");
+            when(row.getString("email")).thenReturn("student@example.com");
+            when(row.getTimestamp("joined_at")).thenReturn(Timestamp.valueOf(LocalDateTime.of(2026, 9, 1, 8, 0)));
+            when(row.getString("gender")).thenReturn(null);
+            when(row.getString("notes")).thenReturn(null);
+            when(row.getBigDecimal("time_multiplier")).thenReturn(new java.math.BigDecimal("1.00"));
+            when(row.getString("status")).thenReturn("ACTIVE");
+            when(row.getBigDecimal("average_score")).thenReturn(new java.math.BigDecimal("52.50"));
+            when(row.getLong("exam_count")).thenReturn(2L);
+            return List.of(mapper.mapRow(row, 0));
+        });
+
+        var result = new ClassAdminController(jdbcTemplate).listStudents(12L, List.of("SHSAT"));
+
+        assertEquals(1, result.size());
+        assertEquals(new java.math.BigDecimal("52.50"), result.get(0).averageScore());
+        assertEquals(2L, result.get(0).examCount());
+        verify(jdbcTemplate).query(
+            org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END)")
+                && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED')")
+                && sql.contains("a.is_practice = FALSE")
+                && sql.contains("p.exam_type_code IN (?)")
+                && sql.contains("exam_target_classes")
+                && sql.contains("exam_target_students")),
+            any(RowMapper.class), eq(12L), eq("SHSAT"), eq(12L));
     }
 
     @Test

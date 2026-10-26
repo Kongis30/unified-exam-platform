@@ -49,7 +49,7 @@ async function loadPage() {
   error.value = ''
   try {
     const [classRow, studentRows, availableRows, examRows] = await Promise.all([
-      getClass(classId.value, ['SAT', 'PSAT']), listClassStudents(classId.value), listAvailableStudents(), listClassExams(classId.value, ['SAT', 'PSAT']),
+      getClass(classId.value, ['SAT', 'PSAT']), listClassStudents(classId.value, ['SAT', 'PSAT']), listAvailableStudents(), listClassExams(classId.value, ['SAT', 'PSAT']),
     ])
     classroom.value = classRow
     students.value = studentRows
