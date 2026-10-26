@@ -2195,11 +2195,17 @@ onMounted(loadReport);
     gap: 16px;
   }
 
-  .knowledge-card,
-  .knowledge-score-subject,
   .knowledge-score-item {
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  .knowledge-score-grid {
+    display: block;
+  }
+
+  .knowledge-score-subject + .knowledge-score-subject {
+    margin-top: 20px;
   }
 
   .knowledge-card {
