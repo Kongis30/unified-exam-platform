@@ -140,14 +140,49 @@ async function main() {
     assert.ok(historyMobileSize.pageWidth <= historyMobileSize.viewportWidth,
       'repeated attempts fit within the 390px history view');
     await student.screenshot({ path: `/tmp/shsat-student-retake-history-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 1000 });
     const historyRefresh = student.locator('.shsat-student-history').getByRole('button', { name: 'Refresh', exact: true });
     const refreshedHistory = student.waitForResponse(response => response.url().endsWith('/api/student/attempts/history'));
     await historyRefresh.click();
     assert.equal((await refreshedHistory).status(), 200, 'history refresh reloads completed attempts successfully');
     assert.equal(await retakeRows.count(), 2, 'refresh preserves both attempts in latest-first history');
+    await student.evaluate(() => window.scrollTo(0, 420));
+    const historyScrollY = await student.evaluate(() => window.scrollY);
+    const historyPageBeforeReport = await student.evaluate(() => ({
+      pageHeight: document.documentElement.scrollHeight,
+      examRows: document.querySelectorAll('.student-exam-list .paper-row').length,
+      attemptRows: document.querySelectorAll('.shsat-history-row').length,
+    }));
     await retakeRows.nth(0).getByRole('button', { name: 'View report', exact: true }).click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[1]}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
+    await student.evaluate(() => window.scrollTo(0, 0));
+    await student.screenshot({ path: `/tmp/shsat-student-history-report-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    await student.evaluate(() => window.scrollTo(0, 0));
+    const historyReportMobileSize = await student.evaluate(() => ({
+      pageWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    assert.ok(historyReportMobileSize.pageWidth <= historyReportMobileSize.viewportWidth,
+      'the report opened from history fits the 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-student-history-report-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await student.getByRole('button', { name: 'Back to SHSAT', exact: true }).click();
+    await student.waitForURL(url => url.pathname === '/student/systems/SHSAT');
+    await student.getByRole('tab', { name: 'Exam History', exact: true }).waitFor();
+    assert.equal(await student.getByRole('tab', { name: 'Exam History', exact: true }).getAttribute('aria-selected'), 'true',
+      'returning from the report preserves the selected history tab');
+    await student.screenshot({ path: `/tmp/shsat-student-history-return-${stamp}.png` });
+    const returnedHistoryPosition = await student.evaluate(() => ({
+      scrollY: window.scrollY,
+      pageHeight: document.documentElement.scrollHeight,
+      viewportHeight: window.innerHeight,
+      attemptRows: document.querySelectorAll('.shsat-history-row').length,
+      examRows: document.querySelectorAll('.student-exam-list .paper-row').length,
+    }));
+    assert.equal(returnedHistoryPosition.scrollY, historyScrollY,
+      `returning from a report preserves the history list position (${JSON.stringify({ historyScrollY, historyPageBeforeReport, ...returnedHistoryPosition })})`);
 
     await login(outsider, outsiderUsername, password);
     const foreignReportStatus = await outsider.evaluate(async attemptId =>
@@ -167,9 +202,11 @@ async function main() {
       checks: ['Upcoming status and disabled start', 'Available status and start action',
         'target eligibility isolation', 'View attempt opens the latest submitted read-only attempt',
         'repeated attempts and latest-first history',
+        'history refresh, report route, tab/scroll return, and 390px report layout',
         'student report access remains private', '390px layout'],
       mobileSize,
       historyMobileSize,
+      historyReportMobileSize,
       pageErrors: pageErrors.length,
     }));
   } finally {

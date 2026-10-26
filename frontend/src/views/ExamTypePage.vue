@@ -262,7 +262,21 @@ async function loadPage() {
     error.value = requestError.message || 'Unable to load this exam workspace.'
   } finally {
     isLoading.value = false
+    await nextTick()
+    restoreStudentHistoryScroll()
   }
+}
+
+// 报告页返回时恢复学生历史列表位置，并消费一次性滚动参数。
+function restoreStudentHistoryScroll() {
+  if (props.code !== 'SHSAT' || route.query.historyScrollY === undefined) return
+  const scrollY = Number(route.query.historyScrollY)
+  if (!Number.isFinite(scrollY) || scrollY < 0) return
+
+  window.scrollTo(window.scrollX, scrollY)
+  const query = { ...route.query }
+  delete query.historyScrollY
+  router.replace({ name: 'student-workspace', params: { code: 'SHSAT' }, query })
 }
 
 async function loadStudentExams() {
@@ -366,7 +380,10 @@ function reviewTaskStatusLabel(status) {
 
 function viewShsatAttempt(item) {
   router.push({ name: 'student-attempt-report', params: { attemptId: item.attemptId },
-    query: { returnTo: '/student/systems/SHSAT', returnLabel: 'Back to SHSAT' } })
+    query: {
+      returnTo: `/student/systems/SHSAT?historyScrollY=${Math.round(window.scrollY)}`,
+      returnLabel: 'Back to SHSAT',
+    } })
 }
 
 function viewCompletedReviewReport(task) {
