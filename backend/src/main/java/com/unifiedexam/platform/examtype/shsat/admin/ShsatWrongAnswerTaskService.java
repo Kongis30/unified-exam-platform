@@ -39,12 +39,16 @@ public class ShsatWrongAnswerTaskService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "examId and classId must be provided together.");
         }
         String filter = examId == null ? "" : " WHERE t.exam_id = ? AND t.class_id = ?";
-        Object[] parameters = examId == null ? new Object[0] : new Object[]{examId, classId};
+        LocalDateTime now = LocalDateTime.now();
+        // 任务窗口是本地 DATETIME；不要与 UTC 数据库连接的 CURRENT_TIMESTAMP 混用。
+        Object[] parameters = examId == null
+            ? new Object[]{now, now, now, now}
+            : new Object[]{now, now, now, now, examId, classId};
         return jdbcTemplate.query("""
             SELECT t.id, t.exam_id, e.title AS exam_title, p.title AS paper_name,
                    t.class_id, c.name AS class_name, t.title, t.description,
                    t.starts_at, t.ends_at,
-                   CASE WHEN t.status = 'ENDED' OR (t.ends_at IS NOT NULL AND t.ends_at <= CURRENT_TIMESTAMP(6))
+                   CASE WHEN t.status = 'ENDED' OR (t.ends_at IS NOT NULL AND t.ends_at <= ?)
                         THEN 'ENDED' ELSE t.status END AS status,
                    t.created_at,
                    COUNT(a.id) AS assigned_count,
@@ -53,11 +57,11 @@ public class ShsatWrongAnswerTaskService {
                    SUM(CASE WHEN a.status = 'COMPLETED' THEN 1 ELSE 0 END) AS completed_count,
                    SUM(CASE WHEN a.status = 'IN_PROGRESS' THEN 1 ELSE 0 END) AS in_progress_count,
                    SUM(CASE WHEN a.status = 'NOT_STARTED' AND t.status = 'PUBLISHED'
-                        AND (t.ends_at IS NULL OR t.ends_at > CURRENT_TIMESTAMP(6)) THEN 1 ELSE 0 END) AS not_started_count,
+                        AND (t.ends_at IS NULL OR t.ends_at > ?) THEN 1 ELSE 0 END) AS not_started_count,
                    SUM(CASE WHEN a.status = 'RETRY_REQUIRED' AND t.status = 'PUBLISHED'
-                        AND (t.ends_at IS NULL OR t.ends_at > CURRENT_TIMESTAMP(6)) THEN 1 ELSE 0 END) AS retry_count,
+                        AND (t.ends_at IS NULL OR t.ends_at > ?) THEN 1 ELSE 0 END) AS retry_count,
                    SUM(CASE WHEN a.status = 'ENDED' OR ((t.status = 'ENDED' OR
-                        (t.ends_at IS NOT NULL AND t.ends_at <= CURRENT_TIMESTAMP(6)))
+                        (t.ends_at IS NOT NULL AND t.ends_at <= ?))
                         AND a.status IN ('NOT_STARTED', 'RETRY_REQUIRED')) THEN 1 ELSE 0 END) AS ended_count
             FROM shsat_wrong_answer_tasks t
             JOIN exams e ON e.id = t.exam_id
@@ -147,10 +151,11 @@ public class ShsatWrongAnswerTaskService {
 
     public TaskDetail detail(long taskId) {
         TaskView task = list(null, null).stream().filter(value -> value.taskId() == taskId).findFirst().orElseThrow(this::notFound);
+        LocalDateTime now = LocalDateTime.now();
         List<AssignmentView> assignments = jdbcTemplate.query("""
             SELECT a.id, a.task_id, a.student_user_id, u.real_name, a.source_attempt_id,
                    a.practice_attempt_id,
-                   CASE WHEN (t.status = 'ENDED' OR (t.ends_at IS NOT NULL AND t.ends_at <= CURRENT_TIMESTAMP(6)))
+                   CASE WHEN (t.status = 'ENDED' OR (t.ends_at IS NOT NULL AND t.ends_at <= ?))
                              AND a.status IN ('NOT_STARTED', 'RETRY_REQUIRED') THEN 'ENDED' ELSE a.status END AS status,
                    JSON_LENGTH(a.question_numbers_json) AS question_count, a.created_at
             FROM shsat_wrong_answer_assignments a
@@ -167,7 +172,7 @@ public class ShsatWrongAnswerTaskService {
                     rs.getString("status"), questionCount, Math.max(0, questionCount - metrics.cleared()), metrics.cleared(),
                     metrics.roundCount(), metrics.answered(), metrics.correct(), metrics.wrong(), metrics.unanswered(),
                     metrics.accuracy(), localDateTime(rs, "created_at"), metrics.completedAt());
-            }, taskId);
+            }, now, taskId);
         return new TaskDetail(task, assignments);
     }
 
@@ -176,10 +181,11 @@ public class ShsatWrongAnswerTaskService {
         Long studentId = jdbcTemplate.query("SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT'",
             rs -> rs.next() ? rs.getLong(1) : null, username);
         if (studentId == null) throw notFound();
+        LocalDateTime now = LocalDateTime.now();
         return jdbcTemplate.query("""
             SELECT a.id, t.id AS task_id, t.exam_id, e.title AS exam_title, t.title, t.description,
                    t.starts_at, t.ends_at,
-                   CASE WHEN t.status = 'ENDED' OR (t.ends_at IS NOT NULL AND t.ends_at <= CURRENT_TIMESTAMP(6))
+                   CASE WHEN t.status = 'ENDED' OR (t.ends_at IS NOT NULL AND t.ends_at <= ?)
                         THEN 'ENDED' ELSE t.status END AS task_status, a.status,
                    a.practice_attempt_id, a.question_numbers_json, practice.status AS practice_status,
                    JSON_LENGTH(a.question_numbers_json) AS question_count
@@ -204,7 +210,7 @@ public class ShsatWrongAnswerTaskService {
                     count, cleared, Math.max(0, count - cleared), practiceId,
                     (isTaskAvailable(rs.getString("task_status"), localDateTime(rs, "starts_at"), localDateTime(rs, "ends_at"))
                         && count > cleared) || inProgress);
-            }, studentId);
+            }, now, studentId);
     }
 
     @Transactional

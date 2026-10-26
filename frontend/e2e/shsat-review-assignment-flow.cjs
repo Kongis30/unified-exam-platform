@@ -28,6 +28,7 @@ async function main() {
   const className = `Review Check ${displayStamp}`;
   const examTitle = `SHSAT Review ${displayStamp}`;
   const taskTitle = `Assigned Review ${displayStamp}`;
+  const expiredTaskTitle = `Expired Review ${displayStamp}`;
   let userId;
   let teacherId;
   let classId;
@@ -166,6 +167,48 @@ async function main() {
     const studentMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(studentMobileSize.page <= studentMobileSize.viewport, 'the student task card fits a 390px viewport');
     await student.screenshot({ path: `/tmp/shsat-review-assignment-student-mobile-${stamp}.png` });
+
+    await teacher.getByRole('button', { name: 'Create Assignment', exact: true }).click();
+    const expiredModal = teacher.locator('.wrong-task-modal');
+    await expiredModal.getByLabel('Exam').click();
+    await expiredModal.getByRole('option', { name: new RegExp(examTitle) }).click();
+    await expiredModal.getByLabel('Class').selectOption(String(classId));
+    await expiredModal.getByLabel('Assignment Title').fill(expiredTaskTitle);
+    await expiredModal.getByLabel('Description (optional)').fill('Expired review task state check.');
+    const expiredTimes = await teacher.evaluate(() => {
+      const format = date => {
+        const pad = value => String(value).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      };
+      return { start: format(new Date(Date.now() - 2 * 60 * 60_000)), end: format(new Date(Date.now() - 60 * 60_000)) };
+    });
+    await expiredModal.getByRole('textbox', { name: 'Start time' }).fill(expiredTimes.start);
+    await expiredModal.getByRole('textbox', { name: 'End time' }).fill(expiredTimes.end);
+    await expiredModal.getByRole('button', { name: 'Create Assignment', exact: true }).click();
+    await expiredModal.waitFor({ state: 'detached' });
+    const expiredTask = (await api(admin, '/api/admin/wrong-answer-tasks')).find(item => item.title === expiredTaskTitle);
+    assert.ok(expiredTask, 'the past-window assignment is persisted');
+    assert.equal(expiredTask.status, 'ENDED',
+      `an elapsed task window is reported as ended; window=${expiredTask.startAt}..${expiredTask.endAt}; local input=${expiredTimes.start}..${expiredTimes.end}`);
+    const expiredStudentTask = (await api(student, '/api/student/wrong-answer-tasks'))
+      .find(item => item.title === expiredTaskTitle);
+    assert.equal(expiredStudentTask.status, 'ENDED', 'the student receives the expired assignment state');
+    assert.equal(expiredStudentTask.canStart, false, 'an expired task cannot be started');
+    const taskListRefresh = student.waitForResponse(response => response.url().endsWith('/api/student/wrong-answer-tasks'));
+    await student.locator('.shsat-student-history').getByRole('button', { name: 'Refresh', exact: true }).click();
+    assert.equal((await taskListRefresh).status(), 200, 'refresh loads the newly expired assignment');
+    const expiredTaskCard = student.locator('.student-review-list article.paper-row').filter({ hasText: expiredTaskTitle });
+    const expiredTaskButton = expiredTaskCard.getByRole('button', { name: 'Task ended', exact: true });
+    await expiredTaskButton.waitFor();
+    assert.equal(await expiredTaskButton.isDisabled(), true, 'the expired task displays a disabled action');
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-expired-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const expiredMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(expiredMobileSize.page <= expiredMobileSize.viewport, 'the expired task state fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-expired-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 1000 });
+
     await startReview.click();
     await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}` && Boolean(url.searchParams.get('practiceAttemptId')));
     let practiceAttemptId = Number(new URL(student.url()).searchParams.get('practiceAttemptId'));
@@ -280,9 +323,9 @@ async function main() {
     const completedAttempt = await api(student, `/api/student/attempts/${practiceAttemptId}/submit`, 'POST');
     assert.ok(['SUBMITTED', 'COMPLETED'].includes(completedAttempt.status), 'the review attempt can be submitted and reported');
     let taskListOverride = 'ENDED';
+    const studentTasksForOverride = await api(student, '/api/student/wrong-answer-tasks');
     await student.route('**/api/student/wrong-answer-tasks', async route => {
-      const response = await route.fetch();
-      const tasks = await response.json();
+      const tasks = studentTasksForOverride.map(item => ({ ...item }));
       const assignment = tasks.find(item => item.assignmentId === details.assignments[0].assignmentId);
       assignment.status = taskListOverride;
       if (taskListOverride === 'ENDED') assignment.canStart = false;
@@ -290,7 +333,11 @@ async function main() {
         assignment.clearedQuestionCount = assignment.totalQuestions;
         assignment.remainingQuestionCount = 0;
       }
-      await route.fulfill({ response, json: tasks });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(tasks),
+      });
     });
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     const endedTaskCard = student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle });
@@ -354,7 +401,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
