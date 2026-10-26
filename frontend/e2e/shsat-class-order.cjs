@@ -47,6 +47,9 @@ async function main() {
 
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin`);
     await page.getByRole('tab', { name: 'Classes', exact: true }).click();
+    const shsatNavLink = page.locator('.admin-layout__nav a').filter({ hasText: /^SHSAT$/ });
+    await shsatNavLink.waitFor();
+    await page.waitForFunction(() => document.querySelector('.admin-layout__nav a.router-link-active')?.textContent.trim() === 'SHSAT');
     const cards = page.locator('.class-grid .class-card');
     const beforeTitles = (await page.locator('.class-grid .class-card h3').allTextContents()).filter(title => names.includes(title));
     assert.equal(beforeTitles.length, 3, 'all temporary classes appear in the list');
@@ -135,8 +138,49 @@ async function main() {
     const mobileTarget = page.locator('.class-grid .class-card').filter({ hasText: expectedTitles[2] });
     await mobileTarget.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `/tmp/shsat-class-order-mobile-${stamp}.png` });
+
+    const classSearch = page.getByPlaceholder('Search class, teacher, grade');
+    await classSearch.fill(names[0]);
+    assert.deepEqual(await page.locator('.class-grid .class-card h3').allTextContents(), [names[0]], 'class search returns the matching class');
+    await classSearch.fill(`No matching class ${stamp}`);
+    await page.getByText('No classes found.', { exact: true }).waitFor();
+    await classSearch.clear();
+    await page.locator('.class-grid .class-card h3').filter({ hasText: names[0] }).waitFor();
+
+    const returnClassRow = page.locator('.class-grid .class-card').filter({ hasText: names[0] });
+    await returnClassRow.click();
+    await page.waitForURL(url => url.pathname.includes(`/admin/classes/${createdIds[0]}`));
+    await page.getByRole('button', { name: 'Back to Classes', exact: true }).click();
+    await page.waitForURL(url => url.pathname.endsWith('/exam-types/SHSAT/admin') && url.searchParams.get('tab') === 'classes');
+
+    let failNextClassLoad = true;
+    const classListRoute = async route => {
+      if (failNextClassLoad && route.request().method() === 'GET') {
+        failNextClassLoad = false;
+        await route.abort('failed');
+        return;
+      }
+      await route.continue();
+    };
+    await page.route('**/api/admin/classes?examTypeCodes=SHSAT', classListRoute);
+    try {
+      await page.getByRole('button', { name: 'Refresh classes' }).click();
+      await page.locator('.class-grid').waitFor({ state: 'detached' });
+      await page.locator('.admin-state--error').waitFor();
+    } finally {
+      await page.unroute('**/api/admin/classes?examTypeCodes=SHSAT', classListRoute);
+    }
+    await page.getByRole('button', { name: 'Refresh classes' }).click();
+    await page.locator('.class-grid').waitFor();
+    assert.ok((await api(page, '/api/admin/classes?examTypeCodes=SHSAT')).some(item => names.includes(item.name)),
+      'refresh recovers the list after a temporary request error');
+    assert.equal(await page.locator('.admin-layout__nav a.router-link-active').textContent(), 'SHSAT',
+      'the SHSAT workspace remains selected after returning to Classes');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('.class-grid .class-card').filter({ hasText: names[0] }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/shsat-class-home-verified-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['first/middle/last drag boundaries', 'order persistence after every drop', 'reload order', 'teacher can reorder and persists changes', '390px page width'], dimensions }));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['first/middle/last drag boundaries', 'order persistence after every drop', 'reload order', 'teacher can reorder and persists changes', 'class search and empty result', 'class card navigation and return context', 'refresh error recovery', '390px page width'], dimensions }));
   } finally {
     for (const classId of createdIds) await api(page, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (originalOrder.length) await api(page, '/api/admin/classes/reorder?examTypeCodes=SHSAT', 'POST', { classIds: originalOrder }).catch(() => {});
