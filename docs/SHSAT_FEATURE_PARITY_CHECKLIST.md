@@ -41,6 +41,7 @@
 - [ ] 管理员首页 Available Exams：刷新、折叠/展开及刷新后记忆；卡片只展示开放期内可进入的考试，显示时间、试卷、时长、状态；`Start Exam` 进入考试、退出返回原处；空状态正确。
 - [x] 管理员首页折叠记忆回归：分别折叠 Available Exams 与 Assigned Review 后刷新，两区仍保持折叠；清除本次测试偏好并恢复页面初始展开状态。当前数据库没有开放中的 SHSAT 考试，Available Exams 正确显示空状态，因此本次不据此判断开放考试卡片字段和 Start Exam。
 - [ ] 管理员首页 Assigned Review：刷新、折叠/记忆、任务卡片 `View Progress`、返回原标签位置；任务人数、完成数与详情一致。
+- [x] **复习任务结束状态与详情返回筛选回归（2026-10-27）**：发现过期任务 API 已返回 `ENDED`，首页却只识别 `CLOSED`，导致结束任务显示绿色 Active；现按状态和截止时间统一判定，结束任务不再显示在进行中卡片，且没有可结束操作。搜索筛选后进入 View Progress 再返回，原标签与搜索条件恢复、结果仍为 1 条。1440px 与 390px 根页面无横向溢出，页面脚本错误为 0。截图 `/tmp/shsat-review-assignment-return-verified-20261027.png`、`/tmp/shsat-review-assignment-mobile-verified-20261027.png`。任务创建/结束完整可写流程仍待验收。
 - [ ] 管理标签：`Paper Management`、`Exam Release`、`Review Assignments`、`Classes` 切换后滚动位置稳定，路由返回时恢复标签/筛选；教师只见获授权操作。
 - [x] SHSAT 无历史返回兜底：发现多个页面 push 到不存在的路由名 `admin`，修正为 `shsat-admin` 并附带目标标签。用新浏览器页直达后分别点击 Class Detail、Monitor、Paper Preview、Paper Editor 的返回按钮，均到达正确 SHSAT 后台标签；页面脚本错误为 0。完整返回上一页栈的行为仍需从各入口复核。
 - [x] **G1 History 三标签已补齐。** 桌面/窄屏空状态截图及含真实临时尝试的历史数据已验证；刷新、报告入口、标签过滤尚需继续逐按钮验收（证据见第 8 节）。

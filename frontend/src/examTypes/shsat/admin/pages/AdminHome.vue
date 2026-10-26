@@ -75,9 +75,9 @@ const wrongAnswerTaskForm = reactive({
   endAt: '',
 });
 const wrongAnswerTaskFilters = reactive({
-  classId: '',
-  examId: '',
-  keyword: '',
+  classId: typeof route.query.reviewClassId === 'string' ? route.query.reviewClassId : '',
+  examId: typeof route.query.reviewExamId === 'string' ? route.query.reviewExamId : '',
+  keyword: typeof route.query.reviewKeyword === 'string' ? route.query.reviewKeyword : '',
 });
 const students = ref([]);
 const unassignedStudents = ref([]);
@@ -472,15 +472,26 @@ const adminExamCards = computed(() => {
     .sort((a, b) => getTimeValue(a.startTime) - getTimeValue(b.startTime));
 });
 
-/** 首页复习任务卡片：汇总老师发布给班级、尚未结束的错题复习任务。 */
+/** 判断复习任务是否已结束；服务端会在截止时间到达时动态返回 ENDED。 */
+function isReviewAssignmentEnded(task) {
+  const status = String(task?.status || '').toUpperCase();
+  const endAt = getTimeValue(task?.endAt);
+  return status === 'CLOSED' || status === 'ENDED' || (endAt > 0 && endAt <= Date.now());
+}
+
+/** 首页复习任务卡片：只展示仍可开始或继续的错题复习任务。 */
 const dashboardReviewAssignments = computed(() => {
   return wrongAnswerTasks.value
-    .filter((task) => String(task.status || '').toUpperCase() !== 'CLOSED')
+    .filter((task) => !isReviewAssignmentEnded(task))
     .sort((left, right) => getTimeValue(right.createdAt) - getTimeValue(left.createdAt));
 });
 
 function reviewAssignmentStatusLabel(task) {
-  return String(task.status || '').toUpperCase() === 'CLOSED' ? 'Ended' : 'Active';
+  if (isReviewAssignmentEnded(task)) {
+    return 'Ended';
+  }
+
+  return getTimeValue(task?.startAt) > Date.now() ? 'Scheduled' : 'Active';
 }
 
 const filteredExamReleases = computed(() => {
@@ -1174,7 +1185,7 @@ function getExamReleaseActions(exam, historical = false) {
 
 function getWrongAnswerTaskActions(task) {
   const actions = [{ label: 'View Progress', onSelect: () => openWrongAnswerTaskProgress(task) }];
-  if (task.status !== 'CLOSED') {
+  if (!isReviewAssignmentEnded(task)) {
     actions.push({
       label: endingWrongAnswerTaskId.value === task.taskId ? 'Ending...' : 'End',
       disabled: endingWrongAnswerTaskId.value !== null,
@@ -2177,6 +2188,17 @@ async function publishWrongAnswerTask() {
 }
 
 function openWrongAnswerTaskProgress(task) {
+  // 返回地址携带列表筛选，详情页返回后恢复原来的任务列表上下文。
+  const returnTo = router.resolve({
+    name: 'shsat-admin',
+    query: {
+      tab: 'wrong-answer-tasks',
+      reviewKeyword: wrongAnswerTaskFilters.keyword || undefined,
+      reviewExamId: wrongAnswerTaskFilters.examId || undefined,
+      reviewClassId: wrongAnswerTaskFilters.classId || undefined,
+    },
+  }).fullPath;
+
   router.push({
     name: 'admin-wrong-answer-task',
     params: {
@@ -2185,7 +2207,7 @@ function openWrongAnswerTaskProgress(task) {
       taskId: task.taskId,
     },
     query: {
-      returnTo: route.fullPath,
+      returnTo,
       returnLabel: 'Back to Review Assignments',
     },
   });
@@ -3114,7 +3136,7 @@ onBeforeUnmount(() => {
               </div>
               <span
                 class="dashboard-review-task__status"
-                :class="{ 'dashboard-review-task__status--ended': String(task.status || '').toUpperCase() === 'CLOSED' }"
+                :class="{ 'dashboard-review-task__status--ended': isReviewAssignmentEnded(task) }"
               >
                 {{ reviewAssignmentStatusLabel(task) }}
               </span>
