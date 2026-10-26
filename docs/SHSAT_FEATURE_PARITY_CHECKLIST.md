@@ -234,6 +234,7 @@
 - [x] **SHSAT 试卷基础 CRUD 抽测（2026-10-27）**：管理员从 `Create Paper` 新建临时空白卷后进入编辑器，ELA/Math 区域可见；修改名称和说明，刷新后仍能按新名称检索；随后通过列表删除菜单确认影响并等待冷静期，试卷及 API 记录均已删除。浏览器脚本错误为 0。截图 `/tmp/shsat-paper-editor-created-20261027.png`。题目结构编辑、预览、PDF 导出和更多字段校验仍待覆盖。
 - [x] **单题编辑与预览闭环抽测（2026-10-27）**：临时新卷中新增默认 Multiple Choice 题，填写题干、保存后刷新，题目仍在 ELA 且字段完整；Paper Preview 显示同一题干和两个答案选项。测试纸卷最终删除，未创建学生考试记录；浏览器脚本错误为 0。截图 `/tmp/shsat-question-editor-saved-20261027.png`、`/tmp/shsat-question-preview-20261027.png`。未覆盖题型专属编辑、答案正确性/评分、其它 11 种题型与 PDF。
 - [x] **Math→ELA 学生端完整流程与成绩闭环（2026-10-27）**：临时创建含一题 ELA、一题 Math 的 SHSAT 卷和定向考试；学生实际登录、选择 SHSAT、从 Math 开始、在 UI 作答并提交 Math、进入 ELA 后作答并最终交卷，随后在考试结束时间后打开本人报告。检查尝试顺序为 `MATH → ELA`，报告状态 `COMPLETED`、raw 总分 `2/2`、ELA `1/1`、Math `1/1`、正确 `2`、错误/未答 `0`；管理员报告与学生报告一致。浏览器脚本错误为 0；测试考试、临时试卷、临时学生已全部删除。桌面题目与报告截图 `/tmp/shsat-math-first-mini-question-20261027.png`、`/tmp/shsat-math-first-mini-report-20261027.png`。报告只有在 SHSAT 结束时间到达后才显示分数/答案，和独立版 `AFTER_END_TIME` 可见策略一致。此项仅验证两道选择题和 Math→ELA 顺序，不代替正式卷/12 种题型全量回归。
+- [x] **SHSAT 学生考试状态与窄屏回归（2026-10-27）**：新增 `frontend/e2e/shsat-student-exam-states.cjs` 可复跑检查。创建两名临时学生和两场仅分配给其中一人的考试，确认 Upcoming 不显示开始操作、Available 显示可用的 `Start exam`，另一名学生看不到两场考试；390px 视口无横向溢出、无页面脚本错误。截图 `/tmp/shsat-student-exam-states-1793037226351.png` 与 `/tmp/shsat-student-exam-states-mobile-1793037226351.png` 已目视检查。发现窄屏标题曾被挤成窄列逐字换行，现调整卡片网格、状态和操作区布局；测试账号与考试均已清理。前端 production build 通过。此项不替代完整开考/交卷状态矩阵。
 
 ## 9. 建议执行顺序与完成门槛
 

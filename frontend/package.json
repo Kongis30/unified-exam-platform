@@ -9,6 +9,7 @@
     "test:e2e:sat": "node e2e/sat-formal-exam.cjs",
     "test:e2e:sat:accounts": "node e2e/sat-account-management.cjs",
     "test:e2e:shsat:paper-filters": "node e2e/shsat-paper-filters.cjs",
+    "test:e2e:shsat:student-states": "node e2e/shsat-student-exam-states.cjs",
     "preview": "vite preview"
   },
   "dependencies": {

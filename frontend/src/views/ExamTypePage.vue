@@ -2225,6 +2225,9 @@ watch(() => props.code, (code) => {
 .student-practice-list .paper-copy strong { overflow: visible; font-size: 14px; line-height: 1.35; text-overflow: clip; white-space: normal; }
 .student-practice-list .paper-copy small { font-size: 12px; line-height: 1.4; }
 .student-practice-list .paper-row .compact-button { min-height: 40px; font-size: 13px; }
+.student-exam-list .paper-row { min-height: 72px; gap: 14px; }
+.student-exam-list .paper-copy strong { font-size: 14px; line-height: 1.35; }
+.student-exam-list .paper-copy small { font-size: 12px; line-height: 1.4; }
 .practice-history-list { border-top: 1px solid var(--color-border); }
 .practice-history-row { display: grid; grid-template-columns: auto minmax(220px, 1fr) minmax(90px, auto) auto; align-items: center; gap: 16px; padding: 14px 4px; border-bottom: 1px solid var(--color-border); }
 .practice-history-score { display: grid; gap: 3px; color: var(--color-text); text-align: right; font-variant-numeric: tabular-nums; }
@@ -2238,6 +2241,14 @@ watch(() => props.code, (code) => {
 .student-practice-history--empty .table-empty, .student-exam-list--empty .table-empty { margin: 0; padding: 10px 8px 4px; }
 @media (max-width: 700px) { .practice-history-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; } .practice-history-score { grid-column: 2; justify-self: start; text-align: left; } .practice-history-actions { grid-column: 2 / -1; } }
 @media (max-width: 700px) { .student-practice-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; } .student-practice-list .paper-mark { grid-column: 1; grid-row: 1; } .student-practice-list .paper-copy { grid-column: 2; grid-row: 1; } .student-practice-list .paper-row .compact-button { grid-column: 2; justify-self: start; } }
+@media (max-width: 700px) {
+  .student-exam-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; }
+  .student-exam-list .paper-mark { grid-column: 1; grid-row: 1 / span 3; align-self: start; }
+  .student-exam-list .paper-copy { grid-column: 2; grid-row: 1; }
+  .student-exam-list .paper-copy strong { overflow: visible; text-overflow: clip; white-space: normal; }
+  .student-exam-list .status-pill { grid-column: 2; justify-self: start; }
+  .student-exam-list .paper-row .compact-button { grid-column: 2; justify-self: start; min-height: 40px; font-size: 13px; }
+}
 .exam-notification { position: fixed; z-index: 1200; top: 82px; right: 24px; display: flex; width: min(380px, calc(100vw - 32px)); align-items: center; gap: 12px; border: 1px solid var(--color-border); border-radius: 14px; padding: 13px 12px 13px 14px; background: #fff; color: var(--color-text); box-shadow: 0 16px 40px rgb(18 36 64 / 16%); }
 .exam-notification--success { border-color: #bbf7d0; }
 .exam-notification--error { border-color: #fecaca; }

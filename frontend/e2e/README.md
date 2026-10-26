@@ -23,3 +23,11 @@ E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:paper-fil
 ```
 
 This test uses the seeded `SHSAT CRASH COURSE` paper group and does not modify data.
+
+To verify SHSAT student upcoming/available states and audience isolation, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:student-states
+```
+
+This test creates two temporary students and two SHSAT exam releases targeted only to one student. It checks the Upcoming card has no start action, the Available card can be started, the other student cannot see either release, and the student page fits a 390px viewport. It deletes the temporary releases and accounts during cleanup. Do not point it at production data.
