@@ -4488,12 +4488,10 @@ onBeforeUnmount(() => {
   --paper-radius-md: 10px;
   --paper-radius-lg: 14px;
   --paper-shadow-card: 0 8px 24px rgba(31, 75, 135, 0.06);
-  --paper-editor-min-width: 1120px;
-
   display: grid;
   gap: 10px;
   width: min(var(--page-container-width, 1320px), 100%);
-  min-width: var(--paper-editor-min-width);
+  min-width: 0;
   margin-inline: auto;
   padding-top: 10px;
   padding-bottom: 12px;

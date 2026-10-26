@@ -346,4 +346,35 @@ function toggleCorrectOption(key) {
   margin-left: 6px;
   color: var(--color-muted);
 }
+
+@media (max-width: 560px) {
+  .choice-editor__option-main {
+    grid-template-columns: auto 44px minmax(0, 1fr) 28px;
+    gap: 8px 6px;
+  }
+
+  .choice-editor__option-key {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .choice-editor__option-main > .form-input {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .choice-editor__formula-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .choice-editor__remove-button {
+    grid-column: 4;
+    grid-row: 1;
+  }
+}
 </style>

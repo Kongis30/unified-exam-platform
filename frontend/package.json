@@ -9,6 +9,7 @@
     "test:e2e:sat": "node e2e/sat-formal-exam.cjs",
     "test:e2e:sat:accounts": "node e2e/sat-account-management.cjs",
     "test:e2e:shsat:paper-filters": "node e2e/shsat-paper-filters.cjs",
+    "test:e2e:shsat:paper-editor-navigation": "node e2e/shsat-paper-editor-navigation.cjs",
     "test:e2e:shsat:paper-folders": "node e2e/shsat-paper-folder-management.cjs",
     "test:e2e:shsat:student-states": "node e2e/shsat-student-exam-states.cjs",
     "test:e2e:shsat:student-history-retry": "node e2e/shsat-student-history-retry.cjs",
