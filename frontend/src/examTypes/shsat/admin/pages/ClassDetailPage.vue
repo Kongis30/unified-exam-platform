@@ -26,10 +26,8 @@ const addStudentsError = ref('');
 const loadingAvailableStudents = ref(false);
 const addingStudents = ref(false);
 const studentFormError = ref('');
-const studentFormNotice = ref('');
 const editingStudentId = ref('');
 const submittingStudent = ref(false);
-const studentRemovalNotice = ref('');
 const studentRosterNotice = ref('');
 const studentRemovalError = ref('');
 const showStudentRemovalModal = ref(false);
@@ -225,6 +223,7 @@ function goClassExamPage(page) {
 function openEditClassModal() {
   const item = classInfo.value || {};
 
+  closeClassToast();
   formError.value = '';
   Object.assign(classForm, {
     className: item.className || '',
@@ -315,6 +314,7 @@ function getStudentId(student) {
 }
 
 async function openAddStudentsModal() {
+  closeClassToast();
   showAddStudentsModal.value = true;
   availableStudentAccounts.value = [];
   selectedStudentIds.value = [];
@@ -396,9 +396,9 @@ function openEditStudentModal(student) {
     return;
   }
 
+  closeClassToast();
   editingStudentId.value = String(student.studentId || student.id || '');
   studentFormError.value = '';
-  studentFormNotice.value = '';
   Object.assign(studentForm, {
     classId: String(student.classId || classId.value),
     studentName: student.studentName || student.name || '',
@@ -418,7 +418,6 @@ function closeStudentModal() {
   showStudentModal.value = false;
   editingStudentId.value = '';
   studentFormError.value = '';
-  studentFormNotice.value = '';
 }
 
 function openStudentRemovalModal(student) {
@@ -426,9 +425,9 @@ function openStudentRemovalModal(student) {
     return;
   }
 
+  closeClassToast();
   studentPendingRemoval.value = student;
   studentRemovalError.value = '';
-  studentRemovalNotice.value = '';
   showStudentRemovalModal.value = true;
 }
 
@@ -462,7 +461,7 @@ async function confirmStudentRemoval() {
     showStudentRemovalModal.value = false;
     studentPendingRemoval.value = null;
     await loadPage();
-    studentRemovalNotice.value = `${studentName} was removed from this class.`;
+    showClassToast(`${studentName} was removed from this class.`);
   } catch (error) {
     studentRemovalError.value = error.message || 'Failed to remove student from this class. Please try again.';
   } finally {
@@ -472,7 +471,6 @@ async function confirmStudentRemoval() {
 
 async function submitStudent() {
   studentFormError.value = '';
-  studentFormNotice.value = '';
 
   if (!studentForm.studentName.trim()) {
     studentFormError.value = 'Student name is required.';
@@ -503,6 +501,7 @@ async function submitStudent() {
     await loadPage();
     showStudentModal.value = false;
     editingStudentId.value = '';
+    showClassToast('Student details updated.');
   } catch (error) {
     studentFormError.value = error.message || 'Failed to save student';
   } finally {
@@ -731,7 +730,7 @@ onBeforeUnmount(closeClassToast);
       <Teleport to="body">
         <div v-if="classToast" class="class-detail-toast" role="status" aria-live="polite">
           <div>
-            <strong>Saved</strong>
+            <strong>Success</strong>
             <p>{{ classToast }}</p>
           </div>
           <button type="button" aria-label="Close notification" @click="closeClassToast">&times;</button>
@@ -924,7 +923,6 @@ onBeforeUnmount(closeClassToast);
             <AppButton @click="openAddStudentsModal">Add Students</AppButton>
           </template>
           <p v-if="studentRosterNotice" class="success-text student-removal-notice" role="status">{{ studentRosterNotice }}</p>
-          <p v-if="studentRemovalNotice" class="success-text student-removal-notice">{{ studentRemovalNotice }}</p>
           <div v-if="students.length === 0" class="admin-state">
             No students assigned yet. Add an existing student account to this class.
           </div>
@@ -1144,8 +1142,6 @@ onBeforeUnmount(closeClassToast);
             </div>
 
             <p v-if="studentFormError" class="error-text">{{ studentFormError }}</p>
-            <p v-if="studentFormNotice" class="success-text">{{ studentFormNotice }}</p>
-
             <footer class="modal-card__footer">
               <AppButton variant="secondary" type="button" @click="closeStudentModal">Cancel</AppButton>
               <AppButton type="submit" :disabled="submittingStudent">

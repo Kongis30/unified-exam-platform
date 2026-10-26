@@ -16,6 +16,7 @@ async function main() {
   page.on('pageerror', error => pageErrors.push(error.message));
   const stamp = Date.now();
   let classId;
+  let studentId;
 
   try {
     await login(page);
@@ -71,6 +72,55 @@ async function main() {
     await page.getByRole('button', { name: 'Retry', exact: true }).click();
     await page.getByRole('heading', { name: `SHSAT Detail Save ${stamp} Updated`, exact: true }).waitFor();
     assert.equal(await page.locator('.admin-state--error').count(), 0, 'Retry clears the transient detail load error');
+
+    const createdStudent = await api(page, '/api/admin/users', 'POST', {
+      username: `shsat_detail_student_${stamp}`,
+      password: `DetailStudent${stamp}!`,
+      realName: `Detail Student ${stamp}`,
+      roleCode: 'STUDENT',
+      email: `shsat_detail_${stamp}@example.test`,
+      phone: null,
+    });
+    studentId = Number(createdStudent.id);
+    await api(page, `/api/admin/classes/${classId}/students`, 'POST', { studentUserId: studentId });
+    await page.reload();
+    await page.getByRole('row', { name: new RegExp(`Detail Student ${stamp}`) }).waitFor();
+    const studentRow = page.getByRole('row', { name: new RegExp(`Detail Student ${stamp}`) });
+
+    await studentRow.getByRole('button', { name: 'View', exact: true }).click();
+    await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${classId}/students/${studentId}`));
+    await page.getByRole('button', { name: 'Back to Class Detail', exact: true }).click();
+    await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${classId}`));
+
+    const restoredStudentRow = page.getByRole('row', { name: new RegExp(`Detail Student ${stamp}`) });
+    await restoredStudentRow.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.screenshot({ path: `/tmp/shsat-class-detail-student-edit-${stamp}.png` });
+    await page.getByLabel('Student Name').fill(`Detail Student ${stamp} Updated`);
+    await page.getByLabel('Notes').fill('Roster details update check');
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByRole('status').getByText('Student details updated.', { exact: true }).waitFor();
+    const editedStudent = await api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`);
+    const editedStudentRow = (editedStudent.items || editedStudent).find(item => Number(item.studentId || item.id) === studentId);
+    assert.equal(editedStudentRow.realName || editedStudentRow.studentName || editedStudentRow.name,
+      `Detail Student ${stamp} Updated`, 'student roster edit persists');
+
+    const editedRow = page.getByRole('row', { name: new RegExp(`Detail Student ${stamp} Updated`) });
+    await editedRow.getByRole('button', { name: 'Remove', exact: true }).click();
+    await page.getByRole('heading', { name: 'Remove Student from This Class?', exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-class-detail-student-remove-${stamp}.png` });
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.ok(await page.getByRole('row', { name: new RegExp(`Detail Student ${stamp} Updated`) }).count(),
+      'canceling removal keeps the student in the class');
+    await page.getByRole('row', { name: new RegExp(`Detail Student ${stamp} Updated`) })
+      .getByRole('button', { name: 'Remove', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove from Class', exact: true }).click();
+    await page.getByRole('status').getByText(`Detail Student ${stamp} Updated was removed from this class.`, { exact: true }).waitFor();
+    await page.getByRole('row', { name: new RegExp(`Detail Student ${stamp} Updated`) }).waitFor({ state: 'detached' });
+    const usersAfterRemoval = await api(page, '/api/admin/users');
+    assert.ok(usersAfterRemoval.some(item => Number(item.id) === studentId), 'removing a student preserves the unified account');
+
+    await page.goto(`${baseUrl}/exam-types/SHSAT/admin/classes/${classId}`);
+    await page.getByRole('heading', { name: `SHSAT Detail Save ${stamp} Updated`, exact: true }).waitFor();
     assert.deepEqual(pageErrors, []);
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -79,9 +129,10 @@ async function main() {
     const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(dimensions.page <= dimensions.viewport, 'class detail remains within a 390px viewport');
     await page.screenshot({ path: `/tmp/shsat-class-detail-mobile-${stamp}.png` });
-    console.log(JSON.stringify({ result: 'PASS', classId, checks: ['required class name validation', 'saved notification visible outside modal', 'class edit persistence', 'detail load error and Retry', '390px layout'], dimensions, pageErrors: pageErrors.length }));
+    console.log(JSON.stringify({ result: 'PASS', classId, studentId, checks: ['required class name validation', 'saved notification visible outside modal', 'class edit persistence', 'detail load error and Retry', 'student View and return route', 'student roster edit and persistence', 'remove cancellation and confirmation', 'remove preserves unified account', '390px layout'], dimensions, pageErrors: pageErrors.length }));
   } finally {
     if (classId) await api(page, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
+    if (studentId) await api(page, `/api/admin/users/${studentId}`, 'DELETE').catch(() => {});
     await browser.close();
   }
 }
