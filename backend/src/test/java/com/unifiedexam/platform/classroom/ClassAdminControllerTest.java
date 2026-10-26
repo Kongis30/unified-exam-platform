@@ -137,6 +137,31 @@ class ClassAdminControllerTest {
     }
 
     @Test
+    void shsatClassUpdatePersistsMetadataAndActiveState() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
+            .thenReturn(List.of(new ClassAdminController.ClassView(12L, "Grade 8", "Fall cohort", "ARCHIVED", 3,
+                4, 2, null, "A. Teacher", "teacher@example.com", "Grade 8", "2026-2027", false)));
+        when(jdbcTemplate.queryForObject(anyString(), eq(java.math.BigDecimal.class), any(Object[].class)))
+            .thenReturn(null);
+
+        var result = new ClassAdminController(jdbcTemplate).updateClass(12L,
+            new ClassAdminController.SaveClassRequest("Grade 8", "Fall cohort", 3, "A. Teacher",
+                "teacher@example.com", "Grade 8", "2026-2027", false), List.of("SHSAT"));
+
+        assertEquals("A. Teacher", result.teacherName());
+        assertEquals("teacher@example.com", result.teacherEmail());
+        assertEquals("Grade 8", result.gradeLevel());
+        assertEquals("2026-2027", result.academicYear());
+        assertEquals(false, result.active());
+        verify(jdbcTemplate).update(org.mockito.ArgumentMatchers.contains("status = COALESCE(?, status)"),
+            eq("Grade 8"), eq("Fall cohort"), eq(3), eq("ARCHIVED"), eq(12L));
+        verify(jdbcTemplate).update(org.mockito.ArgumentMatchers.contains("INSERT INTO shsat_class_metadata"),
+            eq(12L), eq("A. Teacher"), eq("teacher@example.com"), eq("Grade 8"), eq("2026-2027"));
+    }
+
+    @Test
     void classStudentsIncludeCompletedExamStatsForSelectedExamTypes() throws Exception {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);

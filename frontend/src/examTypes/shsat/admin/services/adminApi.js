@@ -35,6 +35,30 @@ function paperGroup(group) {
   };
 }
 
+function classSummary(classroom) {
+  return {
+    ...classroom,
+    classId: classroom.id,
+    className: classroom.name,
+    classDescription: classroom.description || '',
+    displayOrder: classroom.sortOrder,
+    isActive: classroom.active ?? classroom.status === 'ACTIVE',
+  };
+}
+
+function classSavePayload(payload) {
+  return {
+    name: payload.name || payload.className,
+    description: payload.description ?? payload.classDescription ?? null,
+    sortOrder: payload.displayOrder || 0,
+    teacherName: payload.teacherName || null,
+    teacherEmail: payload.teacherEmail || null,
+    gradeLevel: payload.gradeLevel || null,
+    academicYear: payload.academicYear || null,
+    active: payload.active,
+  };
+}
+
 function parseJson(value, fallback = {}) {
   if (value && typeof value === 'object') return value;
   if (typeof value !== 'string') return fallback;
@@ -470,25 +494,20 @@ export const adminApi = {
   },
 
   async getClasses() {
-    return (await listClasses(['SHSAT'])).map((classroom) => ({
-      classId: classroom.id, name: classroom.name, className: classroom.name,
-      description: classroom.description, status: classroom.status,
-      displayOrder: classroom.sortOrder, studentCount: classroom.studentCount,
-      examCount: classroom.examCount,
-    }));
+    return (await listClasses(['SHSAT'])).map(classSummary);
   },
 
   async getClass(classId) {
     const classroom = await apiRequest(`/api/admin/classes/${classId}?examTypeCodes=SHSAT`);
-    return { ...classroom, classId: classroom.id, className: classroom.name, displayOrder: classroom.sortOrder };
+    return classSummary(classroom);
   },
 
-  createClass(payload) {
-    return createPlatformClass({ name: payload.name || payload.className, description: payload.description || null, sortOrder: payload.displayOrder || 0 }, ['SHSAT']);
+  async createClass(payload) {
+    return classSummary(await createPlatformClass(classSavePayload(payload), ['SHSAT']));
   },
 
-  updateClass(classId, payload) {
-    return updatePlatformClass(classId, { name: payload.name || payload.className, description: payload.description || null, sortOrder: payload.displayOrder || 0 }, ['SHSAT']);
+  async updateClass(classId, payload) {
+    return classSummary(await updatePlatformClass(classId, classSavePayload(payload), ['SHSAT']));
   },
 
   deleteClass(classId) {

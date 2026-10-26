@@ -126,6 +126,7 @@
 - [x] 学生多班归属隔离烟测：将临时学生同时加入两个班级，从其中一个班移除后，另一个班仍保留其成员关系；随后删除临时班级和账号，均成功且无遗留。
 - [ ] Unassigned Students：刷新/折叠、最多 800px 内滚动、表头全选/逐项多选、`Assign selected`、班级选择、取消/提交；已在其他班的学生不应被误标“未分配”。
 - [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。
+- [x] SHSAT 班级资料编辑持久化：发现详情表单中的教师姓名/邮箱、年级、学年、Active 状态没有接入共享班级 API，且详情查询会丢弃这些字段；现使用现有 `shsat_class_metadata` 保存 SHSAT 扩展资料，通用班级状态仍写 `classes`。界面修改并保存后，刷新核对资料与 Inactive 状态，API 字段一致；临时班级已删除。Java 控制器测试及全量 91 项后端测试、前端生产构建通过；桌面/390px 截图 `127-class-metadata-before.png`、`128-class-metadata-after.png`、`129-class-metadata-mobile.png`，窄屏无横向溢出。班级字段校验和其它按钮继续待测。
 - [x] `Class Exam Score Trend`：复核 SHSAT 文案、raw/scaled 提示和无数据状态；桌面截图确认没有 SAT/PSAT 范围提示。仍需用带 SHSAT 折算分/考试点的数据验证曲线与悬浮内容。
 - [x] 班级详情统计真实数据烟测：发现统一版没有返回班级学生的平均分/已完成考试数，且班级摘要平均分为空；按已完成、非练习、学生当时属于班级且有考试资格的记录实时聚合，SHSAT 学生分数按独立版规则在折算分有效时使用折算分，否则回退原始分。SHSAT 学生统计显示 17 名有成绩、1 名无记录；班级摘要显示平均分 52.53。SAT/PSAT 查询也已烟测返回样本统计。截图 `81-class-student-stats-desktop.png`、`82-class-student-stats-mobile.png`、`83-class-summary-average-desktop.png`、`84-class-summary-average-mobile.png`；桌面和 390px 窄屏均无横向溢出，浏览器脚本错误为 0。针对聚合 SQL 的控制器测试和前端构建通过。这里只完成班级摘要及学生表统计，不代表班级详情其它操作已验收。
 - [x] 班级详情非破坏性操作抽测：Edit Class 表单打开并显示当前班级信息，取消后数据未变；学生表第一行 `View` 打开对应学生详情，4 次完成考试、平均分、趋势及历史记录可见；`Back to Class Detail` 返回原班级路由。桌面截图 `86-class-edit-modal.png`、`87-class-student-detail.png`；学生详情 390px 窄屏截图 `88-student-detail-mobile.png`，页面无横向溢出，浏览器脚本错误为 0。保存编辑、刷新、View Report 等写入或跳转操作仍待逐项验收。

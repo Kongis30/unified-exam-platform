@@ -50,6 +50,7 @@ public class ClassAdminController {
         String typeFilter = examTypeFilter(types);
         return jdbcTemplate.query("""
             SELECT c.id, c.name, c.description, c.status, c.sort_order,
+                   meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
                 (SELECT COUNT(*) FROM class_memberships m WHERE m.class_id = c.id AND m.left_at IS NULL) AS student_count,
                 (SELECT COUNT(DISTINCT a.exam_id)
                  FROM class_memberships m
@@ -67,10 +68,9 @@ public class ClassAdminController {
                        WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
                    ))
                    %s) AS exam_count
-            FROM classes c ORDER BY c.sort_order, c.id DESC
-            """.formatted(typeFilter), (rs, rowNum) -> new ClassView(rs.getLong("id"), rs.getString("name"),
-                rs.getString("description"), rs.getString("status"), rs.getInt("sort_order"),
-                rs.getInt("student_count"), rs.getInt("exam_count")), parameters.toArray());
+            FROM classes c LEFT JOIN shsat_class_metadata meta ON meta.class_id = c.id
+            ORDER BY c.sort_order, c.id DESC
+            """.formatted(typeFilter), (rs, rowNum) -> classView(rs), parameters.toArray());
     }
 
     @GetMapping("/available-students")
@@ -286,9 +286,13 @@ public class ClassAdminController {
     @Transactional
     public ClassView createClass(@Valid @RequestBody SaveClassRequest request,
                                  @RequestParam(required = false) List<String> examTypeCodes) {
-        jdbcTemplate.update("INSERT INTO classes (name, description, sort_order) VALUES (?, ?, ?)",
-            request.name(), request.description(), request.sortOrder());
+        String status = request.active() == null || request.active() ? "ACTIVE" : "ARCHIVED";
+        jdbcTemplate.update("INSERT INTO classes (name, description, sort_order, status) VALUES (?, ?, ?, ?)",
+            request.name(), request.description(), request.sortOrder(), status);
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        if (examTypeCodes != null && examTypeCodes.contains("SHSAT")) {
+            saveShsatClassMetadata(id, request);
+        }
         return findClass(id, validateExamTypeCodes(examTypeCodes));
     }
 
@@ -296,8 +300,14 @@ public class ClassAdminController {
     public ClassView updateClass(@PathVariable long classId, @Valid @RequestBody SaveClassRequest request,
                                  @RequestParam(required = false) List<String> examTypeCodes) {
         requireClass(classId);
-        jdbcTemplate.update("UPDATE classes SET name = ?, description = ?, sort_order = ? WHERE id = ?",
-            request.name(), request.description(), request.sortOrder(), classId);
+        jdbcTemplate.update("""
+            UPDATE classes SET name = ?, description = ?, sort_order = ?,
+                status = COALESCE(?, status) WHERE id = ?
+            """, request.name(), request.description(), request.sortOrder(),
+            request.active() == null ? null : request.active() ? "ACTIVE" : "ARCHIVED", classId);
+        if (examTypeCodes != null && examTypeCodes.contains("SHSAT")) {
+            saveShsatClassMetadata(classId, request);
+        }
         return findClass(classId, validateExamTypeCodes(examTypeCodes));
     }
 
@@ -454,6 +464,7 @@ public class ClassAdminController {
         String typeFilter = examTypeFilter(examTypeCodes);
         List<ClassView> classes = jdbcTemplate.query("""
             SELECT c.id, c.name, c.description, c.status, c.sort_order,
+                meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
                 (SELECT COUNT(*) FROM class_memberships m WHERE m.class_id = c.id AND m.left_at IS NULL) AS student_count,
                 (SELECT COUNT(DISTINCT a.exam_id)
                  FROM class_memberships m
@@ -471,10 +482,8 @@ public class ClassAdminController {
                        WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
                    ))
                    %s) AS exam_count
-            FROM classes c WHERE c.id = ?
-            """.formatted(typeFilter), (rs, rowNum) -> new ClassView(rs.getLong("id"), rs.getString("name"),
-                rs.getString("description"), rs.getString("status"), rs.getInt("sort_order"),
-                rs.getInt("student_count"), rs.getInt("exam_count")), examTypeCodes.isEmpty()
+            FROM classes c LEFT JOIN shsat_class_metadata meta ON meta.class_id = c.id WHERE c.id = ?
+            """.formatted(typeFilter), (rs, rowNum) -> classView(rs), examTypeCodes.isEmpty()
                 ? new Object[] { id } : Stream.concat(examTypeCodes.stream().map(code -> (Object) code), Stream.of(id)).toArray());
         if (classes.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Class not found.");
@@ -511,7 +520,32 @@ public class ClassAdminController {
               %s
             """.formatted(examTypeFilter(examTypeCodes)), java.math.BigDecimal.class, averageParameters.toArray());
         return new ClassView(classroom.id(), classroom.name(), classroom.description(), classroom.status(),
-            classroom.sortOrder(), classroom.studentCount(), classroom.examCount(), averageScore);
+            classroom.sortOrder(), classroom.studentCount(), classroom.examCount(), averageScore,
+            classroom.teacherName(), classroom.teacherEmail(), classroom.gradeLevel(), classroom.academicYear(),
+            classroom.active());
+    }
+
+    /** 保存 SHSAT 来源系统的班级资料；通用班级字段仍保存在 classes 主表。 */
+    private void saveShsatClassMetadata(long classId, SaveClassRequest request) {
+        jdbcTemplate.update("""
+            INSERT INTO shsat_class_metadata (class_id, teacher_name, teacher_email, grade_level, academic_year)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE teacher_name = VALUES(teacher_name), teacher_email = VALUES(teacher_email),
+                grade_level = VALUES(grade_level), academic_year = VALUES(academic_year)
+            """, classId, normalizeOptional(request.teacherName()), normalizeOptional(request.teacherEmail()),
+            normalizeOptional(request.gradeLevel()), normalizeOptional(request.academicYear()));
+    }
+
+    private ClassView classView(java.sql.ResultSet rs) throws java.sql.SQLException {
+        String status = rs.getString("status");
+        return new ClassView(rs.getLong("id"), rs.getString("name"), rs.getString("description"), status,
+            rs.getInt("sort_order"), rs.getInt("student_count"), rs.getInt("exam_count"), null,
+            rs.getString("teacher_name"), rs.getString("teacher_email"), rs.getString("grade_level"),
+            rs.getString("academic_year"), "ACTIVE".equals(status));
+    }
+
+    private String normalizeOptional(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private StudentView findStudent(long classId, long studentUserId) {
@@ -578,7 +612,11 @@ public class ClassAdminController {
     }
 
     public record SaveClassRequest(@NotBlank @Size(max = 100) String name,
-                                   @Size(max = 500) String description, int sortOrder) { }
+                                   @Size(max = 500) String description, int sortOrder,
+                                   @Size(max = 30) String teacherName,
+                                   @jakarta.validation.constraints.Email @Size(max = 160) String teacherEmail,
+                                   @Size(max = 20) String gradeLevel, @Size(max = 40) String academicYear,
+                                   Boolean active) { }
     public record ClassStatusRequest(@NotBlank @Pattern(regexp = "ACTIVE|ARCHIVED") String status) { }
     public record MembershipRequest(@Positive long studentUserId) { }
     public record BatchMembershipRequest(@NotNull @Size(min = 1, max = 500) List<@Positive Long> studentUserIds) { }
@@ -587,10 +625,18 @@ public class ClassAdminController {
             @DecimalMin("1.0") java.math.BigDecimal timeMultiplier, Boolean active) { }
     public record ReorderClassesRequest(@NotNull List<@Positive Long> classIds) { }
     public record ClassView(long id, String name, String description, String status, int sortOrder,
-                            int studentCount, int examCount, java.math.BigDecimal averageScore) {
+                            int studentCount, int examCount, java.math.BigDecimal averageScore,
+                            String teacherName, String teacherEmail, String gradeLevel,
+                            String academicYear, Boolean active) {
         public ClassView(long id, String name, String description, String status, int sortOrder,
                          int studentCount, int examCount) {
-            this(id, name, description, status, sortOrder, studentCount, examCount, null);
+            this(id, name, description, status, sortOrder, studentCount, examCount, null, null, null, null, null,
+                "ACTIVE".equals(status));
+        }
+        public ClassView(long id, String name, String description, String status, int sortOrder,
+                         int studentCount, int examCount, java.math.BigDecimal averageScore) {
+            this(id, name, description, status, sortOrder, studentCount, examCount, averageScore, null, null, null,
+                null, "ACTIVE".equals(status));
         }
     }
     public record StudentView(long id, String username, String realName, String email, String joinedAt,
