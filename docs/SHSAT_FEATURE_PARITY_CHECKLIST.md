@@ -120,6 +120,7 @@
 - [x] 统一账户管理端到端回归：使用临时账户验证创建及可选资料、默认姓名排序、姓名/用户名与联系方式搜索、角色筛选和修改、密码重置后实际登录、禁用/启用、5 秒删除确认与删除后目录查无该账号。测试脚本通过：`frontend/e2e/sat-account-management.cjs`。桌面截图 `/tmp/sat-account-management-ui.png`；390px 窄屏目视复核，页面与文档宽度均为 390px，无横向溢出，截图 `113-admin-accounts-mobile.png`。临时账号已清理。
 - [ ] 考试发布/撤回/删除后，首页卡片、班级考试、监考与学生入口同步更新；有尝试记录的场次按业务规则处理，不误删别的考试或用户。
 - [x] **Exam Release 管理动作闭环抽测（2026-10-27）**：Create Exam 缺少必填项时显示英文提示；使用临时 SHSAT 发布创建一场未来考试，通过当前行 Action 菜单发布、撤回均返回 200，表格分别显示 Scheduled 与 Not published；删除确认前按钮禁用 5 秒，确认后返回 200，列表中试卷已移除。全程无浏览器脚本错误，临时考试已删除。页面截图 `/tmp/shsat-exam-release-review-20261027.png`。尚未覆盖指定班级/学生目标、时间边界校验、发布风险确认和学生/班级/监考端同步。
+- [x] Exam Release 主表筛选/刷新抽测：临时未来考试分别通过 Published/Unpublished、Upcoming/Live、All students/Specific classes 过滤及标题搜索；Refresh 后行与筛选仍正常。测试发布已删除，浏览器脚本错误为 0。其它 audience 和日期边界、分页/窄屏对齐仍待验收。
 - [x] **Historical Exams 展示与操作回归（2026-10-27）**：真实历史记录都显示 `Unpublished`；分页设置 5 行后前后翻页正确，设为 20 行显示 16 条；折叠/展开有效。历史记录 Action 菜单顺序为 `Monitor`、`Delete`，Esc 可以关闭，删除保持末位。删除确认明确说明关联的学生尝试/答案/分数/报告/复习任务会一并删除，5 秒内按钮禁用；取消后记录仍保留。浏览器脚本错误为 0。截图 `/tmp/shsat-exam-release-review-20261027.png`、`/tmp/shsat-exam-history-pagination-20261027.png`、`/tmp/shsat-exam-history-actions-20261027.png`、`/tmp/shsat-exam-delete-confirm-cancel-20261027.png`。搜索/刷新与点击外部关闭仍待测。
 
 ## 5. Review Assignments 与班级
