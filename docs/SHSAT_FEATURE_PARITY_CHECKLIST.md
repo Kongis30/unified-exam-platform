@@ -84,13 +84,14 @@
 - [x] `TABLE_GRID` 学生端抽测：正式卷 247 Math 第 70 题，按正确答案逐行选择 5 个单选格；点 `Next` 后服务端各行值一致，浏览器脚本错误为 0，临时数据已清理。截图 `59-student-table-grid-selected.png`。该题材料图片 `/uploads/paper-materials/27-92486950-7d42-40d7-94e1-8a84c11069d9.png` 在独立版及统一版均缺失。
 - [ ] `HOT_SPOT` 学生作答被缺失的源图片阻塞：正式卷 247 Math 第 62 题引用 `/uploads/paper-materials/27-3b8171c6-53bf-4796-8f68-532393316cb7.png`，文件在独立版 `shsat_server/uploads` 与统一版 `backend/uploads/paper-materials` 均不存在；不能完成区域选择。已修复图片失败时遗留的破图标/替代文字，并验证英文错误提示干净显示。需要找到源图片后才能验收作答和计分。截图 `58-student-hotspot-unavailable-clean.png`。
 - [ ] 素材操作：选择已有、新建、清除文本/图片材料；图片上传、截图粘贴、预览/放大/重置/关闭，Markdown/公式插入与显示；共享材料编辑影响范围与源系统一致。
-- [ ] **逐题型闭环**：12 类题均需完成创建→保存→刷新→预览→作答→提交→报告复核。当前 9 类已有学生 UI 作答及答案持久化抽测证据，但尚未逐类完成创建/编辑、刷新恢复、预览、提交计分和报告复核；`HOT_SPOT` 被源图片缺失阻塞。每类选项/交互数据、答案键、评分及解析需逐字段对照，不能只测选择题。
+- [ ] **逐题型闭环**：12 类题均需完成创建→保存→刷新→预览→作答→提交→报告复核。当前 11 类已有学生 UI 作答及答案持久化抽测证据，但尚未逐类完成创建/编辑、刷新恢复、预览、提交计分和报告复核；`HOT_SPOT` 被源图片缺失阻塞。每类选项/交互数据、答案键、评分及解析需逐字段对照，不能只测选择题。
 - [x] **新增四类学生端作答回归**：`GRAPH_QUESTION`、`HOT_TEXT`、`EQUATION_EDITOR`、`SOLUTION_SET` 均通过实际浏览器交互后保存，并从尝试 API 核对答案；零页面脚本错误，临时考试和学生账号清理完成。截图分别为 `graph-question-answer.png`、`hot-text-answer.png`、`equation-editor-answer.png`、`solution-set-answer.png`。坐标图样题内容不完整，题干为空；其控件行为虽通过，内容质量仍待修复/与独立版对账。此项不替代逐类型提交计分和报告验收。
 - [x] 学生考试工具栏桌面抽测：书签开关、Review 面板与 Bookmarks 筛选、Notepad 关闭/重开保留当前尝试内内容、Answer Eliminator/Highlighter/Drawing Pen 开关、画笔颜色菜单、Line Reader 拖动、字号 1.3x、页面宽度切换均可操作；全屏已处于考试要求状态时按钮正确禁用；页面脚本错误为 0，临时数据已清理。截图 `61-toolbar-in-exam.png`。由于选中题目处于 SHSAT 锁定状态，此次未验证 Answer Eliminator 对答案选项的划除/恢复，也未在含材料题上验证画笔笔迹；高亮文本选择/上色、工具状态持久化仍待测。
 - [x] SHSAT 管理端窄屏首屏抽查：Paper Management、Exam Release、Review Assignments、Classes、试卷编辑/预览/导出、班级详情、Monitor 均记录 390×844 截图，无页面脚本错误；除导出外页面根节点无水平溢出。原导出预览把 Letter 页面撑宽至 840px，已将固定纸张限制在独立横向滚动区、将工具栏改为窄屏纵向布局；修复后所有上述页面根节点宽度为 390px，导出页仍可在预览区横向查看完整纸张。前端生产构建通过。截图 `62-admin-papers-mobile.png` 至 `68-monitor-mobile.png`。这是首屏与布局抽查，不代表每个表格/弹窗均完成窄屏验收。
 - [ ] 题型内按钮：填空可接受答案增删；拖拽 Item/Zone 增删和正确匹配；Hot Text/Spot 区域增删及坐标；图表点、方程输入、解答集等题型专用控件都要检查初始、修改、清空、保存恢复。
 - [ ] 预览：`Back`、上一题/下一题、Review 面板与题号跳转、书签、工具栏、ELA/Math 转换；预览不写入正式学生记录；缺失题干/图片给出准确提示。
-- [ ] 导出：Student Paper/Answer Key、Whole Paper/ELA/Math 切换；`Print / Save ... PDF` 输出非空、有正确题序/页码/图片/公式/答案和分页，打印预览不裁切；无 ELA/Math 标签题给出提示，不能静默丢题。
+- [x] SHSAT PDF 分区与导出按钮回归：纸卷 252 导出曾把 ELA/Math 的 `scoringSectionCode` 在通用映射中丢失，导致 ELA 仅显示题 58、其余 115 题都归为 Other。修复映射后 PDF 分区为 ELA 1–57、Math 58–114、Other 115（该题源记录没有 ELA/Math 标签，页面已有明确提示且 Whole Paper 保留）；验证 Student Paper/Answer Key、ELA/Math/Whole Paper 切换及打印按钮状态。34 页 Letter PDF 非空，题序完整到 115，首个分区和末页已截图复核。窄屏纸张滚动不影响打印版。PDF `/tmp/shsat-visual-audit-20261026/69-paper-export-print-regression.pdf`。第112题源内容字面为 `question in image`，需查独立源资源/数据是否同样缺图；不能把该题内容质量标为通过。
+- [ ] 导出：Student Paper/Answer Key、Whole Paper/ELA/Math 切换；`Print / Save ... PDF` 输出非空、有正确题序/页码/图片/公式/答案和分页，打印预览不裁切；无 ELA/Math 标签题给出提示，不能静默丢题。上述已完成纸卷 252 Whole Paper Student Paper 走查，Answer Key、单科导出、题型公式/图片和其它代表卷仍待验收。
 
 ## 4. Exam Release 与 Historical Exams
 

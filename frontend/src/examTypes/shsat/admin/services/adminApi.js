@@ -89,6 +89,7 @@ function mapPaperDetail(detail) {
         partId: String(part.id), subTypeId: section.subTypeId, materialId,
         questionNumber: item.displayNumber || nextQuestionNumber,
         questionType: item.questionTypeCode, stem: item.stem,
+        scoringSectionCode: item.scoringSectionCode || part.sectionCode,
         shsatSkillTag: render.questionConfig?.shsatSkillTag || null,
         options: JSON.stringify(render.options || []),
         correctAnswerData: JSON.stringify(item.answerKey),
