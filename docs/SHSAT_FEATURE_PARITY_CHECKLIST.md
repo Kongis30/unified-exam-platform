@@ -111,6 +111,7 @@
 - [ ] Review Assignments 搜索、按考试/班级筛选、Refresh、Create Assignment；设置来源考试、班级、开始/结束时间及目标，校验无来源记录/无错题/时间冲突；发布后人数和状态准确。
 - [ ] 表格 Action：`View Progress` 返回原标签与筛选位置；`End`/取消任务及确认；状态、完成/资格、进行中/未开始/缺少源尝试统计要与详情相符。
 - [ ] 任务进度页：Back、Refresh/Retry、逐学生题数/状态/完成时间、`View Report`；截止/重做/零剩余题、源考试删除后的状态和提示准确。
+- [x] Review Assignments 只读流程与窄屏抽测：含 2 条真实任务的列表可见；无匹配搜索显示正确空状态，创建弹窗打开后取消不写入数据；`View Progress` 展示学生资格、状态和题数，`Back to Review Assignments` 返回带原 `tab` 的后台路由。390px 根节点宽度保持 390px，无浏览器脚本错误。截图 `99-review-assignments-desktop.png`、`100-review-assignment-create-modal.png`、`101-review-assignments-mobile.png`。下拉筛选、Refresh、创建/发布、End、逐学生 View Report 尚待验收。
 - [ ] Classes 首页：搜索、`Create Class`、刷新、卡片打开、空班删除、拖动顺序持久化；同一学生可加入多个班级；班级能接收 SHSAT 或 SAT 场次。
 - [ ] Unassigned Students：刷新/折叠、最多 800px 内滚动、表头全选/逐项多选、`Assign selected`、班级选择、取消/提交；已在其他班的学生不应被误标“未分配”。
 - [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。
@@ -138,11 +139,12 @@
 - [ ] Result Summary：题数、raw 总分、ELA raw、Math raw、折算分（有赋分表时）、正确/错误/空题、正确率、完成率、作答用时及离开页计数，和答案记录/计分规则逐项对账。
 - [ ] Knowledge and Skills：ELA/Math 内部标签层级、题数、对错、百分比和题号；标签缺失或跨类别时有正确归类，不把 SAT 标签混入 SHSAT。
 - [ ] Time Analysis：逐 section/逐题用时与暂停/续考统计；空数据不画虚假图。
-- [ ] Question Review：All/Correct/Wrong/Unanswered 筛选、逐题跳转、原答案/正确答案/解析、材料/图片/公式和 12 种题型的结果组件；可见性规则限制未公开答案。
+- [ ] Question Review：`All Questions`、`Needs Review`、`Unanswered`、`Answered` 筛选（与独立 SHSAT 一致）；逐题跳转、原答案/正确答案/解析、材料/图片/公式和 12 种题型的结果组件；可见性规则限制未公开答案。
 - [x] `Print Report`：管理员报告刷新返回 200；管理端 27 页及学生端 24 页 Letter PDF 已生成并抽查分页。知识技能分页空白已修复，学生端首屏/中间/末页文字和问题卡片可读。图片/公式极端长内容及 12 种题型 PDF 版式仍待覆盖。
 - [ ] 监考页 Back、正确率热图交互、图片放大；结束考试/无人在线/无答案时图表或空状态准确，图宽不溢出容器。
 - [x] **监考实时数据抽测**：真实学生开考、提交一道答案并移动到下一题后，页面显示 1 名进行中学生及当前题分布；平均用时图显示对应题的 2 秒数据；题目详情抽屉可打开并关闭。浏览器脚本错误为 0。截图 `35-monitor-live-data.png`。此结果仅为单学生、单题数据样本，不代表热图统计和其它监考操作均已验收。
 - [x] 监考空答数据与班级入口回归：从班级考试表的 `View Results` 和 `Monitor` 分别进入考试 27，并从结果页返回班级；页面考试 ID 匹配且无脚本错误。目视发现无答案题曾显示红色 `0%`；原因是把 `attempt_items`（发放题目）当作答记录。现改为统计已保存答案、排除迁移数据的 `legacyAnswer: null` 空白占位，正确率仅按已评分答案计算，并显示待评分数。实测该考试 Q1–Q3 均为 `0` 已答、`1` 未答、无准确率；UI 显示灰色 `—`，点击题块能打开题目详情。单元测试覆盖未答和待评分，SHSAT/SAT monitor 测试共 4 项通过。桌面/390px 页面截图 `89-class-exam-results.png`、`90-class-exam-monitor.png`、`91-monitor-empty-answers-desktop.png`、`92-monitor-empty-answers-mobile.png`、`93-monitor-question-detail.png`；窄屏无横向溢出，浏览器脚本错误为 0。
+- [x] 管理员报告入口与 Question Review 筛选定向验收：从 SHSAT 班级学生详情打开真实尝试报告，确认标题、raw 总分、ELA/Math raw、技能区、计时区及 100 道题目可见；筛选名称/数量为 `All Questions (100)`、`Needs Review (37)`、`Unanswered (0)`、`Answered (100)`，切换到 Unanswered 后显示空结果状态。报告的 `Back to Student Detail` 返回原班级的学生详情路由，而非系统选择页。桌面/390px 截图 `94-admin-report-desktop.png`、`95-admin-report-mobile.png`、`96-admin-report-unanswered-filter.png`；浏览器脚本错误为 0。此项只验证一个已有尝试的筛选与返回，不代表 raw/折算计分、答案解析可见性或全部题型结果逐项核验。
 
 ## 8. 首轮实测和视觉问题（2026-10-26）
 
