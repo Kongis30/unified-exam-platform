@@ -599,7 +599,9 @@ function goBack() {
     return;
   }
 
-  router.push(isAdmin() ? { name: 'shsat-admin' } : { name: 'exam-type', params: { code: 'SHSAT' } });
+  router.push(isAdmin()
+    ? { name: 'shsat-admin' }
+    : { name: 'student-workspace', params: { code: 'SHSAT' } });
 }
 
 function openExamMonitor() {

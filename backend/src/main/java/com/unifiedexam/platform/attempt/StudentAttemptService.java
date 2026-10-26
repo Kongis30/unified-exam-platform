@@ -82,8 +82,8 @@ public class StudentAttemptService {
             Integer.class, source.examId(), student.id());
         jdbcTemplate.update("""
             INSERT INTO attempts (exam_id, student_user_id, attempt_no, is_practice,
-                shsat_self_practice_source_attempt_id, shsat_self_practice_questions_json, expires_at)
-            SELECT e.id, ?, ?, TRUE, ?, CAST(? AS JSON),
+                shsat_self_practice_source_attempt_id, shsat_self_practice_questions_json, started_at, expires_at)
+            SELECT e.id, ?, ?, TRUE, ?, CAST(? AS JSON), CURRENT_TIMESTAMP(6),
                    CASE WHEN COALESCE(e.duration_seconds, p.default_duration_seconds) IS NULL THEN NULL
                         ELSE DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL COALESCE(e.duration_seconds, p.default_duration_seconds) SECOND) END
             FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ?
@@ -232,8 +232,8 @@ public class StudentAttemptService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam does not contain any questions.");
         }
         jdbcTemplate.update("""
-            INSERT INTO attempts (exam_id, student_user_id, attempt_no, is_practice, expires_at)
-            SELECT ?, ?, ?, ?, CASE WHEN ? IS NULL THEN closes_at
+            INSERT INTO attempts (exam_id, student_user_id, attempt_no, is_practice, started_at, expires_at)
+            SELECT ?, ?, ?, ?, CURRENT_TIMESTAMP(6), CASE WHEN ? IS NULL THEN closes_at
                 ELSE LEAST(DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL ? SECOND), closes_at) END
             FROM exams WHERE id = ?
             """, examId, studentId, attemptNo, practice, durationSeconds, durationSeconds, examId);
@@ -336,8 +336,8 @@ public class StudentAttemptService {
         int attemptNo = latestAttemptNo == null ? 1 : latestAttemptNo + 1;
         jdbcTemplate.update("""
             INSERT INTO attempts (exam_id, student_user_id, attempt_no, is_practice,
-                shsat_wrong_answer_assignment_id, shsat_wrong_answer_questions_json, expires_at)
-            VALUES (?, ?, ?, TRUE, ?, CAST(? AS JSON), DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL ? SECOND))
+                shsat_wrong_answer_assignment_id, shsat_wrong_answer_questions_json, started_at, expires_at)
+            VALUES (?, ?, ?, TRUE, ?, CAST(? AS JSON), CURRENT_TIMESTAMP(6), DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL ? SECOND))
             """, examId, studentId, attemptNo, assignmentId, json(objectMapper.valueToTree(numbers)), durationSeconds);
         Long attemptId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         List<Object> insertParameters = new ArrayList<>();

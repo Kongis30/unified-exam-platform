@@ -371,7 +371,7 @@ public class ShsatAdminReportService {
         return jdbcTemplate.query("""
             SELECT q.id AS question_id, pi.display_number, q.question_type_code, q.stem, q.render_json,
                    q.answer_key_json, q.grading_json, pi.max_points, aa.answer_json, aa.is_correct,
-                   aa.awarded_points, qm.skill_tag_code, ps.section_code, ps.title AS section_title,
+                   aa.awarded_points, aa.time_spent_seconds, qm.skill_tag_code, ps.section_code, ps.title AS section_title,
                    ps.section_kind, parent.section_code AS parent_section_code, parent.title AS parent_section_title
             FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
             JOIN paper_sections ps ON ps.id = pi.section_id
@@ -405,7 +405,7 @@ public class ShsatAdminReportService {
                 question.put("correct", rs.getObject("is_correct") == null ? null : rs.getBoolean("is_correct"));
                 question.put("score", rs.getBigDecimal("awarded_points"));
                 question.put("maxScore", rs.getBigDecimal("max_points"));
-                question.put("timeSpent", null);
+                question.put("timeSpent", nullableInt(rs, "time_spent_seconds"));
                 question.put("skillTagCode", rs.getString("skill_tag_code"));
                 JsonNode material = render.path("material");
                 question.put("material", material.isMissingNode() ? null : material);
