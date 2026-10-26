@@ -321,10 +321,15 @@ public class PaperService {
 
     @Transactional
     public void delete(long paperId) {
-        if (!isSatWorkspaceType(typeCode(paperId))) requireDraft(paperId);
-        PaperDeleteImpact impact = deleteImpact(paperId);
-        if (impact.examCount() > 0 || impact.attemptCount() > 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "A paper used by an exam or exam record cannot be deleted.");
+        String examTypeCode = typeCode(paperId);
+        if ("SHSAT".equals(examTypeCode)) {
+            deleteShsatReleases(paperId);
+        } else {
+            if (!isSatWorkspaceType(examTypeCode)) requireDraft(paperId);
+            PaperDeleteImpact impact = deleteImpact(paperId);
+            if (impact.examCount() > 0 || impact.attemptCount() > 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "A paper used by an exam or exam record cannot be deleted.");
+            }
         }
         Long dependentVersions = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM papers WHERE source_paper_id = ?", Long.class, paperId);
@@ -342,6 +347,19 @@ public class PaperService {
             jdbcTemplate.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)",
                 questionId, questionId);
         }
+    }
+
+    /** 独立 SHSAT 的删除会连同发布、学生尝试和复习任务一起移除。 */
+    private void deleteShsatReleases(long paperId) {
+        List<Long> examIds = jdbcTemplate.query("SELECT id FROM exams WHERE paper_id = ?", (rs, rowNum) -> rs.getLong(1), paperId);
+        if (examIds.isEmpty()) return;
+
+        String placeholders = String.join(",", java.util.Collections.nCopies(examIds.size(), "?"));
+        Object[] parameters = examIds.toArray();
+        jdbcTemplate.update("DELETE FROM shsat_wrong_answer_tasks WHERE exam_id IN (" + placeholders + ")", parameters);
+        jdbcTemplate.update("DELETE FROM attempts WHERE exam_id IN (" + placeholders + ")", parameters);
+        jdbcTemplate.update("DELETE FROM exam_participants WHERE exam_id IN (" + placeholders + ")", parameters);
+        jdbcTemplate.update("DELETE FROM exams WHERE id IN (" + placeholders + ")", parameters);
     }
 
     private long count(String sql, long paperId) {
