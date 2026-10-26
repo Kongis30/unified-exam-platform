@@ -75,6 +75,7 @@
 - [x] `DRAG_AND_DROP` 学生端作答与保存抽测：从正式卷 247 的 ELA 第 5 题，通过学生界面把 4 个选项按正确答案放入分类框；点 `Next` 后服务端答案与答案键逐项一致，浏览器脚本错误为 0，临时考试和账号已清理。桌面截图 `54-student-drag-answer.png`。这里只验证了学生端交互/保存，不代表编辑器配置、刷新恢复、提交计分和报告复核已通过。
 - [x] `MULTI_SELECT_FIXED` 学生端抽测：正式卷 247 ELA 第 7 题要求恰好选 2 项；通过学生界面选择 D/E，限制提示和选中状态显示正确，继续后服务端答案与答案键相符，浏览器脚本错误为 0，临时数据已清理。截图 `55-student-multi-select-fixed-selected.png`。
 - [x] `FILL_IN_BLANK` 学生端抽测：正式卷 247 Math 第 65 题输入 `1.93`，通过 `Next` 保存并从考试尝试接口核对答案，浏览器脚本错误为 0，临时数据已清理。桌面截图 `56-student-fill-in-blank.png`。题型创建/编辑/报告闭环仍待覆盖。
+- [x] `INLINE_CHOICE` 学生端抽测：正式卷 247 Math 第 94 题，在两个下拉框分别选择 B/C；通过 `Next` 保存后，服务端返回值与两个空格的答案键一致，浏览器脚本错误为 0，临时数据已清理。桌面截图 `57-student-inline-choice-selected.png`。
 - [ ] 素材操作：选择已有、新建、清除文本/图片材料；图片上传、截图粘贴、预览/放大/重置/关闭，Markdown/公式插入与显示；共享材料编辑影响范围与源系统一致。
 - [ ] **逐题型闭环**：`MULTIPLE_CHOICE`、`MULTI_SELECT`、`MULTI_SELECT_FIXED`、`FILL_IN_BLANK`、`INLINE_CHOICE`、`DRAG_AND_DROP`、`HOT_TEXT`、`HOT_SPOT`、`TABLE_GRID`、`GRAPH_QUESTION`、`EQUATION_EDITOR`、`SOLUTION_SET` 各用一题完成创建→保存→刷新→预览→作答→提交→报告复核。每类的选项/交互数据、答案键、评分及解析需逐字段对照，不能只测选择题。
 - [ ] 题型内按钮：填空可接受答案增删；拖拽 Item/Zone 增删和正确匹配；Hot Text/Spot 区域增删及坐标；图表点、方程输入、解答集等题型专用控件都要检查初始、修改、清空、保存恢复。
