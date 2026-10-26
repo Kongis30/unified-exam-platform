@@ -131,8 +131,9 @@ async function main() {
     await page.screenshot({ path: `/tmp/shsat-class-detail-mobile-${stamp}.png` });
     console.log(JSON.stringify({ result: 'PASS', classId, studentId, checks: ['required class name validation', 'saved notification visible outside modal', 'class edit persistence', 'detail load error and Retry', 'student View and return route', 'student roster edit and persistence', 'remove cancellation and confirmation', 'remove preserves unified account', '390px layout'], dimensions, pageErrors: pageErrors.length }));
   } finally {
-    if (classId) await api(page, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
+    if (classId && studentId) await api(page, `/api/admin/classes/${classId}/students/${studentId}`, 'DELETE').catch(() => {});
     if (studentId) await api(page, `/api/admin/users/${studentId}`, 'DELETE').catch(() => {});
+    if (classId) await api(page, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     await browser.close();
   }
 }
