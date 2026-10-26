@@ -624,6 +624,14 @@ const selectablePaperGroups = computed(() => {
   return paperGroups.value.filter((group) => !isDefaultPaperGroup(group));
 });
 
+// 保留空文件夹卡片，让用户在筛选到空组时仍能展开或管理该文件夹。
+const selectedEmptyPaperGroup = computed(() => {
+  if (!paperFilters.groupId || paperFilters.groupId === DEFAULT_FOLDER_KEY
+      || paperFilters.online || paperFilters.keyword.trim()) return false;
+  const selected = selectablePaperGroups.value.find(group => String(group.paperGroupId) === String(paperFilters.groupId));
+  return selected && Number(selected.paperCount || 0) === 0;
+});
+
 const canReorderPaperGroups = computed(() => {
   return !paperFilters.groupId && selectablePaperGroups.value.length > 1;
 });
@@ -3252,7 +3260,7 @@ onBeforeUnmount(() => {
 
           <div v-if="loading.papers" class="admin-state">Loading papers...</div>
           <div v-else-if="errors.papers" class="admin-state admin-state--error">{{ errors.papers }}</div>
-          <div v-else-if="hasAppliedPaperFilter && papers.length === 0" class="admin-state">
+          <div v-else-if="hasAppliedPaperFilter && papers.length === 0 && !selectedEmptyPaperGroup" class="admin-state">
             No papers found. Try changing or clearing the filters.
           </div>
           <div v-else-if="groupedPapers.length === 0" class="admin-state">No papers found.</div>
@@ -6873,6 +6881,11 @@ onBeforeUnmount(() => {
   .class-search-input {
     width: 100%;
     min-width: 0;
+  }
+
+  .admin-toolbar__filters input[placeholder="Paper name"] {
+    height: 34px;
+    flex: 0 0 auto;
   }
 
   .class-detail-hero__top,
