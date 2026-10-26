@@ -123,8 +123,9 @@ async function main() {
       username: teacherUsername, password, realName: 'SAT Parity Teacher', roleCode: 'TEACHER', email: null, phone: null,
     });
     teacherId = createdTeacher.id;
+    const className = `SAT parity class ${Date.now()}`;
     const classroom = await api(admin, '/api/admin/classes?examTypeCodes=SAT&examTypeCodes=PSAT', 'POST', {
-      name: `SAT parity class ${Date.now()}`, description: 'Temporary SAT score trend verification', sortOrder: 999,
+      name: className, description: 'Temporary SAT score trend verification', sortOrder: 999,
     });
     classId = classroom.id;
     classCreated = true;
@@ -175,6 +176,16 @@ async function main() {
       const response = await raw(teacher, path, method);
       assert.equal(response.status, 403, `${method} ${path} denies a teacher account`);
     }
+    await teacher.goto(`${baseUrl}/exam-types/SAT/admin?tab=classes`);
+    await teacher.getByRole('heading', { name: 'Classes' }).waitFor();
+    await teacher.getByRole('tab', { name: 'Classes' }).waitFor();
+    assert.equal(await teacher.getByRole('tab', { name: 'Paper Management' }).count(), 0,
+      'teachers only see the SAT class-management tab');
+    assert.equal(await teacher.getByRole('tab', { name: 'Exam Release' }).count(), 0,
+      'teachers do not receive SAT paper or release controls');
+    await teacher.getByRole('button').filter({ hasText: className }).click();
+    await teacher.getByRole('heading', { name: className, exact: true }).waitFor();
+    await teacher.getByRole('button', { name: 'Edit class' }).waitFor();
     assert.deepEqual(teacherPageErrors, [], `teacher route-guard errors: ${teacherPageErrors.join('; ')}`);
 
     const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 2);
