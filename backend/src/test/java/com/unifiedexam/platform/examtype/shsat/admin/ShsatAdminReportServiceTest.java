@@ -24,6 +24,42 @@ import static org.mockito.Mockito.when;
 class ShsatAdminReportServiceTest {
 
     @Test
+    void reportReturnsSafeQuestionCountsAlongsideHiddenQuestionDetails() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(anyString(), any(ResultSetExtractor.class), any(Object[].class))).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            ResultSetExtractor<Object> extractor = invocation.getArgument(1);
+            ResultSet row = mock(ResultSet.class);
+            when(row.next()).thenReturn(true, false);
+            when(row.getLong("id")).thenReturn(993L);
+            when(row.getLong("exam_id")).thenReturn(515L);
+            when(row.getLong("paper_id")).thenReturn(244L);
+            when(row.getLong("question_count")).thenReturn(100L);
+            when(row.getLong("answered_count")).thenReturn(100L);
+            when(row.getInt("attempt_no")).thenReturn(1);
+            when(row.getInt("time_used")).thenReturn(500);
+            when(row.getString("status")).thenReturn("COMPLETED");
+            when(row.getString("exam_title")).thenReturn("SHSAT UI Audit");
+            when(row.getString("paper_name")).thenReturn("SHSAT Practice");
+            when(row.getString("real_name")).thenReturn("Audit Student");
+            when(row.getObject("is_estimated")).thenReturn(null);
+            when(row.getBigDecimal("total_points")).thenReturn(new BigDecimal("50"));
+            when(row.getBigDecimal("max_points")).thenReturn(new BigDecimal("100"));
+            when(row.getLong("correct_count")).thenReturn(50L);
+            when(row.getLong("wrong_count")).thenReturn(50L);
+            when(row.getBoolean("is_practice")).thenReturn(false);
+            return extractor.extractData(row);
+        });
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
+
+        Map<String, Object> result = new ShsatAdminReportService(jdbc, new ObjectMapper()).attemptResult(993L);
+
+        assertEquals(100L, result.get("questionCount"));
+        assertEquals(100L, result.get("answeredCount"));
+        assertEquals(List.of(), result.get("questions"));
+    }
+
+    @Test
     void monitorCountsSavedAnswersInsteadOfServedQuestions() throws Exception {
         JdbcTemplate jdbc = monitorJdbc(0, 0, 0);
 

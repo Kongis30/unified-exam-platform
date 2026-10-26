@@ -39,8 +39,12 @@ class StudentReportSanitizerTest {
     @Test
     void removesQuestionsWhenReviewIsDisabled() {
         Map<String, Object> report = report();
+        report.put("questionCount", 100);
+        report.put("answeredCount", 98);
         StudentReportSanitizer.apply(report, true, false, false);
         assertEquals(List.of(), report.get("questions"));
+        assertEquals(100, report.get("questionCount"));
+        assertEquals(98, report.get("answeredCount"));
     }
 
     @Test

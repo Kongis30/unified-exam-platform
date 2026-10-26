@@ -41,7 +41,13 @@ const questions = computed(() => {
     return Number(left.questionNumber || 0) - Number(right.questionNumber || 0);
   });
 });
-const answeredQuestionCount = computed(() => questions.value.filter(hasSubmittedAnswer).length);
+const reportQuestionCount = computed(() => report.value?.questionCount ?? questions.value.length);
+const answeredQuestionCount = computed(() => {
+  if (!report.value?.answersVisible) {
+    return report.value?.answeredCount ?? 0;
+  }
+  return questions.value.filter(hasSubmittedAnswer).length;
+});
 const rawSectionMaxima = computed(() => ({
   ela: positiveInteger(report.value?.elaRawMaxScore),
   math: positiveInteger(report.value?.mathRawMaxScore),
@@ -446,7 +452,7 @@ const summaryHighlights = computed(() => {
       {
         key: 'answered',
         label: 'Answered',
-        value: `${answeredQuestionCount.value} / ${questions.value.length || 0}`,
+        value: `${answeredQuestionCount.value} / ${reportQuestionCount.value}`,
         meta: `${report.value.unansweredCount ?? Math.max((questions.value.length || 0) - answeredQuestionCount.value, 0)} unanswered`,
         tone: 'primary',
       },
@@ -1280,7 +1286,10 @@ onMounted(loadReport);
           </AppCard>
 
           <AppCard title="Time Analysis" subtitle="Review overall pacing for this attempt.">
-            <div class="time-analysis-grid">
+            <div v-if="!report.answersVisible && questions.length === 0" class="analysis-empty">
+              Per-question timing is unavailable under this exam's review settings. Total time used is shown above.
+            </div>
+            <div v-else class="time-analysis-grid">
               <article class="time-analysis-card">
                 <p>Total Time</p>
                 <strong>{{ formatTimeAnalysisDuration(timeAnalysis.totalTime) }}</strong>
@@ -1299,12 +1308,21 @@ onMounted(loadReport);
                 <strong>{{ formatTimeAnalysisCompactDuration(timeAnalysis.averageAnswered) }}</strong>
               </article>
             </div>
-            <p class="analysis-muted">
+            <p v-if="report.answersVisible || questions.length > 0" class="analysis-muted">
               Average across all questions: {{ formatTimeAnalysisCompactDuration(timeAnalysis.averageAll) }}.
             </p>
           </AppCard>
 
-          <AppCard title="Question Review" subtitle="Use filters to focus on unanswered or missed questions, then jump back into review mode.">
+          <AppCard
+            title="Question Review"
+            :subtitle="report.answersVisible || questions.length > 0
+              ? 'Use filters to focus on unanswered or missed questions, then jump back into review mode.'
+              : ''"
+          >
+            <div v-if="!report.answersVisible && questions.length === 0" class="analysis-empty">
+              Question details are not available under this exam's review settings.
+            </div>
+            <template v-else>
             <div class="review-toolbar">
               <div class="review-filters">
                 <button
@@ -1442,6 +1460,7 @@ onMounted(loadReport);
             <p v-else class="status-note">
               No questions match the current filter.
           </p>
+            </template>
         </AppCard>
       </template>
     </section>

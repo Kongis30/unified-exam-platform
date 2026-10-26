@@ -201,6 +201,8 @@ public class ShsatAdminReportService {
                 row.put("rawTotalScore", rs.getBigDecimal("total_points"));
                 row.put("correctCount", rs.getLong("correct_count"));
                 row.put("wrongCount", rs.getLong("wrong_count"));
+                row.put("questionCount", questionCount);
+                row.put("answeredCount", answered);
                 row.put("unansweredCount", Math.max(0, questionCount - answered));
                 row.put("completionRate", percent(answered, questionCount));
                 row.put("accuracy", percent(rs.getLong("correct_count"), answered));
