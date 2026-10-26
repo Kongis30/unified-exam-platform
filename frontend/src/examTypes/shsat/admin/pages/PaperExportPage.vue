@@ -229,7 +229,9 @@ onBeforeUnmount(() => {
       <button type="button" @click="loadPaper">Retry</button>
     </div>
 
-    <template v-else-if="paper">
+    <p v-if="paper" class="paper-export__scroll-hint no-print">Swipe horizontally to view the full Letter-size page.</p>
+
+    <div v-if="paper" class="paper-export__document-scroll">
       <template v-if="documentMode === 'STUDENT'">
       <section class="print-cover">
         <img class="print-cover__logo" src="/logo.png" alt="Jin Best Tutoring">
@@ -326,7 +328,7 @@ onBeforeUnmount(() => {
           <span>CONTINUE ON TO THE NEXT PAGE &gt;</span>
         </footer>
       </template>
-    </template>
+    </div>
   </main>
 </template>
 
@@ -342,6 +344,8 @@ onBeforeUnmount(() => {
 .paper-export__toolbar,
 .paper-export__state,
 .paper-export__notice {
+  box-sizing: border-box;
+  width: 100%;
   max-width: 8.5in;
   margin: 0 auto 16px;
   padding: 16px 20px;
@@ -361,6 +365,15 @@ onBeforeUnmount(() => {
 .paper-export__back { color: #315a9c; font-weight: 700; text-decoration: none; }
 .paper-export__controls { display: flex; align-items: center; gap: 12px; }
 .paper-export__sections { display: flex; gap: 4px; }
+.paper-export__document-scroll {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 8.5in;
+  margin: 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.paper-export__scroll-hint { display: none; }
 .paper-export__sections button,
 .paper-export__print,
 .paper-export__state button {
@@ -440,11 +453,22 @@ onBeforeUnmount(() => {
   .print-section::after { content: 'Jin Best Tutoring'; position: absolute; bottom: .35in; left: .72in; color: #667085; font-size: 9pt; }
 }
 
+@media screen and (max-width: 700px) {
+  .paper-export { padding: 12px; }
+  .paper-export__toolbar { flex-direction: column; align-items: stretch; gap: 12px; }
+  .paper-export__controls { flex-direction: column; align-items: stretch; gap: 8px; }
+  .paper-export__sections { flex-wrap: wrap; }
+  .paper-export__sections button { flex: 1 1 auto; }
+  .paper-export__print { width: 100%; }
+  .paper-export__scroll-hint { display: block; max-width: 8.5in; margin: -4px auto 10px; color: #53627a; font: 12px Arial, sans-serif; }
+}
+
 @page { size: letter; margin: .62in .72in .72in; }
 @media print {
   html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
   .paper-export { min-height: 0; padding: 0; background: #fff; }
   .no-print { display: none !important; }
+  .paper-export__document-scroll { width: auto; max-width: none; margin: 0; overflow: visible; }
   .print-cover, .print-blank-page, .print-section { width: auto; min-height: 9.66in; margin: 0; padding: .08in 0 .3in; box-shadow: none; }
   .answer-document-heading, .answer-key, .answer-details { width: auto; margin: 0; padding-right: 0; padding-left: 0; }
   .answer-key__grid { grid-template-rows: repeat(var(--answer-key-rows, 25), auto); }
