@@ -48,8 +48,8 @@
 - [x] Classes 详情返回标签回归（2026-10-27）：从 Classes 卡片进入班级详情，再点 `Back to Classes`，返回统一 SHSAT 管理首页并仍选中 Classes；测试前后班级列表首行相同，页面脚本错误为 0。截图 `/tmp/shsat-class-detail-tab-return-20261027.png`。
 - [x] SHSAT 无历史返回兜底：发现多个页面 push 到不存在的路由名 `admin`，修正为 `shsat-admin` 并附带目标标签。用新浏览器页直达后分别点击 Class Detail、Monitor、Paper Preview、Paper Editor 的返回按钮，均到达正确 SHSAT 后台标签；页面脚本错误为 0。完整返回上一页栈的行为仍需从各入口复核。
 - [x] **G1 History 三标签已补齐。** 桌面/窄屏空状态截图及含真实临时尝试的历史数据已验证；刷新、报告入口、标签过滤尚需继续逐按钮验收（证据见第 8 节）。
-- [ ] 学生 Available Exams：刷新/错误重试、按考试窗口和名额呈现 Upcoming/Available/In progress/Completed/Ended；`Start/Continue/View attempt` 分别正确进入、续考、看报告；无资格考试不泄露。
-- [x] 学生 Available Exams 当前开放场次入口与续考状态已由上方真实 SHSAT UI 流程覆盖；Upcoming、Ended、无资格及名额耗尽状态仍待逐类验证。
+- [ ] 学生 Available Exams：刷新/错误重试、按考试窗口和名额呈现所有状态；`View attempt` 卡片入口、Ended 与名额耗尽仍待验证。Upcoming/Available、受众隔离、Start、活动尝试 Continue 和续考按钮入口已通过真实 UI 测试。
+- [x] 学生 Available Exams 开放考试的 Start 入口与活动尝试 Continue 回归：学生真实发布场次后从学生首页进入；活动尝试在首页显示 `In progress / Continue`，点击 Continue 恢复同一 attempt 和已保存答案。手机 390px 考试工具栏横向滚动后可完整显示 `Submit Exam`；横向滚动是独立版继承行为，根页面无溢出。截图 `/tmp/shsat-clear-answer-mobile-1793050821518.png`、`/tmp/shsat-clear-answer-mobile-toolbar-1793050821518.png` 已目视检查。自动化 `frontend/e2e/shsat-clear-answer-persistence.cjs` 通过；清除答案保存失败后的重试、刷新恢复均通过。Ended、无资格及名额耗尽状态仍待逐类验证。
 - [x] **学生考试状态与受众隔离（2026-10-27）**：以真实临时发布验证 Upcoming 考试不能开始、Available 考试显示 `Start exam` 且按钮可用、未被指定的学生看不到这两场考试；页面脚本错误为 0，窄屏宽度 390/390。桌面及窄屏截图 `/tmp/shsat-student-exam-states-1793044091903.png`、`/tmp/shsat-student-exam-states-mobile-1793044091903.png` 已检查；窄屏改用视口截图，避免 Chromium 全页截图重复粘性导航的采集伪影。测试考试和学生已清理。自动化 `npm run test:e2e:shsat:student-states` 通过。Ended、名额耗尽、不同发布范围/班级成员资格边界仍待测。
 - [x] **学生多次重考历史排序、刷新与本人报告隔离（2026-10-27）**：扩展 `frontend/e2e/shsat-student-exam-states.cjs`；临时考试允许两次尝试，连续提交后核对历史 API 和页面按 attempt #2、#1 最新优先显示，点击 Refresh 后重新请求历史并保留两条顺序，能从最新记录打开对应报告。第二个学生访问该报告被拒绝（403/404），确认报告仅限本人。桌面/390px 历史截图 `/tmp/shsat-student-retake-history-1793050538799.png`、`/tmp/shsat-student-retake-history-mobile-1793050538799.png` 已目视检查；390px 根宽度 390px，页面脚本错误为 0，测试账号/考试/尝试均清理。`npm run test:e2e:shsat:student-states` 通过。滚动位置恢复和超过两次尝试的排序仍待验收。
 - [ ] 学生 Assigned Review：待开始、进行中、需重做、完成、截止状态；`Start review`/`Continue`/`Try again`/`View report`、剩余题量和截止时间正确。
@@ -170,7 +170,7 @@
 
 1. [ ] 管理员创建包含 ELA/Math 与代表性题型的草稿、保存并预览；正式发布到测试班级。学生在统一系统登录，选 SHSAT，看见正确卡片；未开放、已截止、未分配不可开考。
 2. [ ] `Start Exam` → Instructions `Start` → 选择先做 ELA 或 Math；两种起始顺序都测。开考后计时、截止时间、限次及离线/重开规则与独立版相同。
-3. [ ] 在每个 section 逐题作答：上一题/下一题、Review 的 All/Unanswered/Marked 和跳题、Bookmark、清空答案、作答时长与答题状态保存；刷新、断网恢复、跨设备或重复开考不丢答案/不重复创建尝试。
+3. [ ] 在每个 section 逐题作答：上一题/下一题、Review 的 All/Unanswered/Marked 和跳题、Bookmark、作答时长与答题状态保存；已有正式考试中活动尝试通过首页 `Continue` 恢复、答案保存失败后重试及刷新恢复清除状态的证据。断网恢复、跨设备或重复开考不丢答案/不重复创建尝试仍待验收。
 4. [ ] 工具栏：Pointer、Eliminate、Notes、Highlight 及颜色/清除、Drawing 及颜色/清空、Line Reader、Fullscreen、Font Size 各档、Width 各档、图片缩放/关闭。交互工具不能改变答案或遮挡题干；移动端/键盘可操作。
 5. [ ] `Submit Section`：未答题提示、确认/取消、提交后锁定该 section，进入另一个 section；不能通过返回/刷新修改已提交内容。`Submit Exam`：确认/取消、自动或手动结束、重复提交幂等；结果只生成一次。
 6. [ ] 失焦与全屏：违规提醒、继续按钮、后台记录；主动退出/返回时确认与续考；计时耗尽、窗口结束、网络异常时不会出现空白页或未提交半成品。

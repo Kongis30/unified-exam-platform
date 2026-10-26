@@ -57,7 +57,15 @@ async function main() {
     await api(student, `/api/student/attempts/${attemptId}/answers/${paperItemId}`, 'PUT', {
       answer: { answers: ['A'] }, timeSpentSeconds: 0,
     });
-    await student.goto(`${baseUrl}/student/shsat/exams/${examId}`);
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    const homeExam = (await api(student, '/api/student/exams')).find(item => Number(item.id) === examId);
+    assert.ok(homeExam, 'the in-progress exam remains on the student home page');
+    assert.equal(Number(homeExam.activeAttemptId), attemptId, 'the student exam list identifies the active attempt');
+    const examCard = student.locator('.student-exam-list article.paper-row').filter({ hasText: examTitle });
+    const continueButton = examCard.getByRole('button', { name: /^Continue/ });
+    await continueButton.waitFor();
+    await continueButton.click();
+    await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}`);
     await installFullscreenMock(student);
     await student.getByRole('button', { name: 'Enter Fullscreen' }).click();
     await continueExamDirections(student);
@@ -107,8 +115,21 @@ async function main() {
     const dimensions = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(dimensions.page <= dimensions.viewport, 'the exam page has no root overflow at 390px');
     await student.screenshot({ path: `/tmp/shsat-clear-answer-mobile-${stamp}.png` });
+    const toolbar = student.locator('.exam-toolbar');
+    const toolbarMetrics = await toolbar.evaluate(element => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth }));
+    assert.ok(toolbarMetrics.scrollWidth > toolbarMetrics.clientWidth,
+      'the narrow exam toolbar exposes its overflow as a horizontal scroll area');
+    const submitExam = student.getByRole('button', { name: 'Submit Exam', exact: true });
+    await submitExam.evaluate(element => element.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    const submitBounds = await submitExam.boundingBox();
+    assert.ok(submitBounds && submitBounds.x >= 0 && submitBounds.x + submitBounds.width <= dimensions.viewport + 1,
+      `the student can scroll the toolbar until Submit Exam is fully visible; bounds=${JSON.stringify(submitBounds)}, toolbar=${JSON.stringify(toolbarMetrics)}, scrollLeft=${await toolbar.evaluate(element => element.scrollLeft)}`);
+    await student.screenshot({ path: `/tmp/shsat-clear-answer-mobile-toolbar-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['formal exam start through student UI', 'multiple-choice answer save and restore', 'change an existing answer then clear it', 'clear answer remains local after a failed save and persists on retry', 'cleared answer survives refresh', '390px layout'], dimensions, pageErrors: pageErrors.length }));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['in-progress exam exposes Continue on student home',
+      'Continue restores the active attempt and saved answer', 'change an existing answer then clear it',
+      'clear answer remains local after a failed save and persists on retry', 'cleared answer survives refresh',
+      '390px layout', 'horizontal exam toolbar reveals Submit Exam on demand'], dimensions, toolbarMetrics, pageErrors: pageErrors.length }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});
