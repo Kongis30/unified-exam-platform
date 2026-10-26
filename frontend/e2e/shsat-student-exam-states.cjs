@@ -59,6 +59,8 @@ async function main() {
     examIds.push(upcoming.id);
     const available = await createPublishedExam(admin, paper.id, eligible.id, 'Available', -5);
     examIds.push(available.id);
+    const retake = await createPublishedExam(admin, paper.id, eligible.id, 'Retake', -5, 2);
+    examIds.push(retake.id);
 
     await login(student, eligibleUsername, password);
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
@@ -86,7 +88,43 @@ async function main() {
     assert.ok(mobileSize.pageWidth <= mobileSize.viewportWidth, 'SHSAT student home has no mobile overflow');
     await student.screenshot({ path: `/tmp/shsat-student-exam-states-mobile-${stamp}.png` });
 
+    const retakeAttempts = [];
+    for (let attemptNumber = 1; attemptNumber <= 2; attemptNumber += 1) {
+      const attempt = await api(student, `/api/student/exams/${retake.id}/attempts`, 'POST', { firstSection: 'ELA' });
+      retakeAttempts.push(Number(attempt.id));
+      const submitted = await api(student, `/api/student/attempts/${attempt.id}/submit`, 'POST');
+      assert.ok(['SUBMITTED', 'COMPLETED'].includes(submitted.status), `retake ${attemptNumber} is submitted`);
+    }
+    const history = await api(student, '/api/student/attempts/history');
+    const retakeHistory = history.filter(item => Number(item.examId) === retake.id);
+    assert.deepEqual(retakeHistory.map(item => Number(item.attemptNumber)), [2, 1],
+      'student history sorts repeated attempts latest first');
+    assert.deepEqual(retakeHistory.map(item => Number(item.attemptId)), [...retakeAttempts].reverse(),
+      'student history exposes the expected attempts for this exam');
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    await student.getByRole('tab', { name: 'Exam History', exact: true }).click();
+    const retakeRows = student.locator('.shsat-history-row').filter({ hasText: retake.title });
+    assert.equal(await retakeRows.count(), 2, 'the student sees both retakes in Exam History');
+    await retakeRows.nth(0).getByText('Attempt #2', { exact: false }).waitFor();
+    await retakeRows.nth(1).getByText('Attempt #1', { exact: false }).waitFor();
+    await student.screenshot({ path: `/tmp/shsat-student-retake-history-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const historyMobileSize = await student.evaluate(() => ({
+      pageWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    assert.ok(historyMobileSize.pageWidth <= historyMobileSize.viewportWidth,
+      'repeated attempts fit within the 390px history view');
+    await student.screenshot({ path: `/tmp/shsat-student-retake-history-mobile-${stamp}.png` });
+    await retakeRows.nth(0).getByRole('button', { name: 'View report', exact: true }).click();
+    await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[1]}/report`);
+    await student.getByText('Result Summary', { exact: true }).waitFor();
+
     await login(outsider, outsiderUsername, password);
+    const foreignReportStatus = await outsider.evaluate(async attemptId =>
+      (await fetch(`/api/student/attempts/${attemptId}/report`)).status, retakeAttempts[1]);
+    assert.ok([403, 404].includes(foreignReportStatus),
+      'another student cannot read a report outside their own account');
     await outsider.goto(`${baseUrl}/student/systems/SHSAT`);
     await outsider.getByRole('heading', { name: 'SHSAT', exact: true }).waitFor();
     assert.equal(await outsider.getByText(upcoming.title, { exact: true }).count(), 0,
@@ -97,8 +135,11 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['Upcoming status and disabled start', 'Available status and start action', 'target eligibility isolation', '390px layout'],
+      checks: ['Upcoming status and disabled start', 'Available status and start action',
+        'target eligibility isolation', 'repeated attempts and latest-first history',
+        'student report access remains private', '390px layout'],
       mobileSize,
+      historyMobileSize,
       pageErrors: pageErrors.length,
     }));
   } finally {
@@ -142,7 +183,7 @@ async function api(page, path, method = 'GET', body) {
   return response.text ? JSON.parse(response.text) : null;
 }
 
-async function createPublishedExam(admin, paperId, studentId, state, startOffsetMinutes) {
+async function createPublishedExam(admin, paperId, studentId, state, startOffsetMinutes, attemptLimit = 1) {
   const now = Date.now();
   const created = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
     title: `SHSAT ${state} state ${Date.now()}`,
@@ -150,7 +191,7 @@ async function createPublishedExam(admin, paperId, studentId, state, startOffset
     opensAt: new Date(now + startOffsetMinutes * 60_000).toISOString(),
     closesAt: new Date(now + 45 * 60_000).toISOString(),
     durationSeconds: 10_800,
-    attemptLimit: 1,
+    attemptLimit,
     targetScope: 'SELECTED',
   });
   const examId = created.summary.id;
