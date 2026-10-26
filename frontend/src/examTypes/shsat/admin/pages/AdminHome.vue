@@ -298,17 +298,19 @@ const selectedPaper = computed(() => {
 const selectedExamTargetClasses = computed(() => {
   const selectedIds = new Set(examForm.targetClassIds.map((item) => String(item)));
 
-  return classes.value.filter((item) => selectedIds.has(String(item.classId)));
+  return assignableExamClasses.value.filter((item) => selectedIds.has(String(item.classId)));
 });
+
+const assignableExamClasses = computed(() => classes.value.filter((item) => item.isActive));
 
 const filteredExamTargetClasses = computed(() => {
   const keyword = examClassFilters.keyword.trim().toLowerCase();
 
   if (!keyword) {
-    return classes.value;
+    return assignableExamClasses.value;
   }
 
-  return classes.value.filter((item) => {
+  return assignableExamClasses.value.filter((item) => {
     return [
       item.className,
       item.teacherName,
@@ -4358,7 +4360,7 @@ onBeforeUnmount(() => {
                       class="form-input exam-class-search"
                       placeholder="Search class, teacher, grade"
                     />
-                    <div v-if="classes.length > 0" class="exam-class-picker__grid">
+                    <div v-if="filteredExamTargetClasses.length > 0" class="exam-class-picker__grid">
                       <label
                         v-for="item in filteredExamTargetClasses"
                         :key="item.classId"
@@ -4372,10 +4374,10 @@ onBeforeUnmount(() => {
                         </span>
                       </label>
                     </div>
-                    <p v-if="classes.length > 0 && filteredExamTargetClasses.length === 0" class="form-hint">
+                    <p v-if="assignableExamClasses.length > 0 && filteredExamTargetClasses.length === 0" class="form-hint">
                       No classes match the current search.
                     </p>
-                    <p v-else-if="classes.length === 0" class="form-hint">Create a class before publishing an exam to specific classes.</p>
+                    <p v-else-if="assignableExamClasses.length === 0" class="form-hint">Activate a class before creating an exam for specific classes.</p>
                   </div>
                 </section>
 
