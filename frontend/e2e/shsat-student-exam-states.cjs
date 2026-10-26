@@ -76,7 +76,7 @@ async function main() {
     assert.equal(await availableRow.getByRole('button', { name: 'Start exam' }).count(), 1,
       'available exams provide a Start exam action');
     assert.equal(await availableRow.getByRole('button', { name: 'Start exam' }).isEnabled(), true);
-    await student.screenshot({ path: `/tmp/shsat-student-exam-states-${stamp}.png`, fullPage: true });
+    await student.screenshot({ path: `/tmp/shsat-student-exam-states-${stamp}.png` });
 
     await student.setViewportSize({ width: 390, height: 844 });
     const mobileSize = await student.evaluate(() => ({
@@ -84,7 +84,7 @@ async function main() {
       viewportWidth: window.innerWidth,
     }));
     assert.ok(mobileSize.pageWidth <= mobileSize.viewportWidth, 'SHSAT student home has no mobile overflow');
-    await student.screenshot({ path: `/tmp/shsat-student-exam-states-mobile-${stamp}.png`, fullPage: true });
+    await student.screenshot({ path: `/tmp/shsat-student-exam-states-mobile-${stamp}.png` });
 
     await login(outsider, outsiderUsername, password);
     await outsider.goto(`${baseUrl}/student/systems/SHSAT`);

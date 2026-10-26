@@ -50,6 +50,7 @@
 - [x] **G1 History 三标签已补齐。** 桌面/窄屏空状态截图及含真实临时尝试的历史数据已验证；刷新、报告入口、标签过滤尚需继续逐按钮验收（证据见第 8 节）。
 - [ ] 学生 Available Exams：刷新/错误重试、按考试窗口和名额呈现 Upcoming/Available/In progress/Completed/Ended；`Start/Continue/View attempt` 分别正确进入、续考、看报告；无资格考试不泄露。
 - [x] 学生 Available Exams 当前开放场次入口与续考状态已由上方真实 SHSAT UI 流程覆盖；Upcoming、Ended、无资格及名额耗尽状态仍待逐类验证。
+- [x] **学生考试状态与受众隔离（2026-10-27）**：以真实临时发布验证 Upcoming 考试不能开始、Available 考试显示 `Start exam` 且按钮可用、未被指定的学生看不到这两场考试；页面脚本错误为 0，窄屏宽度 390/390。桌面及窄屏截图 `/tmp/shsat-student-exam-states-1793044091903.png`、`/tmp/shsat-student-exam-states-mobile-1793044091903.png` 已检查；窄屏改用视口截图，避免 Chromium 全页截图重复粘性导航的采集伪影。测试考试和学生已清理。自动化 `npm run test:e2e:shsat:student-states` 通过。Ended、名额耗尽、不同发布范围/班级成员资格边界仍待测。
 - [ ] 学生 Assigned Review：待开始、进行中、需重做、完成、截止状态；`Start review`/`Continue`/`Try again`/`View report`、剩余题量和截止时间正确。
 - [ ] 学生 Exam History：按时间排序、刷新、`View Details`/`View Report`、重考多次记录、只有本人记录可见；返回后保留列表位置。
 - [x] **History / report 定向闭环**：学生提交后回到统一 SHSAT 学生工作区，刷新 Exam History 可找到该记录并从历史再次打开本人报告；用临时学生复核，无浏览器脚本错误。历史分页、多次重考筛选与滚动位置仍待验收。
