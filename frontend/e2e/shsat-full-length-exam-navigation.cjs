@@ -4,6 +4,8 @@ const { chromium } = require('playwright');
 const baseUrl = process.env.E2E_BASE_URL || 'http://localhost:5175';
 const adminUsername = process.env.E2E_ADMIN_USERNAME;
 const adminPassword = process.env.E2E_ADMIN_PASSWORD;
+const firstSection = process.env.E2E_START_SECTION || 'ELA';
+if (!['ELA', 'Math'].includes(firstSection)) throw new Error('E2E_START_SECTION must be ELA or Math.');
 if (!adminUsername || !adminPassword) throw new Error('Set E2E_ADMIN_USERNAME and E2E_ADMIN_PASSWORD before running this test.');
 
 async function main() {
@@ -64,20 +66,23 @@ async function main() {
     await student.getByRole('heading', { name: 'Choose Starting Section', exact: true }).waitFor();
     const attemptResponse = student.waitForResponse(response => response.url().endsWith(`/api/student/exams/${examId}/attempts`)
       && response.request().method() === 'POST');
-    await student.getByRole('button', { name: /ELA/ }).click();
+    await student.getByRole('button', { name: new RegExp(firstSection) }).click();
     const createdAttempt = await (await attemptResponse).json();
     attemptId = Number(createdAttempt.id || createdAttempt.attemptId);
     assert.ok(attemptId > 0, 'starting the released exam creates one attempt');
     await student.locator('.exam-transition-page .exam-transition-card__button').click();
-    await expectQuestion(student, 1);
-    await advanceQuestions(student, 1, 50);
+    const firstRange = sectionRange(firstSection);
+    const secondSection = firstSection === 'ELA' ? 'Math' : 'ELA';
+    const secondRange = sectionRange(secondSection);
+    await expectQuestion(student, firstRange.start);
+    await advanceQuestions(student, firstRange.start, firstRange.end);
 
     await student.getByRole('button', { name: 'Submit Section', exact: true }).click();
     await student.getByRole('dialog').getByRole('button', { name: 'Submit Section', exact: true }).click();
     await student.waitForFunction(() => document.querySelector('.exam-transition-card__button'));
     await student.locator('.exam-transition-card__button').click();
-    await expectQuestion(student, 51);
-    await advanceQuestions(student, 51, 100);
+    await expectQuestion(student, secondRange.start);
+    await advanceQuestions(student, secondRange.start, secondRange.end);
 
     await student.getByRole('button', { name: 'Submit Exam', exact: true }).click();
     await student.getByRole('dialog').getByRole('button', { name: 'Submit Exam', exact: true }).click();
@@ -104,9 +109,11 @@ async function main() {
     assert.deepEqual(pageErrors, [], 'the complete two-section workflow has no browser errors');
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['100-question UI navigation', 'ELA section submit and Math transition', 'Math section submit and final report',
+      checks: [`100-question UI navigation starting with ${firstSection}`, `${firstSection} submit and ${secondSection} transition`,
+        `${secondSection} submit and final report`,
         '100 question results and 50/50 section maxima', 'student/admin report answer counts reconcile', '390px report layout'],
-      attemptId, correctCount: adminReport.correctCount, wrongCount: adminReport.wrongCount, mobileSize, pageErrors: pageErrors.length,
+      firstSection, attemptId, correctCount: adminReport.correctCount, wrongCount: adminReport.wrongCount, mobileSize,
+      pageErrors: pageErrors.length,
     }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
@@ -117,6 +124,10 @@ async function main() {
     await adminContext.close();
     await browser.close();
   }
+}
+
+function sectionRange(section) {
+  return section === 'ELA' ? { start: 1, end: 50 } : { start: 51, end: 100 };
 }
 
 async function advanceQuestions(page, firstQuestion, lastQuestion) {
