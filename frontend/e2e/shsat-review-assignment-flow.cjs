@@ -13,18 +13,23 @@ async function main() {
   });
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const studentContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const teacherContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const admin = await adminContext.newPage();
   const student = await studentContext.newPage();
+  const teacher = await teacherContext.newPage();
   const errors = [];
-  [admin, student].forEach(page => page.on('pageerror', error => errors.push(error.message)));
+  [admin, student, teacher].forEach(page => page.on('pageerror', error => errors.push(error.message)));
   const stamp = Date.now();
   const displayStamp = String(stamp).slice(-6);
   const username = `shsat_review_${stamp}`;
   const password = `Review${stamp}!`;
+  const teacherUsername = `shsat_review_teacher_${stamp}`;
+  const teacherPassword = `Teacher${stamp}!`;
   const className = `Review Check ${displayStamp}`;
   const examTitle = `SHSAT Review ${displayStamp}`;
   const taskTitle = `Assigned Review ${displayStamp}`;
   let userId;
+  let teacherId;
   let classId;
   let examId;
   let taskId;
@@ -36,6 +41,11 @@ async function main() {
       username, password, realName: `Review Student ${displayStamp}`, roleCode: 'STUDENT', email: null, phone: null,
     });
     userId = Number(user.id);
+    const teacherAccount = await api(admin, '/api/admin/users', 'POST', {
+      username: teacherUsername, password: teacherPassword, realName: `Review Teacher ${displayStamp}`,
+      roleCode: 'TEACHER', email: null, phone: null,
+    });
+    teacherId = Number(teacherAccount.id);
     const classroom = await api(admin, '/api/admin/classes?examTypeCodes=SHSAT', 'POST', {
       name: className, description: 'Temporary review assignment verification', sortOrder: 0,
       teacherName: null, teacherEmail: null, gradeLevel: null, academicYear: null, active: true,
@@ -65,10 +75,15 @@ async function main() {
     const submittedAttempt = await api(student, `/api/student/attempts/${attemptId}/submit`, 'POST');
     assert.ok(['SUBMITTED', 'COMPLETED'].includes(submittedAttempt.status), 'the student source attempt is submitted');
 
-    await admin.goto(`${baseUrl}/exam-types/SHSAT/admin`);
-    await admin.getByRole('tab', { name: 'Review Assignments', exact: true }).click();
-    await admin.getByRole('button', { name: 'Create Assignment', exact: true }).click();
-    const modal = admin.locator('.wrong-task-modal');
+    await login(teacher, teacherUsername, teacherPassword);
+    await teacher.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    await teacher.getByRole('tab', { name: 'Review Assignments', exact: true }).click();
+    assert.equal(await teacher.getByRole('tab', { name: 'Paper Management', exact: true }).count(), 0,
+      'teachers can manage review assignments without paper editing access');
+    const teacherAccountDirectoryError = await api(teacher, '/api/admin/users').then(() => '', error => error.message);
+    assert.match(teacherAccountDirectoryError, /403/, 'teachers cannot access the platform account directory');
+    await teacher.getByRole('button', { name: 'Create Assignment', exact: true }).click();
+    const modal = teacher.locator('.wrong-task-modal');
     await modal.waitFor();
     await modal.getByLabel('Exam').click();
     await modal.getByRole('option', { name: new RegExp(examTitle) }).click();
@@ -78,7 +93,7 @@ async function main() {
 
     const startAt = modal.getByRole('textbox', { name: 'Start time' });
     const endAt = modal.getByRole('textbox', { name: 'End time' });
-    const { startValue, endValue } = await admin.evaluate(() => {
+    const { startValue, endValue } = await teacher.evaluate(() => {
       const format = date => {
         const pad = value => String(value).padStart(2, '0');
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -95,22 +110,22 @@ async function main() {
     await endAt.fill(endValue);
     await modal.getByText('The end time must be later than the start time.', { exact: true }).waitFor({ state: 'detached' });
 
-    await admin.screenshot({ path: `/tmp/shsat-review-assignment-create-${stamp}.png` });
-    await admin.setViewportSize({ width: 390, height: 844 });
-    await admin.waitForTimeout(250);
-    const mobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    await teacher.screenshot({ path: `/tmp/shsat-review-assignment-create-${stamp}.png` });
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    await teacher.waitForTimeout(250);
+    const mobileSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(mobileSize.page <= mobileSize.viewport, 'the assignment form fits a 390px viewport');
-    await admin.screenshot({ path: `/tmp/shsat-review-assignment-create-mobile-${stamp}.png` });
+    await teacher.screenshot({ path: `/tmp/shsat-review-assignment-create-mobile-${stamp}.png` });
     const modalScroll = await modal.evaluate(element => ({ height: element.clientHeight, contentHeight: element.scrollHeight }));
     if (modalScroll.contentHeight > modalScroll.height) {
       await modal.evaluate(element => { element.scrollTop = element.scrollHeight; });
       await modal.getByRole('button', { name: 'Create Assignment', exact: true }).scrollIntoViewIfNeeded();
       const footerBounds = await modal.getByRole('button', { name: 'Create Assignment', exact: true }).boundingBox();
       assert.ok(footerBounds && footerBounds.y + footerBounds.height <= 844, 'the mobile modal footer can be scrolled into view');
-      await admin.screenshot({ path: `/tmp/shsat-review-assignment-create-mobile-footer-${stamp}.png` });
+      await teacher.screenshot({ path: `/tmp/shsat-review-assignment-create-mobile-footer-${stamp}.png` });
       await modal.evaluate(element => { element.scrollTop = 0; });
     }
-    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await teacher.setViewportSize({ width: 1440, height: 1000 });
 
     await modal.getByRole('button', { name: 'Create Assignment', exact: true }).click();
     await modal.waitFor({ state: 'detached' });
@@ -158,6 +173,7 @@ async function main() {
     assert.equal(taskAfterStart.assignments[0].status, 'IN_PROGRESS');
     assert.equal(taskAfterStart.assignments[0].practiceAttemptId, practiceAttemptId);
 
+    await admin.goto(`${baseUrl}/exam-types/SHSAT/admin?tab=wrong-answer-tasks`);
     await admin.getByRole('tab', { name: 'Review Assignments', exact: true }).click();
     let row = admin.locator('.wrong-task-table tbody tr').filter({ hasText: taskTitle });
     await row.waitFor();
@@ -338,7 +354,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
@@ -355,7 +371,9 @@ async function main() {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});
+    if (teacherId) await api(admin, `/api/admin/users/${teacherId}`, 'DELETE').catch(() => {});
     await studentContext.close();
+    await teacherContext.close();
     await adminContext.close();
     await browser.close();
   }
