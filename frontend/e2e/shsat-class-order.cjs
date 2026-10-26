@@ -18,10 +18,21 @@ async function main() {
   const stamp = Date.now();
   const names = [1, 2, 3].map(index => `SHSAT Order ${stamp} ${index}`);
   const createdIds = [];
+  let teacherId;
+  let teacherContext;
   let originalOrder = [];
 
   try {
     await login(page);
+    const teacher = await api(page, '/api/admin/users', 'POST', {
+      username: `shsat_order_teacher_${stamp}`,
+      password: `OrderTeacher${stamp}!`,
+      realName: `Order Teacher ${String(stamp).slice(-6)}`,
+      roleCode: 'TEACHER',
+      email: null,
+      phone: null,
+    });
+    teacherId = Number(teacher.id);
     const existing = await api(page, '/api/admin/classes?examTypeCodes=SHSAT');
     originalOrder = existing.map(item => Number(item.classId || item.id));
     for (const name of names) {
@@ -37,69 +48,137 @@ async function main() {
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin`);
     await page.getByRole('tab', { name: 'Classes', exact: true }).click();
     const cards = page.locator('.class-grid .class-card');
-    const currentClasses = await api(page, '/api/admin/classes?examTypeCodes=SHSAT');
-    const temporaryClassIds = new Map(currentClasses
-      .filter(item => names.includes(item.name))
-      .map(item => [item.name, Number(item.classId || item.id)]));
     const beforeTitles = (await page.locator('.class-grid .class-card h3').allTextContents()).filter(title => names.includes(title));
     assert.equal(beforeTitles.length, 3, 'all temporary classes appear in the list');
-    const first = cards.filter({ hasText: beforeTitles[0] });
-    const third = cards.filter({ hasText: beforeTitles[2] });
-    await first.waitFor();
-    await third.waitFor();
-    const reorderResponse = page.waitForResponse(response =>
-      response.request().method() === 'POST' && response.url().includes('/api/admin/classes/reorder'));
-    await first.dragTo(third, { targetPosition: { x: 40, y: 30 } });
-    await reorderResponse;
+    const initialApiOrder = (await api(page, '/api/admin/classes?examTypeCodes=SHSAT'))
+      .filter(item => names.includes(item.name)).map(item => item.name);
+    assert.deepEqual(initialApiOrder, beforeTitles, 'class cards start in API order');
+    let expectedTitles = [...beforeTitles];
+    async function dragAndVerify(sourceTitle, targetTitle, label) {
+      const source = cards.filter({ hasText: sourceTitle });
+      const target = cards.filter({ hasText: targetTitle });
+      const reorderResponse = page.waitForResponse(response =>
+        response.request().method() === 'POST' && response.url().includes('/api/admin/classes/reorder'), { timeout: 5000 })
+        .catch(() => null);
+      await dragCards(page, source, target);
+      const response = await reorderResponse;
+      assert.ok(response, `${label} submits a class reorder`);
+      const sourceIndex = expectedTitles.indexOf(sourceTitle);
+      const targetIndex = expectedTitles.indexOf(targetTitle);
+      expectedTitles.splice(sourceIndex, 1);
+      expectedTitles.splice(targetIndex, 0, sourceTitle);
+      const rows = await api(page, '/api/admin/classes?examTypeCodes=SHSAT');
+      const persistedTitles = rows.filter(item => names.includes(item.name)).map(item => item.name);
+      assert.deepEqual(persistedTitles, expectedTitles, `${label} persists the expected temporary class order`);
+      await page.waitForFunction(expected => {
+        const current = [...document.querySelectorAll('.class-grid .class-card h3')].map(element => element.textContent.trim());
+        return JSON.stringify(current.filter(title => title.includes('SHSAT Order '))) === JSON.stringify(expected);
+      }, expectedTitles);
+      await page.reload();
+      await page.getByRole('tab', { name: 'Classes', exact: true }).click();
+      await page.waitForFunction(expected => {
+        const current = [...document.querySelectorAll('.class-grid .class-card h3')].map(element => element.textContent.trim());
+        return JSON.stringify(current.filter(title => title.includes('SHSAT Order '))) === JSON.stringify(expected);
+      }, expectedTitles);
+    }
 
-    const expected = await api(page, '/api/admin/classes?examTypeCodes=SHSAT');
-    const expectedOrder = expected.map(item => Number(item.classId || item.id));
-    const draggedOrder = beforeTitles.map(title => temporaryClassIds.get(title));
-    draggedOrder.splice(0, 1);
-    draggedOrder.splice(2, 0, temporaryClassIds.get(beforeTitles[0]));
-    const expectedWithOriginal = [...originalOrder, ...draggedOrder];
-    assert.deepEqual(expectedOrder, expectedWithOriginal, 'dragging the first temporary class to the third persists its new order');
+    await dragAndVerify(beforeTitles[0], beforeTitles[2], 'dragging the first class to the last position');
+    await dragAndVerify(beforeTitles[0], beforeTitles[1], 'dragging the last class to the first position');
+    await dragAndVerify(beforeTitles[2], beforeTitles[1], 'dropping onto the middle class');
+    await dragAndVerify(beforeTitles[1], beforeTitles[0], 'dragging the last class back ahead of the first');
 
     await page.reload();
     await page.getByRole('tab', { name: 'Classes', exact: true }).click();
     const titles = await page.locator('.class-grid .class-card h3').allTextContents();
     const temporaryTitles = titles.filter(title => names.includes(title));
-    const expectedTitles = [...beforeTitles.slice(1), beforeTitles[0]];
     assert.deepEqual(temporaryTitles, expectedTitles, 'the moved order survives reload');
+
+    teacherContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const teacherPage = await teacherContext.newPage();
+    teacherPage.on('pageerror', error => pageErrors.push(error.message));
+    await loginCredentials(teacherPage, `shsat_order_teacher_${stamp}`, `OrderTeacher${stamp}!`);
+    await teacherPage.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    await teacherPage.getByRole('tab', { name: 'Classes', exact: true }).click();
+    assert.ok(await teacherPage.locator('.class-grid--reorderable').count(), 'teachers can reorder classes in the SHSAT workspace');
+    const teacherCards = teacherPage.locator('.class-grid .class-card');
+    const teacherSource = teacherCards.filter({ hasText: expectedTitles[2] });
+    const teacherTarget = teacherCards.filter({ hasText: expectedTitles[0] });
+    const teacherReorderResponse = teacherPage.waitForResponse(response =>
+      response.request().method() === 'POST' && response.url().includes('/api/admin/classes/reorder'), { timeout: 5000 });
+    await dragCards(teacherPage, teacherSource, teacherTarget);
+    await teacherReorderResponse;
+    const teacherExpectedTitles = [expectedTitles[2], ...expectedTitles.slice(0, 2)];
+    const teacherRows = await api(teacherPage, '/api/admin/classes?examTypeCodes=SHSAT');
+    assert.deepEqual(teacherRows.filter(item => names.includes(item.name)).map(item => item.name), teacherExpectedTitles,
+      'teacher class ordering is persisted by the shared class service');
+    expectedTitles = teacherExpectedTitles;
+    await teacherPage.reload();
+    await teacherPage.getByRole('tab', { name: 'Classes', exact: true }).click();
+    const teacherReloadTitles = (await teacherPage.locator('.class-grid .class-card h3').allTextContents())
+      .filter(title => names.includes(title));
+    assert.deepEqual(teacherReloadTitles, expectedTitles, 'teacher changes survive reload');
+
+    await page.reload();
+    await page.getByRole('tab', { name: 'Classes', exact: true }).click();
+    await page.waitForFunction(expected => {
+      const current = [...document.querySelectorAll('.class-grid .class-card h3')].map(element => element.textContent.trim());
+      return JSON.stringify(current.filter(title => title.includes('SHSAT Order '))) === JSON.stringify(expected);
+    }, expectedTitles);
     const firstOrderedCard = page.locator('.class-grid .class-card').filter({ hasText: expectedTitles[0] });
-    const lastOrderedCard = page.locator('.class-grid .class-card').filter({ hasText: expectedTitles[2] });
-    await firstOrderedCard.evaluate(element => element.scrollIntoView({ block: 'center' }));
+    await firstOrderedCard.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `/tmp/shsat-class-order-desktop-${stamp}.png` });
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(250);
     const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(dimensions.page <= dimensions.viewport, 'class cards fit a 390px page');
-    await page.evaluate(title => {
-      const grid = document.querySelector('.class-grid');
-      const card = [...grid.querySelectorAll('.class-card')]
-        .find(element => element.querySelector('h3')?.textContent === title);
-      grid.scrollTop = card.offsetTop - 16;
-      const top = grid.getBoundingClientRect().top + window.scrollY;
-      window.scrollTo(0, Math.max(0, top - 150));
-    }, expectedTitles[2]);
+    const mobileTarget = page.locator('.class-grid .class-card').filter({ hasText: expectedTitles[2] });
+    await mobileTarget.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `/tmp/shsat-class-order-mobile-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['drag order persistence', 'reload order', '390px page width'], dimensions }));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['first/middle/last drag boundaries', 'order persistence after every drop', 'reload order', 'teacher can reorder and persists changes', '390px page width'], dimensions }));
   } finally {
     for (const classId of createdIds) await api(page, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (originalOrder.length) await api(page, '/api/admin/classes/reorder?examTypeCodes=SHSAT', 'POST', { classIds: originalOrder }).catch(() => {});
+    if (teacherId) await api(page, `/api/admin/users/${teacherId}`, 'DELETE').catch(() => {});
     const remaining = await api(page, '/api/admin/classes?examTypeCodes=SHSAT');
     assert.ok(createdIds.every(id => !remaining.some(item => Number(item.classId || item.id) === id)), 'temporary classes are removed');
     const restoredOrder = remaining.map(item => Number(item.classId || item.id));
     assert.deepEqual(restoredOrder, originalOrder, 'the original class order is restored');
+    if (teacherId) {
+      const accounts = await api(page, '/api/admin/users');
+      assert.ok(!accounts.some(item => Number(item.id) === teacherId), 'the temporary teacher account is removed');
+    }
+    await teacherContext?.close();
     await browser.close();
   }
 }
 
+async function dragCards(page, source, target) {
+  await source.scrollIntoViewIfNeeded();
+  await target.scrollIntoViewIfNeeded();
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  const viewportHeight = await page.evaluate(() => innerHeight);
+  const sourcePoint = { x: sourceBox.x + sourceBox.width / 2, y: sourceBox.y + sourceBox.height / 2 };
+  const targetPoint = { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 };
+  assert.ok(sourcePoint.y >= 0 && sourcePoint.y <= viewportHeight
+    && targetPoint.y >= 0 && targetPoint.y <= viewportHeight, 'both drag points are visible');
+  await page.mouse.move(sourcePoint.x, sourcePoint.y);
+  await page.mouse.down();
+  await page.mouse.move(sourcePoint.x + 8, sourcePoint.y + 8, { steps: 3 });
+  await page.mouse.move(targetPoint.x, targetPoint.y, { steps: 12 });
+  await page.mouse.up();
+}
+
 async function login(page) {
+  await loginCredentials(page, adminUsername, adminPassword);
+}
+
+async function loginCredentials(page, username, password) {
   await page.goto(`${baseUrl}/login`);
-  await page.getByLabel('Username').fill(adminUsername);
-  await page.getByLabel('Password').fill(adminPassword);
+  await page.getByLabel('Username').fill(username);
+  await page.getByLabel('Password').fill(password);
   await page.locator('button[type="submit"]').click();
   await page.waitForURL(url => !url.pathname.endsWith('/login'));
 }
