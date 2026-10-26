@@ -38,11 +38,18 @@ async function main() {
     const statusFilter = page.getByLabel('Online Status', { exact: true });
     const search = page.locator('input[placeholder="Paper name"]');
     const searchButton = page.getByRole('button', { name: 'Search', exact: true }).first();
+    const applySearch = async () => {
+      const response = page.waitForResponse(item =>
+        item.request().method() === 'GET' && new URL(item.url()).pathname.endsWith('/papers'),
+      );
+      await searchButton.click();
+      await response;
+    };
 
     await folderFilter.selectOption(String(group.id));
     for (const onlineValue of ['true', 'false']) {
       await statusFilter.selectOption(onlineValue);
-      await searchButton.click();
+      await applySearch();
       const folder = page.locator('.folder-panel').filter({ hasText: group.name });
       await folder.locator('.folder-panel__main-button').click();
       const expected = expectedPapers
@@ -61,15 +68,42 @@ async function main() {
     assert.ok(onlinePaper, 'the test group should contain a READY paper');
     await statusFilter.selectOption('true');
     await search.fill(onlinePaper.title);
-    await searchButton.click();
+    await applySearch();
     const filteredFolder = page.locator('.folder-panel').filter({ hasText: group.name });
     await filteredFolder.locator('.folder-panel__main-button').click();
     const displayedSearchResults = await filteredFolder.locator('tbody tr td:first-child strong').allTextContents();
     assert.deepEqual(displayedSearchResults, [onlinePaper.title], 'folder, online status, and name filters should combine');
+
+    await search.fill('zz_no_matching_paper_927');
+    await applySearch();
+    await page.getByText('No papers found. Try changing or clearing the filters.', { exact: true }).waitFor();
+    await page.screenshot({ path: '/tmp/shsat-paper-filter-no-results-20261027.png', fullPage: true });
+
+    await folderFilter.selectOption('');
+    await statusFilter.selectOption('');
+    await search.fill('');
+    await applySearch();
+    const restoredCount = await page.locator('.folder-panel__header small').evaluateAll(nodes =>
+      nodes.reduce((total, node) => total + Number(node.textContent.trim().split(' ')[0]), 0),
+    );
+    assert.equal(restoredCount, papers.length, 'clearing all filters should restore all papers and folder counts');
+
+    await folderFilter.selectOption(String(group.id));
+    await statusFilter.selectOption('false');
+    await applySearch();
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    const refreshedCount = await page.locator('.folder-panel__header small').evaluateAll(nodes =>
+      nodes.reduce((total, node) => total + Number(node.textContent.trim().split(' ')[0]), 0),
+    );
+    assert.equal(refreshedCount, papers.length, 'reloading should restore the unfiltered paper list and counts');
     assert.deepEqual(pageErrors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['folder filter', 'Online filter', 'Offline filter', 'combined folder/status/name search'],
+      checks: [
+        'folder filter', 'Online filter', 'Offline filter', 'combined folder/status/name search',
+        'no-results state', 'clear all filters', 'reload restores full list',
+      ],
       matchedPapers: { online: expectedPapers.filter(paper => paper.status === 'READY').length,
         offline: expectedPapers.filter(paper => paper.status !== 'READY').length },
       pageErrors: pageErrors.length,

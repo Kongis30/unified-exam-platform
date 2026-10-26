@@ -200,6 +200,7 @@ const paperFilters = reactive({
   keyword: '',
   online: '',
 });
+const hasAppliedPaperFilter = ref(false);
 
 const examReleaseFilters = reactive({
   keyword: '',
@@ -1618,6 +1619,9 @@ function validateExamPayload(payload) {
 async function loadPapers() {
   loading.papers = true;
   errors.papers = '';
+  hasAppliedPaperFilter.value = Boolean(
+    paperFilters.groupId || paperFilters.online || paperFilters.keyword.trim(),
+  );
 
   try {
     const [groupResponse, paperResponse] = await Promise.all([
@@ -3212,6 +3216,9 @@ onBeforeUnmount(() => {
 
           <div v-if="loading.papers" class="admin-state">Loading papers...</div>
           <div v-else-if="errors.papers" class="admin-state admin-state--error">{{ errors.papers }}</div>
+          <div v-else-if="hasAppliedPaperFilter && papers.length === 0" class="admin-state">
+            No papers found. Try changing or clearing the filters.
+          </div>
           <div v-else-if="groupedPapers.length === 0" class="admin-state">No papers found.</div>
 
             <div v-else class="folder-list" :class="{ 'folder-list--reorderable': canReorderPaperGroups }">

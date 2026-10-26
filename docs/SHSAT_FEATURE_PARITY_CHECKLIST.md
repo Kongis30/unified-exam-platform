@@ -55,7 +55,7 @@
 
 ## 2. Paper Management：每组与每卷
 
-- [ ] 搜索框与 `Search`、文件夹筛选、Online 状态筛选：单独/组合使用，清空与刷新后结果和计数正确，空结果提示清楚。
+- [x] 搜索框与 `Search`、文件夹筛选、Online 状态筛选：单独/组合使用，清空与刷新后结果和计数正确，空结果提示清楚（详见 2026-10-27 Paper List 筛选回归）。
 - [ ] `Create Folder`：名称必填/重复/取消/确认；组列表更新；文件夹默认折叠且可展开/收起。展开状态刷新后重置为折叠，与独立版实现一致；不要求跨刷新记忆。
 - [ ] 分组拖动排序：首组、中间组、末组互换，拖入第二组或拖出第二组均持久化；刷新/重新登录顺序一致；每个组恰好一次，默认组规则正确。
 - [x] 分组顺序回归抽测：在真实 SHSAT Paper Management 页面将第二个可拖动分组移到第三个位置；刷新后 UI 顺序与后端 `sortOrder` 一致，所有 7 个 group ID 唯一且完整；测试后通过正式排序接口恢复原顺序并复核成功。桌面截图 `42-paper-groups-reordered.png`。首/末组、反方向拖动、重新登录持久化仍待覆盖。
@@ -225,7 +225,7 @@
 - [x] **Paper Management 文件夹 CRUD 回归（2026-10-27）**：管理员从页面新建临时分组并填写说明，刷新后仍存在；重命名后刷新仍保留新名称；从确认弹窗删除空分组后，页面及分组 API 均查无该项。临时分组已清理，页面脚本错误为 0。截图 `/tmp/shsat-paper-folder-renamed-20261027.png`。此项未覆盖重名校验、取消操作、非空分组删除限制与排序拖动。
 - [x] 文件夹表单边界回归：空名称显示英文必填提示；重复已有分组名显示英文冲突提示；取消后对话框关闭且未创建记录。页面脚本错误为 0。非空分组删除限制仍待验收；分组拖动已覆盖第二组到第三组后的持久化，其它顺序边界仍待测。
 - [x] **第二个试卷分组拖动与刷新持久化回归（2026-10-27）**：分别验证第二可拖动组拖出，以及 `Saturday Class` 拖入第二组位置；两次页面排序请求均成功，刷新后 API 顺序与页面一致。每次结束都恢复并核对原始组顺序。截图 `/tmp/shsat-second-folder-order-20261027.png`、`/tmp/shsat-other-folder-into-second-20261027.png`。未覆盖首组/末组互换、教师权限及其它拖动边界。
-- [x] **SHSAT Paper List 筛选回归（2026-10-27）**：对照独立版查询参数，在统一版发现 Online/Offline 选择未应用；现 `getPapers` 按 READY 状态过滤。用真实 SHSAT CRASH COURSE 数据核对：Online 4 卷、Offline 2 卷；文件夹、状态、名称组合筛选均匹配，浏览器脚本错误为 0。E2E 回归保存在 `frontend/e2e/shsat-paper-filters.cjs`，桌面截图 `/tmp/shsat-paper-filter-online-20261027.png`、`/tmp/shsat-paper-filter-offline-20261027.png`。清空筛选、空结果提示与筛选后刷新行为仍待验收。
+- [x] **SHSAT Paper List 筛选与恢复回归（2026-10-27）**：对照独立版查询参数修复 Online/Offline 筛选；真实 SHSAT CRASH COURSE 数据为 Online 4 卷、Offline 2 卷，文件夹、状态、名称组合筛选均匹配。补充验证零匹配搜索后，原页面只显示折叠的 `0 papers` 分组、不够明确；现在显示 `No papers found. Try changing or clearing the filters.`；清空筛选后恢复全部 47 卷，刷新也回到完整列表。自动化回归 `frontend/e2e/shsat-paper-filters.cjs` 全部通过，浏览器脚本错误为 0。截图 `/tmp/shsat-paper-filter-online-20261027.png`、`/tmp/shsat-paper-filter-offline-20261027.png`、`/tmp/shsat-paper-filter-no-results-20261027.png`。
 - [x] **SHSAT 试卷基础 CRUD 抽测（2026-10-27）**：管理员从 `Create Paper` 新建临时空白卷后进入编辑器，ELA/Math 区域可见；修改名称和说明，刷新后仍能按新名称检索；随后通过列表删除菜单确认影响并等待冷静期，试卷及 API 记录均已删除。浏览器脚本错误为 0。截图 `/tmp/shsat-paper-editor-created-20261027.png`。题目结构编辑、预览、PDF 导出和更多字段校验仍待覆盖。
 - [x] **单题编辑与预览闭环抽测（2026-10-27）**：临时新卷中新增默认 Multiple Choice 题，填写题干、保存后刷新，题目仍在 ELA 且字段完整；Paper Preview 显示同一题干和两个答案选项。测试纸卷最终删除，未创建学生考试记录；浏览器脚本错误为 0。截图 `/tmp/shsat-question-editor-saved-20261027.png`、`/tmp/shsat-question-preview-20261027.png`。未覆盖题型专属编辑、答案正确性/评分、其它 11 种题型与 PDF。
 - [x] **Math→ELA 学生端完整流程与成绩闭环（2026-10-27）**：临时创建含一题 ELA、一题 Math 的 SHSAT 卷和定向考试；学生实际登录、选择 SHSAT、从 Math 开始、在 UI 作答并提交 Math、进入 ELA 后作答并最终交卷，随后在考试结束时间后打开本人报告。检查尝试顺序为 `MATH → ELA`，报告状态 `COMPLETED`、raw 总分 `2/2`、ELA `1/1`、Math `1/1`、正确 `2`、错误/未答 `0`；管理员报告与学生报告一致。浏览器脚本错误为 0；测试考试、临时试卷、临时学生已全部删除。桌面题目与报告截图 `/tmp/shsat-math-first-mini-question-20261027.png`、`/tmp/shsat-math-first-mini-report-20261027.png`。报告只有在 SHSAT 结束时间到达后才显示分数/答案，和独立版 `AFTER_END_TIME` 可见策略一致。此项仅验证两道选择题和 Math→ELA 顺序，不代替正式卷/12 种题型全量回归。
