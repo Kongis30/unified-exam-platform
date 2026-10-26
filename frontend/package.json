@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test:e2e:shsat:unassigned-bulk": "node e2e/shsat-unassigned-bulk-assign.cjs",
     "test:e2e:shsat:class-order": "node e2e/shsat-class-order.cjs",
+    "test:e2e:shsat:class-results-retry": "node e2e/shsat-class-results-retry.cjs",
     "test:e2e:shsat:paper-group-order": "node e2e/shsat-paper-group-order.cjs",
     "test:e2e:shsat:exam-release-actions": "node e2e/shsat-exam-release-actions.cjs",
     "test:e2e:shsat:exam-release-create-form": "node e2e/shsat-exam-release-create-form.cjs",
