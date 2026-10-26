@@ -37,45 +37,70 @@ async function main() {
     await page.getByRole('tab', { name: 'Paper Management', exact: true }).click();
     const panels = page.locator('.folder-list .folder-panel');
     const currentGroups = await api(page, '/api/admin/exam-types/SHSAT/paper-groups');
-    const groupIdsByName = new Map(currentGroups
-      .filter(group => names.includes(group.name))
-      .map(group => [group.name, Number(group.id)]));
+    const groupIdsByName = new Map(currentGroups.map(group => [group.name, Number(group.id)]));
     const beforeTitles = (await page.locator('.folder-panel__title strong').allTextContents())
       .filter(title => names.includes(title));
+    const initialPanelTitles = await page.locator('.folder-panel__title strong').allTextContents();
     assert.equal(beforeTitles.length, 3, 'all temporary folders appear in the list');
-    const first = panels.filter({ hasText: beforeTitles[0] });
-    const third = panels.filter({ hasText: beforeTitles[2] });
-    await first.waitFor();
-    await third.waitFor();
-    await first.evaluate(element => element.scrollIntoView({ block: 'center' }));
-    const beforeOrderIds = currentGroups.map(group => Number(group.id));
-    const reorderResponse = page.waitForResponse(response =>
-      response.request().method() === 'PUT' && response.url().includes('/api/admin/exam-types/SHSAT/paper-groups/order'));
-    const sourceRect = await first.boundingBox();
-    const targetRect = await third.boundingBox();
-    await page.mouse.move(sourceRect.x + 90, sourceRect.y + sourceRect.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(sourceRect.x + 110, sourceRect.y + sourceRect.height / 2, { steps: 4 });
-    await page.mouse.move(targetRect.x + 90, targetRect.y + targetRect.height / 2, { steps: 12 });
-    await page.mouse.up();
-    const response = await reorderResponse;
-    assert.ok(response.ok(), `group order request succeeds (${response.status()})`);
+    async function dragGroup(sourceName, targetName, assertion, expectedNamesBefore) {
+      const source = panels.filter({ hasText: sourceName });
+      const target = panels.filter({ hasText: targetName });
+      await source.waitFor();
+      await target.waitFor();
+      await source.evaluate(element => element.scrollIntoView({ block: 'center' }));
+      const sourceRect = await source.boundingBox();
+      const targetRect = await target.boundingBox();
+      const beforeOrder = await api(page, '/api/admin/exam-types/SHSAT/paper-groups');
+      const expectedOrder = beforeOrder.map(group => Number(group.id));
+      const sourceIndex = expectedOrder.indexOf(groupIdsByName.get(sourceName));
+      const targetIndex = expectedOrder.indexOf(groupIdsByName.get(targetName));
+      const [movedId] = expectedOrder.splice(sourceIndex, 1);
+      expectedOrder.splice(targetIndex, 0, movedId);
+      const reorderResponse = page.waitForResponse(response =>
+        response.request().method() === 'PUT' && response.url().includes('/api/admin/exam-types/SHSAT/paper-groups/order'));
+      await page.mouse.move(sourceRect.x + 90, sourceRect.y + sourceRect.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(sourceRect.x + 110, sourceRect.y + sourceRect.height / 2, { steps: 4 });
+      await page.mouse.move(targetRect.x + 90, targetRect.y + targetRect.height / 2, { steps: 12 });
+      await page.mouse.up();
+      const response = await reorderResponse;
+      assert.ok(response.ok(), `${assertion}: reorder request succeeds (${response.status()})`);
 
-    const expectedNames = [...beforeTitles.slice(1), beforeTitles[0]];
-    const expectedOrderIds = [...beforeOrderIds];
-    const sourceIndex = expectedOrderIds.indexOf(groupIdsByName.get(beforeTitles[0]));
-    const targetIndex = expectedOrderIds.indexOf(groupIdsByName.get(beforeTitles[2]));
-    const [draggedGroupId] = expectedOrderIds.splice(sourceIndex, 1);
-    expectedOrderIds.splice(targetIndex, 0, draggedGroupId);
-    const currentOrder = await api(page, '/api/admin/exam-types/SHSAT/paper-groups');
-    assert.deepEqual(currentOrder.map(group => Number(group.id)), expectedOrderIds,
-      'dragging the first temporary group to the third persists its order');
+      const persistedOrder = await api(page, '/api/admin/exam-types/SHSAT/paper-groups');
+      const ids = persistedOrder.map(group => Number(group.id));
+      assert.equal(new Set(ids).size, ids.length, `${assertion}: every group occurs exactly once`);
+      assert.deepEqual(ids, expectedOrder, `${assertion}: server persists the expected complete order`);
+      const nextNames = [...expectedNamesBefore];
+      const targetPosition = nextNames.indexOf(targetName);
+      const [movedName] = nextNames.splice(nextNames.indexOf(sourceName), 1);
+      nextNames.splice(targetPosition, 0, movedName);
+      return nextNames;
+    }
 
-    await page.reload();
-    await page.getByRole('tab', { name: 'Paper Management', exact: true }).click();
-    const afterTitles = (await page.locator('.folder-panel__title strong').allTextContents())
-      .filter(title => names.includes(title));
-    assert.deepEqual(afterTitles, expectedNames, 'the moved group order survives reload');
+    async function assertReloadedGroupNames(expectedNames, assertion) {
+      await page.reload();
+      await page.getByRole('tab', { name: 'Paper Management', exact: true }).click();
+      const reloadedNames = await page.locator('.folder-panel__title strong').allTextContents();
+      assert.deepEqual(reloadedNames, expectedNames, `${assertion}: full displayed order survives reload`);
+    }
+
+    const initialOrder = currentGroups.map(group => Number(group.id));
+    let expectedNames = [...initialPanelTitles];
+    const firstDraggableGroup = expectedNames[1];
+    const lastDraggableGroup = currentGroups[currentGroups.length - 1].name;
+    expectedNames = await dragGroup(firstDraggableGroup, lastDraggableGroup, 'first-to-last drag', expectedNames);
+    await assertReloadedGroupNames(expectedNames, 'first-to-last drag');
+
+    expectedNames = await dragGroup(lastDraggableGroup, firstDraggableGroup, 'last-to-first drag', expectedNames);
+    await assertReloadedGroupNames(expectedNames, 'last-to-first drag');
+
+    expectedNames = await dragGroup(expectedNames[1], expectedNames[2], 'second-position target drag', expectedNames);
+    await assertReloadedGroupNames(expectedNames, 'second-position target drag');
+
+    const finalGroupOrder = await api(page, '/api/admin/exam-types/SHSAT/paper-groups');
+    assert.equal(new Set(finalGroupOrder.map(group => Number(group.id))).size, finalGroupOrder.length,
+      'all persisted group IDs are unique');
+    assert.equal(finalGroupOrder.length, initialOrder.length, 'no group is lost during repeated reorder');
     const lastPanel = panels.filter({ hasText: expectedNames[2] });
     await lastPanel.evaluate(element => element.scrollIntoView({ block: 'center' }));
     await page.screenshot({ path: `/tmp/shsat-paper-group-order-desktop-${stamp}.png` });
@@ -101,7 +126,7 @@ async function main() {
     });
     await page.screenshot({ path: `/tmp/shsat-paper-group-order-mobile-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['first-to-third group drag', 'persisted order after reload', '390px layout'], dimensions }));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['first-to-last drag', 'last-to-first drag', 'drag to second position', 'order persistence after each reload', 'complete unique group IDs', '390px layout'], dimensions }));
   } finally {
     for (const groupId of createdIds) await api(page, `/api/admin/paper-groups/${groupId}`, 'DELETE').catch(() => {});
     if (originalOrder.length) {
