@@ -196,10 +196,18 @@ async function main() {
     assert.equal(ended.status, 'ENDED');
     const endedDetails = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
     assert.equal(endedDetails.assignments[0].status, 'IN_PROGRESS', 'ending a task keeps an in-progress student attempt intact');
+    const studentTaskAfterEnd = await api(student, '/api/student/wrong-answer-tasks')
+      .then(rows => rows.find(item => item.assignmentId === details.assignments[0].assignmentId));
+    assert.equal(studentTaskAfterEnd.status, 'IN_PROGRESS');
+    assert.equal(studentTaskAfterEnd.canStart, true, 'a student can continue an existing attempt after the task is ended');
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    const continueReview = student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle });
+    await continueReview.getByRole('button', { name: 'Continue' }).click();
+    await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}` && Number(url.searchParams.get('practiceAttemptId')) === practiceAttemptId);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'end cancel and in-progress preservation'],
+      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
