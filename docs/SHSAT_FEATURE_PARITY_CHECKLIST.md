@@ -116,6 +116,7 @@
 - [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。
 - [x] `Class Exam Score Trend`：复核 SHSAT 文案、raw/scaled 提示和无数据状态；桌面截图确认没有 SAT/PSAT 范围提示。仍需用带 SHSAT 折算分/考试点的数据验证曲线与悬浮内容。
 - [x] 班级详情统计真实数据烟测：发现统一版没有返回班级学生的平均分/已完成考试数，且班级摘要平均分为空；按已完成、非练习、学生当时属于班级且有考试资格的记录实时聚合，SHSAT 学生分数按独立版规则在折算分有效时使用折算分，否则回退原始分。SHSAT 学生统计显示 17 名有成绩、1 名无记录；班级摘要显示平均分 52.53。SAT/PSAT 查询也已烟测返回样本统计。截图 `81-class-student-stats-desktop.png`、`82-class-student-stats-mobile.png`、`83-class-summary-average-desktop.png`、`84-class-summary-average-mobile.png`；桌面和 390px 窄屏均无横向溢出，浏览器脚本错误为 0。针对聚合 SQL 的控制器测试和前端构建通过。这里只完成班级摘要及学生表统计，不代表班级详情其它操作已验收。
+- [x] 班级详情非破坏性操作抽测：Edit Class 表单打开并显示当前班级信息，取消后数据未变；学生表第一行 `View` 打开对应学生详情，4 次完成考试、平均分、趋势及历史记录可见；`Back to Class Detail` 返回原班级路由。桌面截图 `86-class-edit-modal.png`、`87-class-student-detail.png`；学生详情 390px 窄屏截图 `88-student-detail-mobile.png`，页面无横向溢出，浏览器脚本错误为 0。保存编辑、刷新、View Report 等写入或跳转操作仍待逐项验收。
 - [ ] 班级考试成绩页：Back、Monitor、Retry、总分/ELA/Math/正确率/提交时间排序、学生 View；无成绩/未开始/进行中/已完成统计与实际尝试一致，表头和数据逐列对齐。
 - [ ] 学生详情页：Back/Refresh/Retry、总尝试/完成/平均/最高、Score Trend 的 Raw/Scaled 切换和点悬浮信息、Score History 原始分与折算分排序、`View Report`；重复考试按每次尝试显示，源记录缺少赋分表时显示 `—` 而非伪造分数。
 
