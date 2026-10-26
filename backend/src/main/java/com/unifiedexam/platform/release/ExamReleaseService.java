@@ -20,6 +20,16 @@ import java.util.List;
 @Service
 public class ExamReleaseService {
 
+    private static final String TARGET_SUMMARY_PROJECTION = """
+        CASE WHEN e.target_scope = 'ALL_STUDENTS' THEN 'All students'
+             ELSE COALESCE(NULLIF(CONCAT_WS(' · ',
+                 (SELECT CASE WHEN COUNT(*) > 0 THEN CONCAT('Classes: ', GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ')) END
+                  FROM exam_target_classes tc JOIN classes c ON c.id = tc.class_id WHERE tc.exam_id = e.id),
+                 (SELECT CASE WHEN COUNT(*) > 0 THEN CONCAT('Students: ', GROUP_CONCAT(COALESCE(NULLIF(u.real_name, ''), u.username) ORDER BY COALESCE(NULLIF(u.real_name, ''), u.username) SEPARATOR ', ')) END
+                  FROM exam_target_students ts JOIN users u ON u.id = ts.student_user_id WHERE ts.exam_id = e.id)
+             ), ''), 'No students selected') END AS target_summary
+        """;
+
     private final JdbcTemplate jdbcTemplate;
     private final ExamTypeRegistry examTypeRegistry;
 
@@ -37,14 +47,15 @@ public class ExamReleaseService {
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
                    e.attempt_limit, e.allow_review, e.auto_submit,
                    EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
-                   e.created_at, e.updated_at, e.published_at
+                   e.created_at, e.updated_at, e.published_at,
+                   %s
             FROM exams e JOIN papers p ON p.id = e.paper_id
             WHERE p.exam_type_code = ? AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id
             ) AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id
             ) ORDER BY e.created_at DESC, e.id DESC
-            """, (rs, rowNum) -> mapSummary(rs), examTypeCode);
+            """.formatted(TARGET_SUMMARY_PROJECTION), (rs, rowNum) -> mapSummary(rs), examTypeCode);
     }
 
     /** 定时关闭已过结束时间的发布，避免历史考试继续显示为已发布。 */
@@ -300,13 +311,14 @@ public class ExamReleaseService {
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
                    e.attempt_limit, e.allow_review, e.auto_submit,
                    EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
-                   e.created_at, e.updated_at, e.published_at
+                   e.created_at, e.updated_at, e.published_at,
+                   %s
             FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ? AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id
             ) AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id
             )
-            """, (rs, rowNum) -> mapSummary(rs), examId);
+            """.formatted(TARGET_SUMMARY_PROJECTION), (rs, rowNum) -> mapSummary(rs), examId);
         if (result.isEmpty()) throw notFound();
         return result.get(0);
     }
@@ -320,7 +332,7 @@ public class ExamReleaseService {
             rs.getInt("attempt_limit"), rs.getBoolean("has_student_attempts"), rs.getBoolean("allow_review"),
             rs.getBoolean("auto_submit"), rs.getTimestamp("created_at").toInstant().toString(),
             rs.getTimestamp("updated_at").toInstant().toString(),
-            publishedAt == null ? null : publishedAt.toInstant().toString());
+            publishedAt == null ? null : publishedAt.toInstant().toString(), rs.getString("target_summary"));
     }
 
     private void ensurePaperExists(long paperId) {
@@ -413,7 +425,7 @@ public class ExamReleaseService {
                               String description, String status, String targetScope, String opensAt,
                               String closesAt, Integer durationSeconds, int attemptLimit, boolean hasStudentAttempts,
                               boolean allowReview, boolean autoSubmit,
-                              String createdAt, String updatedAt, String publishedAt) { }
+                              String createdAt, String updatedAt, String publishedAt, String targetSummary) { }
     public record ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds) { }
     public record StudentExamView(long id, String examTypeCode, String title, String description,
                                   String opensAt, String closesAt, String paperTitle,

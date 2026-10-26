@@ -512,7 +512,7 @@ const filteredExamReleases = computed(() => {
       if (examReleaseFilters.timeStatus && getExamTimeStatus(exam).key !== examReleaseFilters.timeStatus) {
         return false;
       }
-      if (examReleaseFilters.targetType && String(exam.targetType || '') !== examReleaseFilters.targetType) {
+      if (examReleaseFilters.targetType && !matchesExamTargetType(exam, examReleaseFilters.targetType)) {
         return false;
       }
       if (!keyword) {
@@ -1112,6 +1112,10 @@ function isExamAvailableForClass(exam, classId) {
 }
 
 function formatExamTarget(exam) {
+  if (exam?.targetSummary) {
+    return exam.targetSummary;
+  }
+
   const targetType = String(exam?.targetType || 'ALL_STUDENTS');
   const ids = getExamTargetIds(exam);
 
@@ -1128,6 +1132,25 @@ function formatExamTarget(exam) {
   }
 
   return targetType;
+}
+
+function matchesExamTargetType(exam, selectedType) {
+  const targetType = String(exam?.targetType || '').toUpperCase();
+  if (selectedType === 'ALL_STUDENTS') {
+    return targetType === 'ALL_STUDENTS';
+  }
+  if (targetType === selectedType) {
+    return true;
+  }
+
+  const targetSummary = String(exam?.targetSummary || '');
+  if (selectedType === 'SPECIFIC_CLASSES') {
+    return targetSummary.includes('Classes:');
+  }
+  if (selectedType === 'SPECIFIC_STUDENTS') {
+    return targetSummary.includes('Students:');
+  }
+  return false;
 }
 
 function getExamPaperName(paperId) {
