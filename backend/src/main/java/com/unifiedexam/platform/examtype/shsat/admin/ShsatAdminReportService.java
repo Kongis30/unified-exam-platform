@@ -288,11 +288,16 @@ public class ShsatAdminReportService {
     public Map<String, Object> monitorAnalytics(long examId) {
         ExamMonitor exam = requireShsatExam(examId);
         long started = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM attempts WHERE exam_id = ? AND is_practice = FALSE", Long.class, examId);
+        // 监考统计按已保存答案计算；导入的未答记录用 legacyAnswer:null 占位，需排除该占位值。
         List<Map<String, Object>> questions = jdbcTemplate.query("""
             SELECT pi.display_number, q.id AS question_id, q.question_type_code,
                    qm.skill_tag_code,
-                   (SELECT COUNT(*) FROM attempt_items ai JOIN attempts a ON a.id = ai.attempt_id
-                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND ai.paper_item_id = pi.id) AS attempted,
+                   (SELECT COUNT(*) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
+                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id
+                      AND NOT (JSON_CONTAINS_PATH(aa.answer_json, 'one', '$.legacyAnswer')
+                        AND (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'NULL'
+                          OR (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'STRING'
+                            AND JSON_UNQUOTE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = '')))) AS attempted,
                    (SELECT COUNT(*) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
                     WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id AND aa.is_correct = TRUE) AS correct,
                    (SELECT COUNT(*) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
@@ -314,9 +319,11 @@ public class ShsatAdminReportService {
                 row.put("attemptedCount", attempted);
                 row.put("attempted", attempted);
                 row.put("correctCount", correct);
-                row.put("wrongCount", rs.getLong("wrong"));
+                long wrong = rs.getLong("wrong");
+                row.put("wrongCount", wrong);
+                row.put("pendingCount", Math.max(0, attempted - correct - wrong));
                 row.put("unansweredCount", Math.max(0, started - attempted));
-                row.put("accuracy", percent(correct, attempted));
+                row.put("accuracy", percent(correct, correct + wrong));
                 row.put("averageTimeSpent", rs.getBigDecimal("average_time_spent"));
                 row.put("shsatSubjectCode", null);
                 row.put("skillTagCode", rs.getString("skill_tag_code"));
