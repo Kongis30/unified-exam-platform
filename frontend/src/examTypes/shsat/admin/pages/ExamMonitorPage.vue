@@ -282,7 +282,10 @@ function formatCount(value) {
 }
 
 function formatDuration(value) {
-  const seconds = Math.max(Math.round(Number(value) || 0), 0);
+  const totalSeconds = Math.max(Number(value) || 0, 0);
+  if (totalSeconds < 10) return `${Number(totalSeconds.toFixed(1))}s`;
+
+  const seconds = Math.round(totalSeconds);
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return minutes ? `${minutes}:${String(rest).padStart(2, '0')}` : `${rest}s`;
