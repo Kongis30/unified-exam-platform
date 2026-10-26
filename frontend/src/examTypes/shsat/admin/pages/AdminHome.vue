@@ -142,7 +142,7 @@ let paperDeleteCooldownTimer = null;
 let examDeleteCooldownTimer = null;
 const draggingPaperGroupId = ref('');
 const draggingClassId = ref('');
-const paperGroupDragMoved = ref(false);
+const paperGroupDropTargetId = ref('');
 const classDragMoved = ref(false);
 const suppressNextClassClick = ref(false);
 const expandedFolders = reactive({});
@@ -1458,7 +1458,7 @@ function startPaperGroupDrag(group, event) {
   }
 
   draggingPaperGroupId.value = String(group.groupId);
-  paperGroupDragMoved.value = false;
+  paperGroupDropTargetId.value = '';
   event.dataTransfer.effectAllowed = 'move';
   event.dataTransfer.setData('text/plain', draggingPaperGroupId.value);
 }
@@ -1469,12 +1469,16 @@ function dragOverPaperGroup(group, event) {
   }
 
   event.preventDefault();
-  if (String(group.groupId) === draggingPaperGroupId.value) {
+  event.dataTransfer.dropEffect = 'move';
+}
+
+function dropPaperGroup(group, event) {
+  event.preventDefault();
+  if (!draggingPaperGroupId.value || !group.groupId || String(group.groupId) === draggingPaperGroupId.value) {
     return;
   }
 
-  paperGroups.value = moveById(paperGroups.value, 'paperGroupId', draggingPaperGroupId.value, group.groupId);
-  paperGroupDragMoved.value = true;
+  paperGroupDropTargetId.value = String(group.groupId);
 }
 
 async function finishPaperGroupDrag() {
@@ -1482,14 +1486,16 @@ async function finishPaperGroupDrag() {
     return;
   }
 
-  const shouldSave = paperGroupDragMoved.value;
+  const sourceId = draggingPaperGroupId.value;
+  const targetId = paperGroupDropTargetId.value;
   draggingPaperGroupId.value = '';
-  paperGroupDragMoved.value = false;
+  paperGroupDropTargetId.value = '';
 
-  if (!shouldSave) {
+  if (!sourceId || !targetId || sourceId === targetId) {
     return;
   }
 
+  paperGroups.value = moveById(paperGroups.value, 'paperGroupId', sourceId, targetId);
   loading.reorderingPaperGroups = true;
   errors.papers = '';
 
@@ -3238,7 +3244,7 @@ onBeforeUnmount(() => {
                 :draggable="canReorderPaperGroups && Boolean(group.groupId)"
                 @dragstart="startPaperGroupDrag(group, $event)"
                 @dragover="dragOverPaperGroup(group, $event)"
-                @drop.prevent
+                @drop="dropPaperGroup(group, $event)"
                 @dragend="finishPaperGroupDrag"
               >
               <div
@@ -5848,6 +5854,27 @@ onBeforeUnmount(() => {
   opacity: 0.55;
   transform: scale(0.992);
   box-shadow: 0 8px 20px rgba(31, 75, 135, 0.08);
+}
+
+.folder-list,
+.folder-panel,
+.folder-panel__header,
+.folder-panel__title {
+  min-width: 0;
+}
+
+.folder-panel {
+  max-width: 100%;
+}
+
+.folder-panel__title {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.folder-panel__main-button small {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .form-note {
