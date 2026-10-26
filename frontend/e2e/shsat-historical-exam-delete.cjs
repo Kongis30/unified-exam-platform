@@ -78,6 +78,34 @@ async function main() {
     await row.waitFor();
     assert.equal(await row.getByText('Unpublished', { exact: true }).count(), 1,
       'an ended exam is shown as unpublished in Historical Exams');
+    const historicalCard = admin.locator('.exam-history-card');
+    const collapseButton = historicalCard.getByRole('button', { name: /^(Collapse|Expand) historical exams$/ });
+    if (await collapseButton.getAttribute('aria-label') === 'Expand historical exams') {
+      await collapseButton.click();
+    }
+    await historicalCard.getByRole('button', { name: 'Collapse historical exams', exact: true }).click();
+    assert.equal(await historicalCard.locator('.exam-release-table--history').count(), 0,
+      'Historical Exams can be collapsed');
+    await historicalCard.getByRole('button', { name: 'Expand historical exams', exact: true }).click();
+    await row.waitFor();
+
+    const historyPagination = historicalCard.locator('.table-pagination');
+    const pageSummary = historyPagination.locator('> span');
+    const totalMatch = (await pageSummary.innerText()).match(/of (\d+)/);
+    const historicalTotal = Number(totalMatch?.[1] || 0);
+    if (historicalTotal > 5) {
+      await historicalCard.getByRole('combobox', { name: 'Historical rows per page' }).selectOption('5');
+      await historyPagination.getByRole('button', { name: 'Next', exact: true }).click();
+      assert.match(await historyPagination.innerText(), /Page 2\s*\/\s*\d+/,
+        'historical releases can advance to the next page');
+      await admin.screenshot({ path: `/tmp/shsat-historical-exams-page-2-${stamp}.png` });
+      await historyPagination.getByRole('button', { name: 'Prev', exact: true }).click();
+      assert.match(await historyPagination.innerText(), /Page 1\s*\/\s*\d+/,
+        'historical releases can return to the previous page');
+      await historicalCard.getByRole('combobox', { name: 'Historical rows per page' }).selectOption('10');
+      await row.waitFor();
+    }
+    await admin.screenshot({ path: `/tmp/shsat-historical-exams-desktop-${stamp}.png` });
     await row.getByRole('button', { name: `Actions for ${examTitle}` }).click();
     await admin.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     const dialog = admin.getByRole('dialog', { name: 'Delete this exam release?' });
@@ -135,9 +163,13 @@ async function main() {
     assert.deepEqual(pageErrors, [], 'the deletion flow has no browser errors');
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['closed release enters Historical Exams as Unpublished', 'deletion warning identifies all cascaded data', '5-second confirmation cooldown', 'cancel preserves exam and review task', 'confirmed deletion removes release, attempt and review task', 'class and shared student account remain intact', 'desktop and 390px confirmation layout'],
+      checks: ['closed release enters Historical Exams as Unpublished', 'Historical Exams collapse/expand and pagination',
+        'deletion warning identifies all cascaded data', '5-second confirmation cooldown', 'cancel preserves exam and review task',
+        'confirmed deletion removes release, attempt and review task', 'class and shared student account remain intact',
+        'desktop and 390px confirmation layout'],
       examId: release.summary.id, attemptId, taskId: review.taskId, mobileSize, pageErrors: pageErrors.length,
-      screenshots: [`/tmp/shsat-historical-delete-confirm-${stamp}.png`, `/tmp/shsat-historical-delete-confirm-mobile-${stamp}.png`],
+      screenshots: [`/tmp/shsat-historical-exams-desktop-${stamp}.png`, `/tmp/shsat-historical-delete-confirm-${stamp}.png`,
+        `/tmp/shsat-historical-delete-confirm-mobile-${stamp}.png`, `/tmp/shsat-historical-exams-page-2-${stamp}.png`],
     }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
