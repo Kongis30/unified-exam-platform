@@ -53,6 +53,7 @@
 - [ ] `Create Folder`：名称必填/重复/取消/确认；组列表更新；文件夹默认折叠、展开/收起与记忆。
 - [ ] 分组拖动排序：首组、中间组、末组互换，拖入第二组或拖出第二组均持久化；刷新/重新登录顺序一致；每个组恰好一次，默认组规则正确。
 - [x] 分组顺序回归抽测：在真实 SHSAT Paper Management 页面将第二个可拖动分组移到第三个位置；刷新后 UI 顺序与后端 `sortOrder` 一致，所有 7 个 group ID 唯一且完整；测试后通过正式排序接口恢复原顺序并复核成功。桌面截图 `42-paper-groups-reordered.png`。首/末组、反方向拖动、重新登录持久化仍待覆盖。
+- [x] 分组第二位双向回归：真实拖动第三组进入第二位、第二组移到末位；拖动后 UI 与服务端顺序完全一致，刷新后仍保持；之后将所有 7 组恢复至测试前顺序并复核。无页面脚本错误。截图 `114-paper-group-drag-result.png`。这次覆盖了用户报告的“目标是第二组”场景；首组互换和重新登录后的持久化仍待测。
 - [ ] 组操作 `Rename folder`、`Delete empty folder`：编辑、取消、成功刷新；非空不能误删；表内缩进、组名、数量和操作图标视觉一致。
 - [x] 文件夹 CRUD 烟测：空名称显示英文必填错误；新建/重命名写入数据库并刷新后保留；取消创建不产生记录，取消删除保留文件夹，确认删除只删除空文件夹。临时文件夹已清理；浏览器脚本错误为 0。桌面状态截图 `43-folder-validation.png`、`44-folder-renamed.png`、`45-folder-delete-confirm.png`。
 - [ ] `Create Paper`：名称、时长、状态等字段校验；创建后出现在正确分组，能从列表打开编辑。
@@ -110,10 +111,12 @@
 
 ## 5. Review Assignments 与班级
 
-- [ ] Review Assignments 搜索、按考试/班级筛选、Refresh、Create Assignment；设置来源考试、班级、开始/结束时间及目标，校验无来源记录/无错题/时间冲突；发布后人数和状态准确。
+- [ ] Review Assignments 搜索、按考试/班级筛选、Refresh、Create Assignment；设置来源考试、班级、开始/结束时间及目标，校验无来源记录/无错题/时间冲突；发布后人数和状态准确。已验证教师创建成功及默认来源考试/时间，字段错误、取消和选定自定义时间仍待测。
 - [ ] 表格 Action：`View Progress` 返回原标签与筛选位置；`End`/取消任务及确认；状态、完成/资格、进行中/未开始/缺少源尝试统计要与详情相符。
 - [ ] 任务进度页：Back、Refresh/Retry、逐学生题数/状态/完成时间、`View Report`；截止/重做/零剩余题、源考试删除后的状态和提示准确。
-- [x] Review Assignments 搜索/筛选与只读流程抽测：2 条任务可见；不匹配搜索显示空状态，按考试筛出 2 条、再按班级筛出 1 条，Refresh 后仍保留筛选；创建弹窗打开后取消不写入数据。动作菜单顺序为 `View Progress`、`End`；打开 End 确认后取消，任务状态未变化。`View Progress` 展示学生资格、状态和题数，`View Report` 打开对应学生任务报告并返回进度页，`Back to Review Assignments` 返回带原 `tab` 的后台路由。390px 根节点宽度保持 390px，无浏览器脚本错误。截图 `99-review-assignments-desktop.png`、`100-review-assignment-create-modal.png`、`101-review-assignments-mobile.png`、`102-review-student-report-desktop.png`。创建/发布、End 确认后的真实状态更新尚待验收。
+- [x] Review Assignments 搜索/筛选与只读流程抽测：2 条任务可见；不匹配搜索显示空状态，按考试筛出 2 条、再按班级筛出 1 条，Refresh 后仍保留筛选；创建弹窗打开后取消不写入数据。动作菜单顺序为 `View Progress`、`End`；打开 End 确认后取消，任务状态未变化。`View Progress` 展示学生资格、状态和题数，`View Report` 打开对应学生任务报告并返回进度页，`Back to Review Assignments` 返回带原 `tab` 的后台路由。390px 根节点宽度保持 390px，无浏览器脚本错误。截图 `99-review-assignments-desktop.png`、`100-review-assignment-create-modal.png`、`101-review-assignments-mobile.png`、`102-review-student-report-desktop.png`。字段错误提示、取消 End 和有真实错题来源的学生作答仍待验收。
+- [x] 教师 Review Assignment 创建与结束闭环：临时教师为仅含一名临时学生的班级发布正式 SHSAT 考试，再从 SHSAT 后台创建任务；接口核对 `assignedCount=1`、`noSourceAttemptCount=1`，进度页明确显示 `No source attempt`、0/0 题和正确人数。通过 `View Progress` 后返回 Review Assignments，接受 `End` 确认后接口状态为 `ENDED`；教师仍无账号目录权限（403）。删除测试考试后复查任务和临时账户均已清理，页面脚本错误为 0。截图 `115-review-assignment-create-filled.png`、`116-review-assignment-created.png`、`117-review-task-progress.png`。有已提交错题源尝试的学生作答/重做、取消 End、截止后状态仍待测。
+- [x] Review Assignment 进度页窄屏布局修复：原表格固定最小宽度 1000px，390px 下只露出前两列且其余字段需横向滑动；现改为带字段名的学生进度卡片，完成/状态/准确率/进度都可见，无结果页横向溢出。桌面表格保持原布局；返回 Review Assignments 路由回归通过。生产构建通过，页面脚本错误为 0。截图 `118-review-task-progress-mobile.png`（修复前）、`120-review-task-progress-mobile-cards.png`（修复后）。
 - [ ] Classes 首页：搜索、`Create Class`、刷新、卡片打开、空班删除、拖动顺序持久化；同一学生可加入多个班级；班级能接收 SHSAT 或 SAT 场次。
 - [ ] Unassigned Students：刷新/折叠、最多 800px 内滚动、表头全选/逐项多选、`Assign selected`、班级选择、取消/提交；已在其他班的学生不应被误标“未分配”。
 - [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。

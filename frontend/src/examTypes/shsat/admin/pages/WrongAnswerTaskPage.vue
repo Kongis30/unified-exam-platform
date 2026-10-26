@@ -194,22 +194,22 @@ onMounted(loadTask);
             </thead>
             <tbody>
               <tr v-for="assignment in assignments" :key="assignment.assignmentId">
-                <td>
+                <td data-label="Student">
                   <strong>{{ assignment.studentName }}</strong>
                   <small v-if="assignment.studentNumber">{{ assignment.studentNumber }}</small>
                 </td>
-                <td>
+                <td data-label="Progress">
                   {{ formatProgress(assignment) }}
                   <small>{{ assignment.remainingQuestionCount ?? assignment.totalQuestions ?? 0 }} questions left</small>
                 </td>
-                <td>{{ formatAccuracy(assignment.accuracy) }}</td>
-                <td>
+                <td data-label="Accuracy">{{ formatAccuracy(assignment.accuracy) }}</td>
+                <td data-label="Status">
                   <span class="task-status" :class="getStatusMeta(assignment.status).className">
                     {{ getStatusMeta(assignment.status).label }}
                   </span>
                 </td>
-                <td>{{ formatDateTime(assignment.completedAt) }}</td>
-                <td class="task-table__actions">
+                <td data-label="Completed">{{ formatDateTime(assignment.completedAt) }}</td>
+                <td class="task-table__actions" :class="{ 'task-table__actions--empty': !assignment.practiceAttemptId }" data-label="Actions">
                   <AppButton
                     v-if="assignment.practiceAttemptId"
                     variant="secondary"
@@ -217,6 +217,7 @@ onMounted(loadTask);
                   >
                     View Report
                   </AppButton>
+                  <span v-else class="muted-text">-</span>
                 </td>
               </tr>
             </tbody>
@@ -427,6 +428,76 @@ onMounted(loadTask);
 
   .wrong-answer-task-page__hero-stats div {
     text-align: left;
+  }
+
+  .task-table-wrap {
+    overflow: visible;
+  }
+
+  .task-table {
+    display: block;
+    min-width: 0;
+  }
+
+  .task-table thead {
+    display: none;
+  }
+
+  .task-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .task-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .task-table th,
+  .task-table td {
+    min-width: 0;
+    border-bottom: 0;
+    padding: 12px;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .task-table td {
+    display: grid;
+    align-content: start;
+    gap: 5px;
+  }
+
+  .task-table td::before {
+    content: attr(data-label);
+    color: var(--color-muted);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .task-table td:first-child {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-soft);
+  }
+
+  .task-table td:last-child {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .task-table td.task-table__actions--empty {
+    display: none;
+  }
+
+  .task-table__actions {
+    justify-items: start;
   }
 }
 </style>
