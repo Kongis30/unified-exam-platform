@@ -68,6 +68,9 @@ async function main() {
     assert.ok(await choices.count() >= 2, 'Question 1 renders the multiple-choice answer control');
     assert.equal(await choices.first().locator('input[type="radio"]').isChecked(), true,
       'the persisted answer is restored when opening the active attempt');
+    await choices.nth(1).click();
+    assert.equal(await choices.nth(1).locator('input[type="radio"]').isChecked(), true,
+      'the student can change a saved answer locally before saving it again');
 
     let failFirstClearSave = true;
     await student.route(`**/api/student/attempts/${attemptId}/answers/**`, async route => {
@@ -105,7 +108,7 @@ async function main() {
     assert.ok(dimensions.page <= dimensions.viewport, 'the exam page has no root overflow at 390px');
     await student.screenshot({ path: `/tmp/shsat-clear-answer-mobile-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['formal exam start through student UI', 'multiple-choice answer save and restore', 'clear answer remains local after a failed save and persists on retry', 'cleared answer survives refresh', '390px layout'], dimensions, pageErrors: pageErrors.length }));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['formal exam start through student UI', 'multiple-choice answer save and restore', 'change an existing answer then clear it', 'clear answer remains local after a failed save and persists on retry', 'cleared answer survives refresh', '390px layout'], dimensions, pageErrors: pageErrors.length }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});

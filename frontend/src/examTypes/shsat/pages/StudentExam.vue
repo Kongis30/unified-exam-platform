@@ -38,6 +38,7 @@ const result = ref(null);
 const currentIndex = ref(0);
 const answers = ref({});
 const savedQuestionNumbers = ref(new Set());
+const persistedQuestionNumbers = ref(new Set());
 const pendingClearedQuestionNumbers = ref(new Set());
 const savingQuestionNumber = ref(null);
 const timeSpentByQuestion = ref({});
@@ -1026,11 +1027,10 @@ function setAnswer(questionNumber, value) {
     return;
   }
 
-  const wasSaved = isQuestionSaved(questionNumber);
   const nextPendingCleared = new Set(pendingClearedQuestionNumbers.value);
   if (hasMeaningfulAnswerValue(value)) {
     nextPendingCleared.delete(questionNumber);
-  } else if (wasSaved) {
+  } else if (persistedQuestionNumbers.value.has(questionNumber)) {
     nextPendingCleared.add(questionNumber);
   }
   pendingClearedQuestionNumbers.value = nextPendingCleared;
@@ -3120,6 +3120,7 @@ async function loadResult(id) {
 function initializeAnswers(attemptData) {
   const nextAnswers = {};
   const nextSaved = new Set();
+  const nextPersisted = new Set();
   const nextMarked = new Set();
   const savedAnswers = attemptData.answers || [];
 
@@ -3132,6 +3133,7 @@ function initializeAnswers(attemptData) {
       parseJson(answer.answerData) ?? answer.selectedAnswer ?? ''
     );
     nextSaved.add(answer.questionNumber);
+    nextPersisted.add(answer.questionNumber);
 
     if (answer.marked) {
       nextMarked.add(answer.questionNumber);
@@ -3140,6 +3142,7 @@ function initializeAnswers(attemptData) {
 
   answers.value = nextAnswers;
   savedQuestionNumbers.value = nextSaved;
+  persistedQuestionNumbers.value = nextPersisted;
   pendingClearedQuestionNumbers.value = new Set();
   markedQuestionNumbers.value = nextMarked;
 }
@@ -3147,6 +3150,7 @@ function initializeAnswers(attemptData) {
 function initializeAnswersFromResult(resultData) {
   const nextAnswers = {};
   const nextSaved = new Set();
+  const nextPersisted = new Set();
 
   (resultData.questions || []).forEach((question) => {
     nextAnswers[question.questionNumber] = normalizeRestoredAnswerValue(
@@ -3154,10 +3158,12 @@ function initializeAnswersFromResult(resultData) {
       parseJson(question.answerData) ?? parseJson(question.selectedAnswer) ?? question.selectedAnswer ?? ''
     );
     nextSaved.add(question.questionNumber);
+    nextPersisted.add(question.questionNumber);
   });
 
   answers.value = nextAnswers;
   savedQuestionNumbers.value = nextSaved;
+  persistedQuestionNumbers.value = nextPersisted;
   pendingClearedQuestionNumbers.value = new Set();
   markedQuestionNumbers.value = new Set();
 }
@@ -3250,6 +3256,7 @@ async function saveAnswer(question) {
     nextPendingCleared.delete(question.questionNumber);
     pendingClearedQuestionNumbers.value = nextPendingCleared;
     savedQuestionNumbers.value = new Set([...savedQuestionNumbers.value, question.questionNumber]);
+    persistedQuestionNumbers.value = new Set([...persistedQuestionNumbers.value, question.questionNumber]);
     saveMessage.value = `Question ${question.questionNumber} saved`;
   } catch (error) {
     examFlowLogger.error('answer-save.failed', examFlowContext({
