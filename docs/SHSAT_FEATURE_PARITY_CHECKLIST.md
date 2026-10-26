@@ -105,6 +105,7 @@
 - [ ] Historical Exams：过期场次归档并自动不再对学生开放，展示状态应为 Unpublished；展开/收起、分页；删除需说明连带考试记录/答案/成绩/报告/任务，提供 5 秒冷静期，确认后级联删除，取消不改动数据。过期/学生不可开考与带进行中尝试的删除闭环已实测（见下）；已提交报告、关联 review task、取消删除、折叠和分页仍待验收。
 - [x] **删除级联抽测**：有进行中学生尝试的测试考试，经 UI 的 5 秒确认后删除；考试接口返回 404，学生历史不再包含该尝试。截图 `35-monitor-live-data.png`；报告/复习任务等其它关联记录仍需逐类核对。
 - [x] **过期场次与删除冷静期回归**：创建仅对临时学生开放的短时考试，截止后确认服务端自动转为 `CLOSED`、Historical Exams 显示 `Unpublished`、学生列表不再开放且直接开考返回 409。随后通过管理 UI 删除一场带有进行中学生尝试的临时考试：5 秒内按钮禁用，倒计时后确认删除，考试详情返回 404、学生历史尝试被级联清除；临时学生也已清理。桌面/窄屏均目视复核，确认对话框内容完整、按钮可见；浏览器脚本错误为 0。截图 `109-expired-exam-unpublished-desktop.png`、`110-expired-exam-unpublished-mobile.png`、`111-exam-delete-cooldown-desktop.png`、`112-exam-delete-cooldown-mobile.png`。本次没有覆盖已提交报告及关联 review task 的级联数据。
+- [x] 统一账户管理端到端回归：使用临时账户验证创建及可选资料、默认姓名排序、姓名/用户名与联系方式搜索、角色筛选和修改、密码重置后实际登录、禁用/启用、5 秒删除确认与删除后目录查无该账号。测试脚本通过：`frontend/e2e/sat-account-management.cjs`。桌面截图 `/tmp/sat-account-management-ui.png`；390px 窄屏目视复核，页面与文档宽度均为 390px，无横向溢出，截图 `113-admin-accounts-mobile.png`。临时账号已清理。
 - [ ] 考试发布/撤回/删除后，首页卡片、班级考试、监考与学生入口同步更新；有尝试记录的场次按业务规则处理，不误删别的考试或用户。
 
 ## 5. Review Assignments 与班级
