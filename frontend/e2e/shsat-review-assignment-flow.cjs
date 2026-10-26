@@ -149,6 +149,26 @@ async function main() {
     assert.equal(details.assignments[0].sourceAttemptId, attemptId);
     assert.ok(details.assignments[0].totalQuestions > 0, 'unanswered source questions are assigned for review');
 
+    const teacherTaskRow = teacher.locator('.wrong-task-table tbody tr').filter({ hasText: taskTitle });
+    await teacherTaskRow.waitFor();
+    await teacherTaskRow.getByRole('button', { name: `Actions for ${taskTitle}` }).click();
+    await teacher.getByRole('menuitem', { name: 'View Progress', exact: true }).click();
+    await teacher.waitForURL(url => url.pathname.endsWith(`/wrong-answer-tasks/${taskId}`));
+    await teacher.getByRole('heading', { name: taskTitle, exact: true }).waitFor();
+    const teacherProgressRow = teacher.locator('.task-table tbody tr').filter({ hasText: `Review Student ${displayStamp}` });
+    await teacherProgressRow.getByText('Not Started', { exact: true }).waitFor();
+    await teacher.screenshot({ path: `/tmp/shsat-review-assignment-teacher-progress-${stamp}.png` });
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    await teacherProgressRow.scrollIntoViewIfNeeded();
+    const teacherProgressMobileSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(teacherProgressMobileSize.page <= teacherProgressMobileSize.viewport, 'the teacher progress row fits a 390px viewport');
+    await teacher.screenshot({ path: `/tmp/shsat-review-assignment-teacher-progress-mobile-${stamp}.png` });
+    await teacher.setViewportSize({ width: 1440, height: 1000 });
+    await teacher.getByRole('button', { name: 'Back to Review Assignments', exact: true }).click();
+    await teacher.waitForURL(url => url.pathname.endsWith('/exam-types/SHSAT/admin')
+      && url.searchParams.get('tab') === 'wrong-answer-tasks');
+    await teacher.getByRole('tab', { name: 'Review Assignments', exact: true }).waitFor();
+
     await admin.goto(`${baseUrl}/exam-types/SHSAT/admin`);
     const adminExamCard = admin.locator('.admin-exam-card').filter({ hasText: examTitle });
     assert.equal(await adminExamCard.locator('.admin-exam-card__status').innerText(), 'Open');
@@ -369,14 +389,14 @@ async function main() {
     await canceledEnd;
     const stillActive = await api(admin, '/api/admin/wrong-answer-tasks').then(rows => rows.find(item => item.taskId === taskId));
     assert.equal(stillActive.status, 'PUBLISHED', 'cancel leaves the assignment published');
-    await row.getByRole('button', { name: `Actions for ${taskTitle}` }).click();
-    const acceptedEnd = admin.waitForEvent('dialog').then(dialog => {
+    await teacherTaskRow.getByRole('button', { name: `Actions for ${taskTitle}` }).click();
+    const acceptedEnd = teacher.waitForEvent('dialog').then(dialog => {
       assert.match(dialog.message(), new RegExp(`End \\"${taskTitle}\\"`));
       return dialog.accept();
     });
-    const endRequest = admin.waitForResponse(response => response.url().includes(`/api/admin/wrong-answer-tasks/${taskId}/end`)
+    const endRequest = teacher.waitForResponse(response => response.url().includes(`/api/admin/wrong-answer-tasks/${taskId}/end`)
       && response.request().method() === 'POST');
-    await admin.getByRole('menuitem', { name: 'End', exact: true }).click();
+    await teacher.getByRole('menuitem', { name: 'End', exact: true }).click();
     await acceptedEnd;
     assert.equal((await endRequest).status(), 200, 'the task-end request succeeds');
     const ended = await api(admin, '/api/admin/wrong-answer-tasks').then(rows => rows.find(item => item.taskId === taskId));
@@ -472,11 +492,12 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'eligible question snapshot', 'admin Start Exam launches SHSAT practice, hides platform nav, and returns to dashboard', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'teacher views task progress and ends the assignment', 'eligible question snapshot', 'admin Start Exam launches SHSAT practice, hides platform nav, and returns to dashboard', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
       studentMobileSize,
+      teacherProgressMobileSize,
       progressMobileSize,
       reportMobileSize,
       completedHistoryMobileSize,
