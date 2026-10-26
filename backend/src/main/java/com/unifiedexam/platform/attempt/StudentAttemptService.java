@@ -603,7 +603,7 @@ public class StudentAttemptService {
         OwnedAttemptSummary owned = jdbcTemplate.query("""
             SELECT a.id, a.exam_id, a.status, a.is_practice, a.started_at, a.expires_at, a.submitted_at,
                    e.title AS exam_title, e.paper_id, p.exam_type_code, r.total_points, r.max_points, r.graded_at,
-                   e.allow_review, state.flow_json,
+                   e.auto_submit, e.allow_review, state.flow_json,
                    (a.status = 'SUBMITTED' AND r.ungraded_count = 0 AND (e.score_visibility = 'AFTER_SUBMIT'
                     OR (e.score_visibility = 'AFTER_CLOSE' AND e.closes_at <= CURRENT_TIMESTAMP(6)))) AS result_visible
             FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
@@ -612,7 +612,7 @@ public class StudentAttemptService {
             WHERE a.id = ? AND a.student_user_id = ?
             """, rs -> rs.next() ? new OwnedAttemptSummary(new AttemptView(rs.getLong("id"), rs.getLong("exam_id"),
                 rs.getLong("paper_id"), rs.getString("exam_title"), rs.getString("exam_type_code"), rs.getString("status"),
-                rs.getBoolean("is_practice"),
+                rs.getBoolean("auto_submit"), rs.getBoolean("is_practice"),
                 iso(rs.getTimestamp("started_at")), iso(rs.getTimestamp("expires_at")),
                 iso(rs.getTimestamp("submitted_at")), List.of(),
                 rs.getBoolean("result_visible") ? new AttemptResultView(rs.getBigDecimal("total_points"),
@@ -660,7 +660,7 @@ public class StudentAttemptService {
                     rs.getBigDecimal("max_points"), parseNullable(rs.getString("answer_json")));
             }, attemptId);
         return new AttemptView(summary.id(), summary.examId(), summary.paperId(), summary.examTitle(), summary.examTypeCode(), summary.status(),
-            summary.practice(), summary.startedAt(), summary.expiresAt(), summary.submittedAt(), questions,
+            summary.autoSubmit(), summary.practice(), summary.startedAt(), summary.expiresAt(), summary.submittedAt(), questions,
             summary.result(), summary.progressState());
     }
 
@@ -928,7 +928,7 @@ public class StudentAttemptService {
                                   String sectionCode, String sectionTitle, String parentSectionCode,
                                   String parentSectionTitle, BigDecimal maxPoints, JsonNode answer) { }
     public record AttemptView(long id, long examId, long paperId, String examTitle, String examTypeCode, String status,
-                              boolean practice,
+                              boolean autoSubmit, boolean practice,
                               String startedAt, String expiresAt, String submittedAt,
                               List<AttemptQuestion> questions, AttemptResultView result, JsonNode progressState) { }
     public record AttemptResultView(BigDecimal totalPoints, BigDecimal maxPoints, String gradedAt) { }
