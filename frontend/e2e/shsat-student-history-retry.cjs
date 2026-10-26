@@ -49,6 +49,19 @@ async function main() {
       }
       await route.continue();
     });
+    let reviewTaskRequestCount = 0;
+    await student.route('**/api/student/wrong-answer-tasks', async route => {
+      reviewTaskRequestCount += 1;
+      if (reviewTaskRequestCount === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: 'Temporary review task failure.' }),
+        });
+        return;
+      }
+      await route.continue();
+    });
 
     await login(student, username, password);
     const initialFailure = student.waitForResponse(response => response.url().endsWith('/api/student/exams'), { timeout: 5000 });
@@ -61,6 +74,10 @@ async function main() {
       'Refresh is disabled while the initial load is in flight');
     assert.equal((await initialFailure).status(), 503, 'the test injects an initial service error');
     await examCard.getByRole('alert').getByText(/Temporary exam list failure/).waitFor();
+    await historyCard.getByRole('alert').getByText(/Temporary review task failure/).waitFor();
+    await historyCard.getByRole('tab', { name: 'Review Tasks' }).click();
+    assert.equal(await historyCard.getByText('No review tasks have been assigned.', { exact: true }).count(), 0,
+      'an empty task state is not shown while task history could not be loaded');
     assert.equal(await student.getByText('No exams have been assigned to you yet.', { exact: true }).count(), 0,
       'an empty assignment state is not shown while the exam list could not be loaded');
 
@@ -68,6 +85,8 @@ async function main() {
     await refreshButton.click();
     assert.equal((await recoveredInitialLoad).status(), 200, 'refresh recovers from the initial load error');
     await examCard.getByRole('alert').waitFor({ state: 'detached' });
+    await historyCard.getByRole('alert').waitFor({ state: 'detached' });
+    await historyCard.getByRole('tab', { name: 'Exam History' }).click();
     await examCard.getByText('No exams have been assigned to you yet.', { exact: true }).waitFor();
 
     const failedRequest = student.waitForResponse(response => response.url().endsWith('/api/student/exams'), { timeout: 5000 });
@@ -85,8 +104,13 @@ async function main() {
     await student.screenshot({ path: `/tmp/shsat-student-history-error-${stamp}.png` });
 
     await student.setViewportSize({ width: 390, height: 844 });
-    const mobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    const mobileSize = await student.evaluate(() => ({
+      page: document.documentElement.scrollWidth,
+      viewport: innerWidth,
+      headerCount: document.querySelectorAll('.main-layout__header').length,
+    }));
     assert.ok(mobileSize.page <= mobileSize.viewport, 'the error state fits a 390px viewport');
+    assert.equal(mobileSize.headerCount, 1, 'the narrow layout renders one platform navigation bar');
     await student.screenshot({ path: `/tmp/shsat-student-history-error-mobile-${stamp}.png` });
 
     const recoveredRefresh = student.waitForResponse(response => response.url().endsWith('/api/student/exams'), { timeout: 5000 });
@@ -94,11 +118,12 @@ async function main() {
     assert.equal((await recoveredRefresh).status(), 200, 'refresh recovers from a temporary refresh error');
     await student.getByRole('alert').waitFor({ state: 'detached' });
     await examCard.getByText('No exams have been assigned to you yet.', { exact: true }).waitFor();
+
     assert.deepEqual(pageErrors, [], 'the failed request is handled without an unhandled page error');
 
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['initial exam-list failure shows an English error instead of a false empty state', 'initial load recovers via Refresh', 'Refresh disables during request', 'refresh failure can be retried successfully', '390px error-state layout'],
+      checks: ['initial exam-list and SHSAT history failures show English errors', 'initial load recovers both endpoints via Refresh', 'Refresh disables during request', 'refresh failure can be retried successfully', '390px error-state layout'],
       mobileSize,
       pageErrors: pageErrors.length,
       screenshots: [`/tmp/shsat-student-history-error-${stamp}.png`, `/tmp/shsat-student-history-error-mobile-${stamp}.png`],
