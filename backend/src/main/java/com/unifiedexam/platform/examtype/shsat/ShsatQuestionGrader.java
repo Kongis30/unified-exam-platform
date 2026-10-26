@@ -51,7 +51,9 @@ final class ShsatQuestionGrader {
         if (expected == null && key != null && !key.isObject()) expected = key;
         JsonNode actual = first(answer, "value", "answers", "selectedAnswers", "answer");
         if (actual == null && answer != null && !answer.isObject()) actual = answer;
-        return expected != null && actual != null && !empty(actual) && tokens(expected).equals(tokens(actual));
+        return expected != null && actual != null && !empty(actual)
+            && duplicateTokenCount(expected) == 0 && duplicateTokenCount(actual) == 0
+            && tokens(expected).equals(tokens(actual));
     }
 
     private boolean textAnswer(String type, JsonNode key, JsonNode answer, JsonNode config) {
@@ -139,7 +141,12 @@ final class ShsatQuestionGrader {
         Set<String> submitted = tokens(first(answer, hotText
             ? new String[]{"selectedSegmentIds", "selectedIds", "answers", "regions"}
             : new String[]{"selectedRegionIds", "regions", "selectedIds", "answers"}));
-        if (expected.isEmpty() || !expected.equals(submitted)) return false;
+        JsonNode expectedNode = first(key, keyFields);
+        JsonNode submittedNode = first(answer, hotText
+            ? new String[]{"selectedSegmentIds", "selectedIds", "answers", "regions"}
+            : new String[]{"selectedRegionIds", "regions", "selectedIds", "answers"});
+        if (expected.isEmpty() || !expected.equals(submitted)
+            || duplicateTokenCount(expectedNode) > 0 || duplicateTokenCount(submittedNode) > 0) return false;
         Set<String> allowed = new LinkedHashSet<>();
         if (hotText) {
             for (JsonNode part : array(config, "contentParts", "segments")) {
@@ -277,6 +284,20 @@ final class ShsatQuestionGrader {
         else for (String part : node.asText("").split("[,;|]")) if (!token(part).isBlank()) result.add(token(part));
         result.removeIf(String::isBlank);
         return result;
+    }
+
+    private int duplicateTokenCount(JsonNode node) {
+        if (node == null || node.isNull() || node.isObject()) return 0;
+        List<String> values = new ArrayList<>();
+        if (node.isArray()) node.forEach(item -> values.add(token(text(item))));
+        else for (String value : node.asText("").split("[,;|]")) values.add(token(value));
+
+        Set<String> seen = new LinkedHashSet<>();
+        int duplicates = 0;
+        for (String value : values) {
+            if (!value.isBlank() && !seen.add(value)) duplicates++;
+        }
+        return duplicates;
     }
 
     private List<String> collectText(JsonNode node, List<String> values) {

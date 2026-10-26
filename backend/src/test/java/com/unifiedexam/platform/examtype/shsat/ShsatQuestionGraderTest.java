@@ -17,6 +17,8 @@ class ShsatQuestionGraderTest {
     void gradesSingleAndMultipleSelectionAsExactSets() throws Exception {
         assertTrue(grade("MULTIPLE_CHOICE", "{\"answers\":[\"B\"]}", "{\"value\":\"b\"}"));
         assertFalse(grade("MULTI_SELECT", "{\"answers\":[\"A\",\"C\"]}", "{\"answers\":[\"A\"]}"));
+        assertFalse(grade("MULTIPLE_CHOICE", "{\"answers\":[\"A\"]}", "{\"answers\":[\"A\",\"A\"]}"));
+        assertFalse(grade("MULTIPLE_CHOICE", "{\"answers\":[\"A\",\"A\"]}", "{\"answers\":[\"A\"]}"));
     }
 
     @Test
@@ -60,8 +62,14 @@ class ShsatQuestionGraderTest {
         assertTrue(grader.grade("HOT_TEXT", json("{\"selectedSegmentIds\":[\"s1\"]}"),
             json("{\"selectedIds\":[\"S1\"]}"),
             json("{\"questionConfig\":{\"contentParts\":[{\"type\":\"segment\",\"id\":\"s1\"}]}}"), null));
+        assertFalse(grader.grade("HOT_TEXT", json("{\"selectedSegmentIds\":[\"s1\"]}"),
+            json("{\"selectedSegmentIds\":[\"s1\",\"s1\"]}"),
+            json("{\"questionConfig\":{\"contentParts\":[{\"type\":\"segment\",\"id\":\"s1\"}]}}"), null));
         assertTrue(grader.grade("HOT_SPOT", json("{\"selectedRegionIds\":[\"r1\"]}"),
             json("{\"regions\":[\"r1\"]}"),
+            json("{\"questionConfig\":{\"regions\":[{\"id\":\"r1\"}]}}"), null));
+        assertFalse(grader.grade("HOT_SPOT", json("{\"selectedRegionIds\":[\"r1\"]}"),
+            json("{\"selectedRegionIds\":[\"r1\",\"r1\"]}"),
             json("{\"questionConfig\":{\"regions\":[{\"id\":\"r1\"}]}}"), null));
     }
 
