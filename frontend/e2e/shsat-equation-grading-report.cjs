@@ -73,6 +73,16 @@ async function main() {
               }, validationRules: {} },
               answerKey: { points: [{ x: 2, y: 3 }] }, grading: {}, explanation: 'The point is (2, 3).',
               categoryId: null, sortOrder: 1, displayNumber: 59, maxPoints: 1, scoringSectionCode: 'MATH',
+            }, {
+              questionTypeCode: 'TABLE_GRID', payloadSchemaVersion: 1,
+              stem: 'Select the correct value for the item.',
+              render: { questionConfig: {
+                selectionMode: 'single',
+                rows: [{ id: 'item-1', label: 'Item 1' }],
+                columns: [{ id: 'no', label: 'No' }, { id: 'yes', label: 'Yes' }],
+              }, validationRules: {} },
+              answerKey: { answers: { 'item-1': 'yes' } }, grading: {}, explanation: 'Yes is correct.',
+              categoryId: null, sortOrder: 2, displayNumber: 60, maxPoints: 1, scoringSectionCode: 'MATH',
             }],
           }],
         },
@@ -134,19 +144,29 @@ async function main() {
     await student.locator('.graph-plot__svg').click({
       position: { x: plot.width * (474 / 680), y: plot.height * (112 / 420) },
     });
+    await student.getByRole('button', { name: 'Next', exact: true }).click();
+    assert.equal((await graphSave).status(), 200, 'the plotted point is saved before moving to the table grid');
+    await student.getByText('Select the correct value for the item.', { exact: true }).waitFor();
+    const tableItem = (attempt.items || attempt.questions || []).find(item => item.questionTypeCode === 'TABLE_GRID');
+    assert.ok(tableItem, 'the table grid item is included in the active student attempt');
+    const correctTableCell = student.locator('.table-grid-answer__cell').filter({ has: student.getByRole('radio', { name: 'Item 1: Yes' }) });
+    await correctTableCell.locator('label.table-grid-answer__choice').click();
+    assert.equal(await student.getByRole('radio', { name: 'Item 1: Yes' }).isChecked(), true,
+      'the visible table-grid choice records the selected answer');
     await student.getByRole('button', { name: 'Submit Exam', exact: true }).click();
-    assert.equal((await graphSave).status(), 200, 'the plotted point is saved to the active attempt');
     await student.getByRole('dialog').getByRole('button', { name: 'Submit Exam', exact: true }).click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${attemptId}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
 
     const result = await api(admin, `/api/admin/reports/attempts/${attemptId}/result`);
-    assert.equal(result.totalScore, 3, `the ELA choice, equivalent Math equation, and plotted coordinate receive credit; report=${JSON.stringify(result)}`);
-    assert.deepEqual(result.questions.map(question => [question.partCode, question.correct]), [['ELA', true], ['MATH', true], ['MATH', true]]);
+    assert.equal(result.totalScore, 4, `the ELA choice, Math equation, plotted coordinate, and table-grid answer receive credit; report=${JSON.stringify(result)}`);
+    assert.deepEqual(result.questions.map(question => [question.partCode, question.correct]), [
+      ['ELA', true], ['MATH', true], ['MATH', true], ['MATH', true],
+    ]);
     const studentReport = await api(student, `/api/student/attempts/${attemptId}/report`);
     assert.equal(studentReport.scoreVisible, true, 'SHSAT scores are visible after submission by default, as in the independent system');
     await student.getByText('Raw Total', { exact: true }).waitFor();
-    assert.equal(await student.locator('.summary-field').filter({ hasText: 'Raw Total' }).locator('.summary-field__value').textContent(), '3 / 3');
+    assert.equal(await student.locator('.summary-field').filter({ hasText: 'Raw Total' }).locator('.summary-field__value').textContent(), '4 / 4');
     await student.screenshot({ path: `/tmp/shsat-equation-report-${stamp}.png` });
     await student.evaluate(() => {
       window.__shsatPrintRequested = false;
