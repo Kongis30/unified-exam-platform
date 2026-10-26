@@ -138,11 +138,12 @@
 - [x] 班级详情批量添加学生回归：将入口明确为 `Add Students`；弹窗提供搜索表格、多选、全选当前结果，并显示学生姓名、用户名、现有班级和邮箱。已用临时学生验证从搜索到加入成功、刷新后成员关系落库；该学生可同时属于多个班级。桌面截图 `130-class-add-students-desktop.png`，390px 窄屏截图 `132-class-add-students-mobile-fixed.png`、`136-add-student-membership-mobile.png`；窄屏根节点宽度为 390px，无横向溢出，移动端保留学生姓名和现有班级列。后端学生选项接口现返回邮箱，控制器测试覆盖字段映射。
 - [x] 班级成员移除语义修正并端到端回归：班级详情操作由 `Delete` 改为 `Remove`，确认窗口说明只移除当前班级成员关系，账户、考试历史及其它班级关系保留；不再使用误导性的永久删除措辞或 10 秒冷静期。临时学生同时加入两个班后，从一个班移除，再次验证账户仍存在且另一个班成员关系保留；随后从批量添加弹窗重新加入并确认两班关系都存在。截图 `134-remove-student-modal.png`；页面脚本错误为 0，相关测试数据已清理。
 - [x] SHSAT 班级资料编辑持久化：发现详情表单中的教师姓名/邮箱、年级、学年、Active 状态没有接入共享班级 API，且详情查询会丢弃这些字段；现使用现有 `shsat_class_metadata` 保存 SHSAT 扩展资料，通用班级状态仍写 `classes`。界面修改并保存后，刷新核对资料与 Inactive 状态，API 字段一致；SAT 班级创建/更新回归仍返回 ACTIVE，SHSAT 扩展字段保持为空；临时班级已删除。Java 控制器测试及全量 92 项后端测试、前端生产构建通过；桌面/390px 截图 `127-class-metadata-before.png`、`128-class-metadata-after.png`、`129-class-metadata-mobile.png`，窄屏无横向溢出。班级字段校验和其它按钮继续待测。
-- [x] `Class Exam Score Trend`：复核 SHSAT 文案、raw/scaled 提示和无数据状态；桌面截图确认没有 SAT/PSAT 范围提示。仍需用带 SHSAT 折算分/考试点的数据验证曲线与悬浮内容。
+- [x] `Class Exam Score Trend`：复核 SHSAT 文案、raw/scaled 提示和无数据状态；桌面截图确认没有 SAT/PSAT 范围提示。后续用真实考试成绩确认 Raw 趋势图、关键点考试信息悬浮窗可用；当前班级样本没有折算分，因此 Scaled 有意义的折算数据仍待另一数据集验证。
 - [x] 班级详情统计真实数据烟测：发现统一版没有返回班级学生的平均分/已完成考试数，且班级摘要平均分为空；按已完成、非练习、学生当时属于班级且有考试资格的记录实时聚合，SHSAT 学生分数按独立版规则在折算分有效时使用折算分，否则回退原始分。SHSAT 学生统计显示 17 名有成绩、1 名无记录；班级摘要显示平均分 52.53。SAT/PSAT 查询也已烟测返回样本统计。截图 `81-class-student-stats-desktop.png`、`82-class-student-stats-mobile.png`、`83-class-summary-average-desktop.png`、`84-class-summary-average-mobile.png`；桌面和 390px 窄屏均无横向溢出，浏览器脚本错误为 0。针对聚合 SQL 的控制器测试和前端构建通过。这里只完成班级摘要及学生表统计，不代表班级详情其它操作已验收。
 - [x] 班级详情非破坏性操作抽测：Edit Class 表单打开并显示当前班级信息，取消后数据未变；学生表第一行 `View` 打开对应学生详情，4 次完成考试、平均分、趋势及历史记录可见；`Back to Class Detail` 返回原班级路由。桌面截图 `86-class-edit-modal.png`、`87-class-student-detail.png`；学生详情 390px 窄屏截图 `88-student-detail-mobile.png`，页面无横向溢出，浏览器脚本错误为 0。保存编辑、刷新、View Report 等写入或跳转操作仍待逐项验收。
 - [ ] 班级考试成绩页：Back、Monitor、Retry、总分/ELA/Math/正确率/提交时间排序、学生 View；无成绩/未开始/进行中/已完成统计与实际尝试一致，表头和数据逐列对齐。
-- [ ] 学生详情页：Back/Refresh/Retry、总尝试/完成/平均/最高、Score Trend 的 Raw/Scaled 切换和点悬浮信息、Score History 原始分与折算分排序、`View Report`；重复考试按每次尝试显示，源记录缺少赋分表时显示 `—` 而非伪造分数。
+- [x] 学生详情分数趋势/历史回归（2026-10-27）：同一学生 4 次 SHSAT 完成尝试正确显示总数/完成数/平均/最高分及逐次历史；Raw 图有三条总分/ELA/Math 曲线，悬浮关键点显示考试名、提交时间及三项分数；点击 Scaled 对当前无折算数据的样本显示明确空状态，不伪造折算分；Raw Score 与 Scaled Score 表头均能切换排序，Refresh 后记录仍完整。桌面与 390px 截图 `/tmp/shsat-student-detail-verified-20261027.png`、`/tmp/shsat-student-detail-mobile-chart-visible-20261027.png`，窄屏根页面无横向溢出。缺少赋分表的有值数据、Retry 失败恢复及多次同场重考同学生的数据仍待验收。
+- [ ] 学生详情页：Back、错误态 Retry、统计数据的独立对账、含折算分数据时 Raw/Scaled 图与排序、多次重考同场历史、源记录缺少赋分表时显示 `—` 而非伪造分数。
 
 ## 6. 完整考试流程：必须用真实学生跑通
 
