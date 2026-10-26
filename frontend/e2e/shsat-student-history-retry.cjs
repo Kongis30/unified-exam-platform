@@ -75,7 +75,7 @@ async function main() {
     assert.equal((await initialFailure).status(), 503, 'the test injects an initial service error');
     await examCard.getByRole('alert').getByText(/Temporary exam list failure/).waitFor();
     await historyCard.getByRole('alert').getByText(/Temporary review task failure/).waitFor();
-    await historyCard.getByRole('tab', { name: 'Review Tasks' }).click();
+    await historyCard.getByRole('tab', { name: 'Review Task History' }).click();
     assert.equal(await historyCard.getByText('No review tasks have been assigned.', { exact: true }).count(), 0,
       'an empty task state is not shown while task history could not be loaded');
     assert.equal(await student.getByText('No exams have been assigned to you yet.', { exact: true }).count(), 0,
