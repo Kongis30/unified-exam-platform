@@ -39,3 +39,11 @@ E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:unassigne
 ```
 
 This test creates temporary students and a class, verifies select-all, selection retention after refresh/cancel, batch assignment, the 800px scroll cap and 390px layout, then removes and verifies cleanup of all temporary data. Do not point it at production data.
+
+To verify SHSAT class-card ordering, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:class-order
+```
+
+This test moves temporary classes in the browser, checks the saved order after reload, restores the original order, and verifies no temporary classes remain. It saves desktop and 390px screenshots. Do not point it at production data.

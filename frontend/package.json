@@ -11,7 +11,8 @@
     "test:e2e:shsat:paper-filters": "node e2e/shsat-paper-filters.cjs",
     "test:e2e:shsat:student-states": "node e2e/shsat-student-exam-states.cjs",
     "preview": "vite preview",
-    "test:e2e:shsat:unassigned-bulk": "node e2e/shsat-unassigned-bulk-assign.cjs"
+    "test:e2e:shsat:unassigned-bulk": "node e2e/shsat-unassigned-bulk-assign.cjs",
+    "test:e2e:shsat:class-order": "node e2e/shsat-class-order.cjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

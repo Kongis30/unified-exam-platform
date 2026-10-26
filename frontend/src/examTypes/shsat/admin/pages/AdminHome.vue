@@ -1522,7 +1522,12 @@ function dragOverClass(item, event) {
   }
 
   event.preventDefault();
-  if (String(item.classId) === draggingClassId.value) {
+  event.dataTransfer.dropEffect = 'move';
+}
+
+function dropClass(item, event) {
+  event.preventDefault();
+  if (!draggingClassId.value || !item.classId || String(item.classId) === draggingClassId.value) {
     return;
   }
 
@@ -4682,7 +4687,7 @@ onBeforeUnmount(() => {
                   @keydown="handleClassCardKeydown(item, $event)"
                   @dragstart="startClassDrag(item, $event)"
                   @dragover="dragOverClass(item, $event)"
-                  @drop.prevent
+                  @drop="dropClass(item, $event)"
                   @dragend="finishClassDrag"
                 >
                   <div class="class-card__header">
@@ -5570,6 +5575,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
 }
+
+.class-card__header { flex-wrap: wrap; }
+.class-card__header > div:first-child { min-width: 0; flex: 1 1 120px; }
 
 .class-card__actions {
   display: inline-flex;
