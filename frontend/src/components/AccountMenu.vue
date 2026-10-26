@@ -176,10 +176,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', closeMenuOnOut
 </template>
 
 <style scoped>
-.account-menu { position: relative; display: inline-flex; align-items: center; }
-.account-menu__trigger { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 10px; padding: 8px 10px; color: var(--color-text); background: transparent; cursor: pointer; }
+.account-menu { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: min(220px, 32vw); }
+.account-menu__trigger { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; gap: 8px; border: 0; border-radius: 10px; padding: 8px 10px; color: var(--color-text); background: transparent; cursor: pointer; }
 .account-menu__trigger:hover, .account-menu__trigger[aria-expanded="true"] { background: var(--color-primary-soft); }
-.account-menu__trigger strong { font-size: 14px; font-weight: 750; }
+.account-menu__trigger strong { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .account-menu__dropdown { position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; display: grid; width: 248px; padding: 8px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: 0 16px 40px rgba(23, 32, 51, .16); }
 .account-menu__identity { display: grid; gap: 3px; padding: 10px 11px 12px; }
 .account-menu__identity strong { overflow: hidden; color: var(--color-text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
