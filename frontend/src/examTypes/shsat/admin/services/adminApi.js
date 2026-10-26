@@ -2,9 +2,9 @@ import { http } from './http';
 import {
   addClassStudent, addClassStudents, apiRequest, createClass as createPlatformClass,
   createExam as createPlatformExam, createUser as createPlatformUser,
-  listAvailableStudents, listClassStudents, listClasses, listExams, listPapers,
+  deleteClass as deletePlatformClass, listAvailableStudents, listClassStudents, listClasses, listExams, listPapers,
   publishExam as publishPlatformExam, removeClassStudent, reorderClasses as reorderPlatformClasses, saveExamTargets,
-  setClassStatus, updateClass as updatePlatformClass, updateExam as updatePlatformExam,
+  updateClass as updatePlatformClass, updateExam as updatePlatformExam,
 } from '@/api/platform';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromFullName } from '@shsat/utils/accountCredentials';
 import { applyShsatSkillTagToConfig } from '@shsat/utils/shsatSkillTags';
@@ -512,7 +512,7 @@ export const adminApi = {
   },
 
   deleteClass(classId) {
-    return setClassStatus(classId, 'ARCHIVED');
+    return deletePlatformClass(classId);
   },
 
   async reorderClasses(classIds) {

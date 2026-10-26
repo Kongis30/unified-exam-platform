@@ -50,11 +50,11 @@ class ClassAdminControllerTest {
     }
 
     @Test
-    void deleteClassDetachesEnrollmentsAndReleaseTargetsButKeepsStudentAndExamRecords() {
+    void deleteEmptyClassDetachesEnrollmentsAndReleaseTargetsButKeepsStudentAndExamRecords() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), eq(12L))).thenReturn(12L);
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(0);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(0, 0);
         when(jdbcTemplate.update(anyString(), eq(12L))).thenReturn(1);
 
         new ClassAdminController(jdbcTemplate).deleteClass(12L);
@@ -71,13 +71,28 @@ class ClassAdminControllerTest {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), eq(12L))).thenReturn(12L);
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(2);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(0, 2);
 
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
             () -> new ClassAdminController(jdbcTemplate).deleteClass(12L));
 
         assertEquals(409, error.getStatusCode().value());
         assertTrue(error.getReason().contains("SHSAT review tasks"));
+        verify(jdbcTemplate, never()).update(anyString(), eq(12L));
+    }
+
+    @Test
+    void deleteClassRejectsActiveStudents() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), eq(12L))).thenReturn(12L);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(1);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+            () -> new ClassAdminController(jdbcTemplate).deleteClass(12L));
+
+        assertEquals(409, error.getStatusCode().value());
+        assertTrue(error.getReason().contains("Only empty classes"));
         verify(jdbcTemplate, never()).update(anyString(), eq(12L));
     }
 
@@ -135,7 +150,9 @@ class ClassAdminControllerTest {
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("COUNT(DISTINCT a.exam_id)")
                 && sql.contains("FROM exam_target_students ts")
-                && sql.contains("ts.student_user_id = m.student_user_id")),
+                && sql.contains("ts.student_user_id = m.student_user_id")
+                && sql.contains("AS deletable")
+                && sql.contains("FROM shsat_wrong_answer_tasks review_tasks")),
             any(RowMapper.class), eq("SAT"), eq("PSAT"));
     }
 
@@ -168,7 +185,7 @@ class ClassAdminControllerTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
             .thenReturn(List.of(new ClassAdminController.ClassView(12L, "Grade 8", "Fall cohort", "ARCHIVED", 3,
-                4, 2, null, "A. Teacher", "teacher@example.com", "Grade 8", "2026-2027", false)));
+                4, 2, null, "A. Teacher", "teacher@example.com", "Grade 8", "2026-2027", false, false)));
         when(jdbcTemplate.queryForObject(anyString(), eq(java.math.BigDecimal.class), any(Object[].class)))
             .thenReturn(null);
 

@@ -52,6 +52,12 @@ public class ClassAdminController {
             SELECT c.id, c.name, c.description, c.status, c.sort_order,
                    meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
                 (SELECT COUNT(*) FROM class_memberships m WHERE m.class_id = c.id AND m.left_at IS NULL) AS student_count,
+                CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM class_memberships active_members
+                    WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM shsat_wrong_answer_tasks review_tasks WHERE review_tasks.class_id = c.id
+                ) THEN TRUE ELSE FALSE END AS deletable,
                 (SELECT COUNT(DISTINCT a.exam_id)
                  FROM class_memberships m
                  JOIN attempts a ON a.student_user_id = m.student_user_id
@@ -317,12 +323,17 @@ public class ClassAdminController {
         jdbcTemplate.update("UPDATE classes SET status = ? WHERE id = ?", request.status(), classId);
     }
 
-    /** 管理员硬删除班级；保留学生、考试及成绩，并阻止删除仍承载 SHSAT 任务的班级。 */
+    /** 管理员只能删除空班级；保留学生与考试数据，并阻止删除仍承载 SHSAT 复习任务的班级。 */
     @DeleteMapping("/{classId}")
     @Transactional
     public void deleteClass(@PathVariable long classId) {
         requireClass(classId);
         jdbcTemplate.queryForObject("SELECT id FROM classes WHERE id = ? FOR UPDATE", Long.class, classId);
+        Integer studentCount = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM class_memberships WHERE class_id = ? AND left_at IS NULL", Integer.class, classId);
+        if (studentCount != null && studentCount > 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only empty classes can be deleted.");
+        }
         Integer taskCount = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM shsat_wrong_answer_tasks WHERE class_id = ?", Integer.class, classId);
         if (taskCount != null && taskCount > 0) {
@@ -466,6 +477,12 @@ public class ClassAdminController {
             SELECT c.id, c.name, c.description, c.status, c.sort_order,
                 meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
                 (SELECT COUNT(*) FROM class_memberships m WHERE m.class_id = c.id AND m.left_at IS NULL) AS student_count,
+                CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM class_memberships active_members
+                    WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM shsat_wrong_answer_tasks review_tasks WHERE review_tasks.class_id = c.id
+                ) THEN TRUE ELSE FALSE END AS deletable,
                 (SELECT COUNT(DISTINCT a.exam_id)
                  FROM class_memberships m
                  JOIN attempts a ON a.student_user_id = m.student_user_id
@@ -522,7 +539,7 @@ public class ClassAdminController {
         return new ClassView(classroom.id(), classroom.name(), classroom.description(), classroom.status(),
             classroom.sortOrder(), classroom.studentCount(), classroom.examCount(), averageScore,
             classroom.teacherName(), classroom.teacherEmail(), classroom.gradeLevel(), classroom.academicYear(),
-            classroom.active());
+            classroom.active(), classroom.deletable());
     }
 
     /** 保存 SHSAT 来源系统的班级资料；通用班级字段仍保存在 classes 主表。 */
@@ -541,7 +558,7 @@ public class ClassAdminController {
         return new ClassView(rs.getLong("id"), rs.getString("name"), rs.getString("description"), status,
             rs.getInt("sort_order"), rs.getInt("student_count"), rs.getInt("exam_count"), null,
             rs.getString("teacher_name"), rs.getString("teacher_email"), rs.getString("grade_level"),
-            rs.getString("academic_year"), "ACTIVE".equals(status));
+            rs.getString("academic_year"), "ACTIVE".equals(status), rs.getBoolean("deletable"));
     }
 
     private String normalizeOptional(String value) {
@@ -627,16 +644,16 @@ public class ClassAdminController {
     public record ClassView(long id, String name, String description, String status, int sortOrder,
                             int studentCount, int examCount, java.math.BigDecimal averageScore,
                             String teacherName, String teacherEmail, String gradeLevel,
-                            String academicYear, Boolean active) {
+                            String academicYear, Boolean active, Boolean deletable) {
         public ClassView(long id, String name, String description, String status, int sortOrder,
                          int studentCount, int examCount) {
             this(id, name, description, status, sortOrder, studentCount, examCount, null, null, null, null, null,
-                "ACTIVE".equals(status));
+                "ACTIVE".equals(status), false);
         }
         public ClassView(long id, String name, String description, String status, int sortOrder,
                          int studentCount, int examCount, java.math.BigDecimal averageScore) {
             this(id, name, description, status, sortOrder, studentCount, examCount, averageScore, null, null, null,
-                null, "ACTIVE".equals(status));
+                null, "ACTIVE".equals(status), false);
         }
     }
     public record StudentView(long id, String username, String realName, String email, String joinedAt,

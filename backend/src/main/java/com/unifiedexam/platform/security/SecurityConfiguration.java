@@ -79,7 +79,6 @@ public class SecurityConfiguration {
                 .requestMatchers("/api/admin/sat/reports/exams/*/monitor/**").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.DELETE, "/api/admin/sat/students/*/attempts/*").hasRole("ADMIN")
                 .requestMatchers(HttpMethod.DELETE, "/api/admin/exams/*").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/admin/classes/*").hasRole("ADMIN")
                 .requestMatchers("/api/admin/classes/**").hasAnyRole("ADMIN", "TEACHER")
                 .requestMatchers("/api/admin/**").hasAnyRole("ADMIN", "TEACHER")
                 .requestMatchers("/api/student/exams/*/attempts", "/api/student/attempts/**")

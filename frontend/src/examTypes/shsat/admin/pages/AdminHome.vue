@@ -4907,7 +4907,7 @@ onBeforeUnmount(() => {
                 <header class="modal-card__header">
                   <div>
                     <h3 id="delete-class-confirm-title">Delete empty class?</h3>
-                    <p>This action removes the class card from the class list.</p>
+                    <p>This permanently deletes the class and removes its release targeting. Exams, student accounts, and attempt records remain.</p>
                   </div>
                   <button
                     class="modal-card__close"

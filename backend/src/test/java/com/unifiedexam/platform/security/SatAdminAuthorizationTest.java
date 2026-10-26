@@ -130,7 +130,7 @@ class SatAdminAuthorizationTest {
     }
 
     @Test
-    void classDeletionIsAdministratorOnlyWhileTeachersRetainClassManagementAccess() throws Exception {
+    void administratorsAndTeachersCanDeleteEmptyClasses() throws Exception {
         when(userDetailsService.loadUserByUsername("admin"))
             .thenReturn(User.withUsername("admin").password("unused").roles("ADMIN").build());
         when(userDetailsService.loadUserByUsername("teacher"))
@@ -140,22 +140,22 @@ class SatAdminAuthorizationTest {
         when(jdbcTemplate.queryForObject(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq(12L)))
             .thenReturn(12L);
         when(jdbcTemplate.queryForObject(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Integer.class), org.mockito.ArgumentMatchers.eq(12L)))
-            .thenReturn(0);
+            .thenReturn(0, 0, 0, 0);
         when(jdbcTemplate.update(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(12L)))
             .thenReturn(1);
 
         mockMvc.perform(delete("/api/admin/classes/12")
                 .with(user("teacher").roles("TEACHER"))
                 .with(csrf()))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isOk());
 
         mockMvc.perform(delete("/api/admin/classes/12")
                 .with(user("admin").roles("ADMIN"))
                 .with(csrf()))
             .andExpect(status().isOk());
 
-        verify(jdbcTemplate).update("DELETE FROM exam_target_classes WHERE class_id = ?", 12L);
-        verify(jdbcTemplate).update("DELETE FROM class_memberships WHERE class_id = ?", 12L);
-        verify(jdbcTemplate).update("DELETE FROM classes WHERE id = ?", 12L);
+        verify(jdbcTemplate, org.mockito.Mockito.times(2)).update("DELETE FROM exam_target_classes WHERE class_id = ?", 12L);
+        verify(jdbcTemplate, org.mockito.Mockito.times(2)).update("DELETE FROM class_memberships WHERE class_id = ?", 12L);
+        verify(jdbcTemplate, org.mockito.Mockito.times(2)).update("DELETE FROM classes WHERE id = ?", 12L);
     }
 }
