@@ -4736,7 +4736,7 @@ onBeforeUnmount(() => {
                 :disabled="selectedUnassignedStudents.length === 0 || assignableClasses.length === 0 || bulkAssigning"
                 @click="openBulkAssignModal"
               >
-                Assign selected<span v-if="selectedUnassignedStudents.length"> ({{ selectedUnassignedStudents.length }})</span>
+                Assign selected <span v-if="selectedUnassignedStudents.length">({{ selectedUnassignedStudents.length }})</span>
               </AppButton>
               <button
                 class="collapse-arrow-button"
@@ -4777,7 +4777,7 @@ onBeforeUnmount(() => {
               <div v-else-if="errors.unassignedStudents" class="admin-state admin-state--error">{{ errors.unassignedStudents }}</div>
               <div v-else-if="unassignedStudents.length === 0" class="admin-state">No unassigned student accounts.</div>
               <div v-else class="table-wrap unassigned-students-scroll">
-                <AdminDataTable>
+                <AdminDataTable class="unassigned-students-table">
                   <thead>
                     <tr>
                       <th class="unassigned-students-select-column">
@@ -4790,8 +4790,8 @@ onBeforeUnmount(() => {
                         />
                       </th>
                       <th>Name</th>
-                      <th>Username</th>
-                      <th>Email</th>
+                      <th class="unassigned-students-secondary-column">Username</th>
+                      <th class="unassigned-students-secondary-column">Email</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4805,8 +4805,8 @@ onBeforeUnmount(() => {
                         />
                       </td>
                       <td>{{ student.realName }}</td>
-                      <td>{{ student.username }}</td>
-                      <td>{{ student.email || '-' }}</td>
+                      <td class="unassigned-students-secondary-column">{{ student.username }}</td>
+                      <td class="unassigned-students-secondary-column">{{ student.email || '-' }}</td>
                     </tr>
                   </tbody>
                 </AdminDataTable>
@@ -6656,6 +6656,20 @@ onBeforeUnmount(() => {
   margin: 0;
   accent-color: var(--color-primary);
   vertical-align: middle;
+}
+
+@media (max-width: 600px) {
+  .unassigned-students-scroll { overflow-x: hidden; }
+  .unassigned-students-scroll :deep(.unassigned-students-table) {
+    min-width: 0;
+    table-layout: fixed;
+  }
+  .unassigned-students-scroll :deep(.unassigned-students-select-column) { width: 44px; }
+  .unassigned-students-scroll :deep(.unassigned-students-secondary-column) { display: none; }
+  .unassigned-students-scroll :deep(tbody td:nth-child(2)) {
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
 }
 
 .bulk-assign-modal .form-field {

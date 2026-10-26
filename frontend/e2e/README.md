@@ -31,3 +31,11 @@ E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:student-s
 ```
 
 This test creates two temporary students and two SHSAT exam releases targeted only to one student. It checks the Upcoming card has no start action, the Available card can be started, the other student cannot see either release, and the student page fits a 390px viewport. It deletes the temporary releases and accounts during cleanup. Do not point it at production data.
+
+To verify the SHSAT Unassigned Students bulk assignment flow, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:unassigned-bulk
+```
+
+This test creates temporary students and a class, verifies select-all, selection retention after refresh/cancel, batch assignment, the 800px scroll cap and 390px layout, then removes and verifies cleanup of all temporary data. Do not point it at production data.
