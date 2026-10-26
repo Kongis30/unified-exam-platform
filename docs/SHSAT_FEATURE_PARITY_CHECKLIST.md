@@ -111,7 +111,7 @@
 - [ ] Review Assignments 搜索、按考试/班级筛选、Refresh、Create Assignment；设置来源考试、班级、开始/结束时间及目标，校验无来源记录/无错题/时间冲突；发布后人数和状态准确。
 - [ ] 表格 Action：`View Progress` 返回原标签与筛选位置；`End`/取消任务及确认；状态、完成/资格、进行中/未开始/缺少源尝试统计要与详情相符。
 - [ ] 任务进度页：Back、Refresh/Retry、逐学生题数/状态/完成时间、`View Report`；截止/重做/零剩余题、源考试删除后的状态和提示准确。
-- [x] Review Assignments 只读流程与窄屏抽测：含 2 条真实任务的列表可见；无匹配搜索显示正确空状态，创建弹窗打开后取消不写入数据；`View Progress` 展示学生资格、状态和题数，`Back to Review Assignments` 返回带原 `tab` 的后台路由。390px 根节点宽度保持 390px，无浏览器脚本错误。截图 `99-review-assignments-desktop.png`、`100-review-assignment-create-modal.png`、`101-review-assignments-mobile.png`。下拉筛选、Refresh、创建/发布、End、逐学生 View Report 尚待验收。
+- [x] Review Assignments 搜索/筛选与只读流程抽测：2 条任务可见；不匹配搜索显示空状态，按考试筛出 2 条、再按班级筛出 1 条，Refresh 后仍保留筛选；创建弹窗打开后取消不写入数据。动作菜单顺序为 `View Progress`、`End`；打开 End 确认后取消，任务状态未变化。`View Progress` 展示学生资格、状态和题数，`View Report` 打开对应学生任务报告并返回进度页，`Back to Review Assignments` 返回带原 `tab` 的后台路由。390px 根节点宽度保持 390px，无浏览器脚本错误。截图 `99-review-assignments-desktop.png`、`100-review-assignment-create-modal.png`、`101-review-assignments-mobile.png`、`102-review-student-report-desktop.png`。创建/发布、End 确认后的真实状态更新尚待验收。
 - [ ] Classes 首页：搜索、`Create Class`、刷新、卡片打开、空班删除、拖动顺序持久化；同一学生可加入多个班级；班级能接收 SHSAT 或 SAT 场次。
 - [ ] Unassigned Students：刷新/折叠、最多 800px 内滚动、表头全选/逐项多选、`Assign selected`、班级选择、取消/提交；已在其他班的学生不应被误标“未分配”。
 - [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。
