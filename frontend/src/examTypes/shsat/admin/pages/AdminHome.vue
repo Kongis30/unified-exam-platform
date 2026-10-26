@@ -11,6 +11,7 @@ import AdminSection from '@/components/admin/AdminSection.vue';
 import AdminLayout from '@/components/admin/AdminLayout.vue';
 import AdminExamCard from '@/components/admin/AdminExamCard.vue';
 import AdminDataTable from '@/components/admin/AdminDataTable.vue';
+import AdminActionMenu from '@/components/admin/AdminActionMenu.vue';
 import RichSelect from '@shsat/components/RichSelect.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 import { studentApi } from '@shsat/admin/services/studentApi';

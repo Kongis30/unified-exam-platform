@@ -52,6 +52,7 @@
 - [ ] 分组拖动排序：首组、中间组、末组互换，拖入第二组或拖出第二组均持久化；刷新/重新登录顺序一致；每个组恰好一次，默认组规则正确。
 - [ ] 组操作 `Rename folder`、`Delete empty folder`：编辑、取消、成功刷新；非空不能误删；表内缩进、组名、数量和操作图标视觉一致。
 - [ ] `Create Paper`：名称、时长、状态等字段校验；创建后出现在正确分组，能从列表打开编辑。
+- [x] Paper List action 菜单接入：发现 SHSAT AdminHome 漏导入共享 `AdminActionMenu`，导致菜单按钮未渲染、操作项作为普通按钮显示；补齐导入后确认每行显示省略号入口、Delete 排最后、Escape 可关闭；`Export PDF` 可进入导出页。115 题卷 PDF 输出 218,673 bytes、13 页 Letter，抽取文本含章节/题目内容，浏览器脚本错误为 0。封面后的空白页在独立版导出中也明确存在，是双面打印留白，保持一致；截图 `37-paper-export.png`，PDF `37-paper-export.pdf`。`Move`、`Detail`、`Edit Info`、`Edit Paper`、`Preview` 和 Delete 仍需逐项验证。
 - [ ] 逐卷 Action 菜单：`Move`、`Detail`、`Edit Info`、`Edit Paper`、`Preview`、`Export PDF`、`Delete` 按独立版逐个操作；弹窗可关闭、保存后刷新，删除有影响说明和确认，删除后引用处处理明确；危险动作始终排最后。
 - [ ] 试卷列表：名称、题量、时长、分数、状态/Online 与详情相同；长名称、空字段、离线/草稿、缺失资源显示合理；排序/过滤后菜单仍对准当前行。
 
