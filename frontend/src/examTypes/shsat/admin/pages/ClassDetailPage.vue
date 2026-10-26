@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
@@ -18,22 +18,28 @@ const formNotice = ref('');
 const showClassModal = ref(false);
 const submittingClass = ref(false);
 const showStudentModal = ref(false);
+const showAddStudentsModal = ref(false);
+const availableStudentAccounts = ref([]);
+const selectedStudentIds = ref([]);
+const studentSearch = ref('');
+const addStudentsError = ref('');
+const loadingAvailableStudents = ref(false);
+const addingStudents = ref(false);
 const studentFormError = ref('');
 const studentFormNotice = ref('');
 const editingStudentId = ref('');
 const submittingStudent = ref(false);
-const studentDeleteNotice = ref('');
-const studentDeleteError = ref('');
-const showStudentDeleteModal = ref(false);
-const studentPendingDeletion = ref(null);
-const deletingStudent = ref(false);
-const deleteCooldownRemaining = ref(0);
+const studentRemovalNotice = ref('');
+const studentRosterNotice = ref('');
+const studentRemovalError = ref('');
+const showStudentRemovalModal = ref(false);
+const studentPendingRemoval = ref(null);
+const removingStudent = ref(false);
 const classInfo = ref(null);
 const classes = ref([]);
 const exams = ref([]);
 const students = ref([]);
 const examKeyword = ref('');
-let deleteCooldownTimer = null;
 
 const classId = computed(() => route.params.classId);
 
@@ -112,6 +118,20 @@ const paginatedClassExams = computed(() => {
   return relatedClassExams.value.slice(start, start + pageSize);
 });
 
+const selectableStudents = computed(() => {
+  const currentIds = new Set(students.value.map((student) => String(student.studentId || student.id)));
+  const keyword = studentSearch.value.trim().toLowerCase();
+  return availableStudentAccounts.value
+    .filter((student) => !currentIds.has(String(student.userId)))
+    .filter((student) => !keyword || [student.realName, student.username, student.email, student.classNames]
+      .some((value) => String(value || '').toLowerCase().includes(keyword)));
+});
+
+const allSelectableStudentsSelected = computed(() => (
+  selectableStudents.value.length > 0
+  && selectableStudents.value.every((student) => selectedStudentIds.value.includes(String(student.userId)))
+));
+
 const classExamPageStart = computed(() => {
   if (relatedClassExams.value.length === 0) {
     return 0;
@@ -140,12 +160,12 @@ const assignableClasses = computed(() => {
   return classes.value.filter((item) => item.className !== 'Unassigned Students');
 });
 
-const studentPendingDeletionName = computed(() => {
-  return getStudentName(studentPendingDeletion.value);
+const studentPendingRemovalName = computed(() => {
+  return getStudentName(studentPendingRemoval.value);
 });
 
-const canConfirmStudentDeletion = computed(() => {
-  return Boolean(studentPendingDeletion.value) && deleteCooldownRemaining.value <= 0 && !deletingStudent.value;
+const canConfirmStudentRemoval = computed(() => {
+  return Boolean(studentPendingRemoval.value) && !removingStudent.value;
 });
 
 function unwrapResponse(response, fallbackMessage) {
@@ -282,6 +302,63 @@ function getStudentId(student) {
   return student?.studentId || student?.id || '';
 }
 
+async function openAddStudentsModal() {
+  showAddStudentsModal.value = true;
+  availableStudentAccounts.value = [];
+  selectedStudentIds.value = [];
+  studentSearch.value = '';
+  addStudentsError.value = '';
+  loadingAvailableStudents.value = true;
+  try {
+    availableStudentAccounts.value = unwrapListResponse(
+      await adminApi.getAvailableStudentAccounts(),
+      'Failed to load student accounts',
+    );
+  } catch (error) {
+    addStudentsError.value = error.message || 'Failed to load student accounts.';
+  } finally {
+    loadingAvailableStudents.value = false;
+  }
+}
+
+function toggleStudentSelection(studentId, checked) {
+  const id = String(studentId);
+  selectedStudentIds.value = checked
+    ? [...new Set([...selectedStudentIds.value, id])]
+    : selectedStudentIds.value.filter((selectedId) => selectedId !== id);
+}
+
+function toggleAllSelectableStudents(checked) {
+  const visibleIds = selectableStudents.value.map((student) => String(student.userId));
+  const selected = new Set(selectedStudentIds.value);
+  visibleIds.forEach((id) => checked ? selected.add(id) : selected.delete(id));
+  selectedStudentIds.value = [...selected];
+}
+
+async function submitAddStudents() {
+  if (!selectedStudentIds.value.length || addingStudents.value) return;
+  addingStudents.value = true;
+  addStudentsError.value = '';
+  try {
+    const addedCount = selectedStudentIds.value.length;
+    await adminApi.addStudentsToClass(classId.value, selectedStudentIds.value);
+    showAddStudentsModal.value = false;
+    selectedStudentIds.value = [];
+    studentRosterNotice.value = `${addedCount} student${addedCount === 1 ? '' : 's'} added to this class.`;
+    await loadPage();
+  } catch (error) {
+    addStudentsError.value = error.message || 'Failed to add students.';
+  } finally {
+    addingStudents.value = false;
+  }
+}
+
+function closeAddStudentsModal() {
+  if (addingStudents.value) return;
+  showAddStudentsModal.value = false;
+  addStudentsError.value = '';
+}
+
 function openStudentDetail(student) {
   const studentDetailId = getStudentId(student);
 
@@ -332,77 +409,52 @@ function closeStudentModal() {
   studentFormNotice.value = '';
 }
 
-function clearDeleteCooldown() {
-  if (deleteCooldownTimer) {
-    window.clearInterval(deleteCooldownTimer);
-    deleteCooldownTimer = null;
-  }
-}
-
-function startDeleteCooldown() {
-  clearDeleteCooldown();
-  deleteCooldownRemaining.value = 10;
-
-  deleteCooldownTimer = window.setInterval(() => {
-    deleteCooldownRemaining.value = Math.max(0, deleteCooldownRemaining.value - 1);
-
-    if (deleteCooldownRemaining.value === 0) {
-      clearDeleteCooldown();
-    }
-  }, 1000);
-}
-
-function openStudentDeleteModal(student) {
+function openStudentRemovalModal(student) {
   if (!getStudentId(student)) {
     return;
   }
 
-  studentPendingDeletion.value = student;
-  studentDeleteError.value = '';
-  studentDeleteNotice.value = '';
-  showStudentDeleteModal.value = true;
-  startDeleteCooldown();
+  studentPendingRemoval.value = student;
+  studentRemovalError.value = '';
+  studentRemovalNotice.value = '';
+  showStudentRemovalModal.value = true;
 }
 
-function closeStudentDeleteModal() {
-  if (deletingStudent.value) {
+function closeStudentRemovalModal() {
+  if (removingStudent.value) {
     return;
   }
 
-  showStudentDeleteModal.value = false;
-  studentPendingDeletion.value = null;
-  studentDeleteError.value = '';
-  deleteCooldownRemaining.value = 0;
-  clearDeleteCooldown();
+  showStudentRemovalModal.value = false;
+  studentPendingRemoval.value = null;
+  studentRemovalError.value = '';
 }
 
-async function confirmStudentDeletion() {
-  const student = studentPendingDeletion.value;
+async function confirmStudentRemoval() {
+  const student = studentPendingRemoval.value;
   const studentId = getStudentId(student);
 
-  if (!studentId || !canConfirmStudentDeletion.value) {
+  if (!studentId || !canConfirmStudentRemoval.value) {
     return;
   }
 
-  deletingStudent.value = true;
-  studentDeleteError.value = '';
+  removingStudent.value = true;
+  studentRemovalError.value = '';
 
   try {
-    const deletedStudentName = getStudentName(student);
+    const studentName = getStudentName(student);
     unwrapResponse(
-      await adminApi.deleteStudent(classId.value, studentId),
-      'Failed to delete student'
+      await adminApi.removeStudentFromClass(classId.value, studentId),
+      'Failed to remove student from this class'
     );
-    showStudentDeleteModal.value = false;
-    studentPendingDeletion.value = null;
-    deleteCooldownRemaining.value = 0;
-    clearDeleteCooldown();
+    showStudentRemovalModal.value = false;
+    studentPendingRemoval.value = null;
     await loadPage();
-    studentDeleteNotice.value = `${deletedStudentName} was deleted successfully.`;
+    studentRemovalNotice.value = `${studentName} was removed from this class.`;
   } catch (error) {
-    studentDeleteError.value = error.message || 'Failed to delete student. Please try again.';
+    studentRemovalError.value = error.message || 'Failed to remove student from this class. Please try again.';
   } finally {
-    deletingStudent.value = false;
+    removingStudent.value = false;
   }
 }
 
@@ -657,8 +709,6 @@ watch(classExamTotalPages, (totalPages) => {
   }
 });
 
-onBeforeUnmount(clearDeleteCooldown);
-
 onMounted(loadPage);
 </script>
 
@@ -846,10 +896,14 @@ onMounted(loadPage);
           </div>
         </AppCard>
 
-        <AppCard title="Students" subtitle="Click a student to view their exam history and score trend. New students are created from Account Creation, then assigned from Unassigned Students.">
-          <p v-if="studentDeleteNotice" class="success-text student-delete-notice">{{ studentDeleteNotice }}</p>
+        <AppCard title="Students" subtitle="Add students from any class, then view their exam history and score trend.">
+          <template #actions>
+            <AppButton @click="openAddStudentsModal">Add Students</AppButton>
+          </template>
+          <p v-if="studentRosterNotice" class="success-text student-removal-notice" role="status">{{ studentRosterNotice }}</p>
+          <p v-if="studentRemovalNotice" class="success-text student-removal-notice">{{ studentRemovalNotice }}</p>
           <div v-if="students.length === 0" class="admin-state">
-            No students assigned yet. Create a student account from Admin Home, then assign it from Unassigned Students.
+            No students assigned yet. Add an existing student account to this class.
           </div>
           <div v-else class="table-wrap student-table-wrap">
             <table class="admin-table student-table">
@@ -896,7 +950,7 @@ onMounted(loadPage);
                     <div class="row-actions student-row-actions">
                       <AppButton class="student-action-button" variant="secondary" @click.stop="openStudentDetail(student)">View</AppButton>
                       <AppButton class="student-action-button student-action-button--quiet" variant="secondary" @click.stop="openEditStudentModal(student)">Edit</AppButton>
-                      <AppButton class="student-action-button student-action-button--danger" variant="secondary" @click.stop="openStudentDeleteModal(student)">Delete</AppButton>
+                      <AppButton class="student-action-button student-action-button--danger" variant="secondary" @click.stop="openStudentRemovalModal(student)">Remove</AppButton>
                     </div>
                   </td>
                 </tr>
@@ -905,6 +959,64 @@ onMounted(loadPage);
           </div>
         </AppCard>
       </template>
+
+      <Teleport to="body">
+        <div v-if="showAddStudentsModal" class="modal-backdrop" @click.self="closeAddStudentsModal">
+          <section class="modal-card modal-card--wide add-students-modal" role="dialog" aria-modal="true" aria-labelledby="add-students-title">
+            <header class="modal-card__header">
+              <div>
+                <h3 id="add-students-title">Add Students</h3>
+                <p>Select one or more accounts. Current class memberships are shown for reference.</p>
+              </div>
+              <button class="modal-card__close" type="button" aria-label="Close add students dialog" @click="closeAddStudentsModal">&times;</button>
+            </header>
+
+            <label class="form-field add-students-search">
+              <span class="form-label">Search students</span>
+              <input v-model="studentSearch" class="form-input" placeholder="Search name, username, email, or class" />
+            </label>
+
+            <div v-if="loadingAvailableStudents" class="admin-state">Loading student accounts...</div>
+            <div v-else-if="addStudentsError && availableStudentAccounts.length === 0" class="admin-state admin-state--error">{{ addStudentsError }}</div>
+            <div v-else-if="selectableStudents.length === 0" class="admin-state">No matching students to add.</div>
+            <div v-else class="table-wrap add-students-table-wrap">
+              <table class="admin-table add-students-table">
+                <thead>
+                  <tr>
+                    <th class="add-students-table__select">
+                      <input type="checkbox" aria-label="Select all visible students" :checked="allSelectableStudentsSelected" @change="toggleAllSelectableStudents($event.target.checked)" />
+                    </th>
+                    <th>Student</th>
+                    <th>Username</th>
+                    <th>Current Classes</th>
+                    <th>Email</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="student in selectableStudents" :key="student.userId">
+                    <td class="add-students-table__select">
+                      <input type="checkbox" :aria-label="`Select ${student.realName || student.username}`" :checked="selectedStudentIds.includes(String(student.userId))" @change="toggleStudentSelection(student.userId, $event.target.checked)" />
+                    </td>
+                    <td>{{ student.realName || 'Unnamed student' }}</td>
+                    <td>{{ student.username }}</td>
+                    <td>{{ student.classNames || 'No classes yet' }}</td>
+                    <td>{{ student.email || '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p v-if="addStudentsError && availableStudentAccounts.length" class="error-text">{{ addStudentsError }}</p>
+            <footer class="modal-card__footer">
+              <span class="add-students-selected">{{ selectedStudentIds.length }} selected</span>
+              <AppButton variant="secondary" :disabled="addingStudents" @click="closeAddStudentsModal">Cancel</AppButton>
+              <AppButton :disabled="!selectedStudentIds.length || addingStudents" @click="submitAddStudents">
+                {{ addingStudents ? 'Adding...' : (selectedStudentIds.length === 1 ? 'Add 1 Student' : `Add ${selectedStudentIds.length} Students`) }}
+              </AppButton>
+            </footer>
+          </section>
+        </div>
+      </Teleport>
 
       <Teleport to="body">
         <div v-if="showClassModal" class="modal-backdrop" @click.self="closeClassModal">
@@ -1023,44 +1135,43 @@ onMounted(loadPage);
       </Teleport>
 
       <Teleport to="body">
-        <div v-if="showStudentDeleteModal" class="modal-backdrop" @click.self="closeStudentDeleteModal">
-          <section class="modal-card student-delete-modal" role="dialog" aria-modal="true" aria-labelledby="student-delete-title">
+        <div v-if="showStudentRemovalModal" class="modal-backdrop" @click.self="closeStudentRemovalModal">
+          <section class="modal-card student-removal-modal" role="dialog" aria-modal="true" aria-labelledby="student-removal-title">
             <header class="modal-card__header">
               <div>
-                <h3 id="student-delete-title">Delete Student Account?</h3>
+                <h3 id="student-removal-title">Remove Student from This Class?</h3>
                 <p>
-                  This will permanently delete {{ studentPendingDeletionName }}'s student account,
-                  roster record, exam attempts, answers, and reports.
+                  This removes {{ studentPendingRemovalName }} from this class. Their account, exam history,
+                  and memberships in other classes will remain unchanged.
                 </p>
               </div>
               <button
                 class="modal-card__close"
                 type="button"
-                aria-label="Close delete student dialog"
-                :disabled="deletingStudent"
-                @click="closeStudentDeleteModal"
+                aria-label="Close remove student dialog"
+                :disabled="removingStudent"
+                @click="closeStudentRemovalModal"
               >
                 &times;
               </button>
             </header>
 
-            <div class="student-delete-warning">
-              This action cannot be undone. The delete button is locked for 10 seconds after this dialog opens.
+            <div class="student-removal-warning">
+              Only this class membership will be removed.
             </div>
 
-            <p v-if="studentDeleteError" class="error-text">{{ studentDeleteError }}</p>
+            <p v-if="studentRemovalError" class="error-text">{{ studentRemovalError }}</p>
 
             <footer class="modal-card__footer">
-              <AppButton variant="secondary" type="button" :disabled="deletingStudent" @click="closeStudentDeleteModal">Cancel</AppButton>
+              <AppButton variant="secondary" type="button" :disabled="removingStudent" @click="closeStudentRemovalModal">Cancel</AppButton>
               <AppButton
-                class="student-delete-confirm-button"
+                class="student-removal-confirm-button"
                 type="button"
-                :disabled="!canConfirmStudentDeletion"
-                @click="confirmStudentDeletion"
+                :disabled="!canConfirmStudentRemoval"
+                @click="confirmStudentRemoval"
               >
-                <template v-if="deletingStudent">Deleting...</template>
-                <template v-else-if="deleteCooldownRemaining > 0">Delete in {{ deleteCooldownRemaining }}s</template>
-                <template v-else>Delete Student</template>
+                <template v-if="removingStudent">Removing...</template>
+                <template v-else>Remove from Class</template>
               </AppButton>
             </footer>
           </section>
@@ -1578,6 +1689,33 @@ onMounted(loadPage);
   padding-left: 14px;
 }
 
+.add-students-modal {
+  width: min(960px, 100%);
+}
+
+.add-students-search {
+  margin: 18px 0 14px;
+}
+
+.add-students-table-wrap {
+  max-height: min(48vh, 440px);
+  overflow: auto;
+}
+
+.add-students-table {
+  min-width: 760px;
+}
+
+.add-students-table__select {
+  width: 42px;
+}
+
+.add-students-selected {
+  margin-right: auto;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
 .student-table td {
   padding-top: 10px;
   padding-bottom: 10px;
@@ -1660,12 +1798,12 @@ onMounted(loadPage);
   box-shadow: none;
 }
 
-.student-delete-notice {
+.student-removal-notice {
   margin: 0 0 12px;
   font-weight: 800;
 }
 
-.student-delete-warning {
+.student-removal-warning {
   margin-top: 16px;
   border: 1px solid #fecaca;
   border-radius: 12px;
@@ -1676,12 +1814,12 @@ onMounted(loadPage);
   line-height: 1.45;
 }
 
-.student-delete-confirm-button {
+.student-removal-confirm-button {
   background: #b42318;
   box-shadow: 0 12px 24px rgba(180, 35, 24, 0.2);
 }
 
-.student-delete-confirm-button:hover:not(:disabled) {
+.student-removal-confirm-button:hover:not(:disabled) {
   box-shadow: 0 16px 30px rgba(180, 35, 24, 0.26);
 }
 
@@ -1748,6 +1886,37 @@ onMounted(loadPage);
 
   .admin-toolbar__filters {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .add-students-table {
+    min-width: 100%;
+    table-layout: fixed;
+  }
+
+  .add-students-table th:nth-child(3),
+  .add-students-table td:nth-child(3),
+  .add-students-table th:nth-child(5),
+  .add-students-table td:nth-child(5) {
+    display: none;
+  }
+
+  .add-students-table th:nth-child(1),
+  .add-students-table td:nth-child(1) {
+    width: 36px;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .add-students-table th:nth-child(2) { width: 44%; }
+  .add-students-table th:nth-child(4) { width: 56%; }
+
+  .add-students-table td:nth-child(2),
+  .add-students-table td:nth-child(4) {
+    overflow-wrap: anywhere;
+    text-align: left;
+    white-space: normal;
   }
 }
 </style>

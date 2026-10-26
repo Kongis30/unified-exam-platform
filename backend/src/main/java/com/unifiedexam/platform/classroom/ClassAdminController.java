@@ -76,16 +76,16 @@ public class ClassAdminController {
     @GetMapping("/available-students")
     public List<StudentOption> availableStudents() {
         return jdbcTemplate.query("""
-            SELECT u.id, u.username, u.real_name,
+            SELECT u.id, u.username, u.real_name, u.email,
                    COALESCE(GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ' · '), '') AS class_names
             FROM users u
             LEFT JOIN class_memberships m ON m.student_user_id = u.id AND m.left_at IS NULL
             LEFT JOIN classes c ON c.id = m.class_id
             WHERE u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
-            GROUP BY u.id, u.username, u.real_name
+            GROUP BY u.id, u.username, u.real_name, u.email
             ORDER BY u.real_name, u.id
             """, (rs, rowNum) -> new StudentOption(rs.getLong("id"), rs.getString("username"),
-                rs.getString("real_name"), rs.getString("class_names")));
+                rs.getString("real_name"), rs.getString("email"), rs.getString("class_names")));
     }
 
     @GetMapping("/{classId}")
@@ -642,7 +642,7 @@ public class ClassAdminController {
     public record StudentView(long id, String username, String realName, String email, String joinedAt,
                               String gender, String notes, java.math.BigDecimal timeMultiplier, boolean active,
                               java.math.BigDecimal averageScore, long examCount) { }
-    public record StudentOption(long id, String username, String realName, String classNames) { }
+    public record StudentOption(long id, String username, String realName, String email, String classNames) { }
     public record ClassExamView(long examId, String examTitle, String paperName, String targetType,
                                 String targetIds, boolean published, String status, String startTime,
                                 String endTime, Integer duration, int attemptLimit) { }

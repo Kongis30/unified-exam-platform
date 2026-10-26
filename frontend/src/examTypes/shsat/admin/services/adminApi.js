@@ -1,6 +1,6 @@
 import { http } from './http';
 import {
-  addClassStudent, apiRequest, createClass as createPlatformClass,
+  addClassStudent, addClassStudents, apiRequest, createClass as createPlatformClass,
   createExam as createPlatformExam, createUser as createPlatformUser,
   listAvailableStudents, listClassStudents, listClasses, listExams, listPapers,
   publishExam as publishPlatformExam, removeClassStudent, reorderClasses as reorderPlatformClasses, saveExamTargets,
@@ -545,7 +545,7 @@ export const adminApi = {
     });
   },
 
-  deleteStudent(classId, studentId) {
+  removeStudentFromClass(classId, studentId) {
     return removeClassStudent(classId, studentId);
   },
 
@@ -557,13 +557,26 @@ export const adminApi = {
   },
 
   async getUnassignedStudentAccounts() {
+    return (await this.getAvailableStudentAccounts()).filter((student) => !student.classNames);
+  },
+
+  async getAvailableStudentAccounts() {
     return (await listAvailableStudents()).map((student) => ({
-      userId: student.id, studentId: student.id, username: student.username, realName: student.realName,
+      userId: student.id,
+      studentId: student.id,
+      username: student.username,
+      realName: student.realName,
+      email: student.email,
+      classNames: student.classNames || '',
     }));
   },
 
   assignStudentAccountToClass(userId, classId) {
     return addClassStudent(classId, userId);
+  },
+
+  addStudentsToClass(classId, studentIds) {
+    return addClassStudents(classId, studentIds);
   },
 
   getClassExamScores(examId, classId) {

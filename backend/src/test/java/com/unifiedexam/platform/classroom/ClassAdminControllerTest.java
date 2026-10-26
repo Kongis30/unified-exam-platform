@@ -24,6 +24,32 @@ import static org.mockito.Mockito.when;
 class ClassAdminControllerTest {
 
     @Test
+    void availableStudentsIncludesEmailAndCurrentClassNames() throws Exception {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class))).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            RowMapper<ClassAdminController.StudentOption> mapper = invocation.getArgument(1);
+            ResultSet row = mock(ResultSet.class);
+            when(row.getLong("id")).thenReturn(31L);
+            when(row.getString("username")).thenReturn("student@jin");
+            when(row.getString("real_name")).thenReturn("Test Student");
+            when(row.getString("email")).thenReturn("student@example.com");
+            when(row.getString("class_names")).thenReturn("Class A · Class B");
+            return List.of(mapper.mapRow(row, 0));
+        });
+
+        List<ClassAdminController.StudentOption> result = new ClassAdminController(jdbcTemplate).availableStudents();
+
+        assertEquals(1, result.size());
+        assertEquals("student@example.com", result.get(0).email());
+        assertEquals("Class A · Class B", result.get(0).classNames());
+        verify(jdbcTemplate).query(
+            org.mockito.ArgumentMatchers.<String>argThat(sql -> sql.contains("u.email")
+                && sql.contains("GROUP BY u.id, u.username, u.real_name, u.email")),
+            any(RowMapper.class));
+    }
+
+    @Test
     void deleteClassDetachesEnrollmentsAndReleaseTargetsButKeepsStudentAndExamRecords() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
