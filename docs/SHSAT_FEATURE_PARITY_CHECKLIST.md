@@ -72,6 +72,7 @@
 - [ ] `Parts`/`Types`：新增、编辑、删除主/次类型及次序；已被题引用时给出合理处理，编辑后题目树/预览同步。
 - [ ] 单题通用编辑：题型、主/次类型、难度、官方 SHSAT 技能标签、题干、解析、分值/计分段、素材类型；`Add`、`Delete`、预览和保存后结构不变形。
 - [x] 选择题写入抽测：添加 ELA 题目、编辑题干/选项/答案键，保存成功；API、编辑页刷新和预览内容一致，临时卷已清理。截图 `49-question-editor-before-save.png` 至 `51-question-preview.png`；仅覆盖 `MULTIPLE_CHOICE`。
+- [x] `FILL_IN_BLANK` 编辑器定向闭环：临时试卷新增填空题、编辑题干与接受答案 `1.25`；保存后从纸卷详情 API 核对 `questionTypeCode` 与 `answerKey.answers`，刷新编辑页确认答案恢复，Preview 显示相同题干；临时卷已清理，页面脚本错误为 0。截图 `72-editor-fill-in-blank.png` 至 `74-editor-fill-in-blank-preview.png`。仅证明此题型编辑/保存/刷新/预览，学生提交、计分与报告需在逐题型闭环中验证。
 - [x] `DRAG_AND_DROP` 学生端作答与保存抽测：从正式卷 247 的 ELA 第 5 题，通过学生界面把 4 个选项按正确答案放入分类框；点 `Next` 后服务端答案与答案键逐项一致，浏览器脚本错误为 0，临时考试和账号已清理。桌面截图 `54-student-drag-answer.png`。这里只验证了学生端交互/保存，不代表编辑器配置、刷新恢复、提交计分和报告复核已通过。
 - [x] `MULTI_SELECT_FIXED` 学生端抽测：正式卷 247 ELA 第 7 题要求恰好选 2 项；通过学生界面选择 D/E，限制提示和选中状态显示正确，继续后服务端答案与答案键相符，浏览器脚本错误为 0，临时数据已清理。截图 `55-student-multi-select-fixed-selected.png`。
 - [x] `MULTI_SELECT` 学生端抽测：正式卷 247 Math 第 58 题选择全部 4 个等价答案，提示未设置数量上限；继续后服务端答案与答案键一致，浏览器脚本错误为 0，临时数据已清理。截图 `60-student-multi-select.png`。
