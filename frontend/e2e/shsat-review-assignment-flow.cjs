@@ -168,12 +168,36 @@ async function main() {
     const progressRow = admin.locator('.task-table tbody tr').filter({ hasText: `Review Student ${displayStamp}` });
     await progressRow.waitFor();
     await progressRow.getByText('In Progress', { exact: true }).waitFor();
+    await progressRow.getByRole('button', { name: 'View Report', exact: true }).click();
+    await admin.waitForURL(url => url.pathname === `/student/attempts/${practiceAttemptId}/report`);
+    await admin.getByText('Result Summary', { exact: true }).waitFor();
+    assert.equal(await admin.locator('.attempt-report__state--error').count(), 0,
+      'View Report opens the assigned student attempt report');
+    await admin.screenshot({ path: `/tmp/shsat-review-assignment-report-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await admin.evaluate(() => window.scrollTo(0, 0));
+    await admin.waitForTimeout(250);
+    assert.equal(await admin.locator('.admin-layout__header').count(), 1,
+      'the mobile report has a single platform navigation header');
+    const reportMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(reportMobileSize.page <= reportMobileSize.viewport, 'the assigned attempt report fits a 390px viewport');
+    await admin.screenshot({ path: `/tmp/shsat-review-assignment-report-mobile-${stamp}.png` });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await admin.getByRole('button', { name: 'Back to Review Assignment', exact: true }).click();
+    await admin.waitForURL(url => url.pathname.endsWith(`/wrong-answer-tasks/${taskId}`));
+    await admin.locator('.task-table tbody tr').filter({ hasText: `Review Student ${displayStamp}` })
+      .getByText('In Progress', { exact: true }).waitFor();
     await admin.screenshot({ path: `/tmp/shsat-review-assignment-progress-${stamp}.png` });
     await admin.setViewportSize({ width: 390, height: 844 });
     await admin.waitForTimeout(250);
     const progressMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(progressMobileSize.page <= progressMobileSize.viewport, 'the progress page fits a 390px viewport');
     await admin.screenshot({ path: `/tmp/shsat-review-assignment-progress-mobile-${stamp}.png` });
+    await progressRow.scrollIntoViewIfNeeded();
+    const progressRowBounds = await progressRow.boundingBox();
+    assert.ok(progressRowBounds && progressRowBounds.y >= 0 && progressRowBounds.y + progressRowBounds.height <= 844,
+      'the student progress row fits within the mobile viewport when brought into view');
+    await admin.screenshot({ path: `/tmp/shsat-review-assignment-progress-row-mobile-${stamp}.png` });
     await admin.setViewportSize({ width: 1440, height: 1000 });
     await admin.getByRole('button', { name: 'Back to Review Assignments', exact: true }).click();
     await admin.waitForURL(url => url.pathname.endsWith('/exam-types/SHSAT/admin') && url.searchParams.get('tab') === 'wrong-answer-tasks');
@@ -207,12 +231,13 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
       studentMobileSize,
       progressMobileSize,
+      reportMobileSize,
       pageErrors: errors.length,
     }));
   } finally {
