@@ -1356,6 +1356,7 @@ async function openStudentExam(exam) {
       await router.push({
         name: isStaff.value ? 'student-exam' : 'shsat-student-exam',
         params: { examId: exam.id },
+        query: isStaff.value ? {} : { returnTo: route.fullPath },
       })
       return
     }
