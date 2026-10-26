@@ -2,6 +2,7 @@ package com.unifiedexam.platform.release;
 
 import com.unifiedexam.platform.examtype.ExamTypeRegistry;
 import com.unifiedexam.platform.examtype.ExamTypeModule;
+import com.unifiedexam.platform.examtype.ExamTypeDefinition;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -17,6 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -24,6 +27,38 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ExamReleaseServiceTest {
+
+    @Test
+    void shsatScoreReportIsVisibleAfterSubmissionByDefault() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamTypeRegistry registry = mock(ExamTypeRegistry.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, registry);
+        when(registry.listAvailableTypes()).thenReturn(List.of(
+            new ExamTypeDefinition("SHSAT", "SHSAT", "", 1, "SHSAT", "SHSAT")));
+        when(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM papers WHERE id = ?)", Boolean.class, 12L)).thenReturn(true);
+        when(jdbc.queryForObject("SELECT is_active FROM exam_types WHERE code = ?", Boolean.class, "SHSAT"))
+            .thenReturn(true);
+        when(jdbc.query(eq("SELECT exam_type_code FROM papers WHERE id = ?"), any(ResultSetExtractor.class), eq(12L)))
+            .thenReturn("SHSAT");
+        when(jdbc.query(eq("SELECT id FROM users WHERE username = ? AND status = 'ACTIVE'"),
+            any(ResultSetExtractor.class), eq("admin"))).thenReturn(1L);
+        when(jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class)).thenReturn(44L);
+
+        ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(44L, "SHSAT", 12L,
+            "Paper", "Exam", null, "DRAFT", "ALL_STUDENTS", "2026-10-24T09:00:00Z",
+            "2026-10-24T12:00:00Z", 7200, 1, false, true, true,
+            "2026-10-20T09:00:00Z", "2026-10-20T09:00:00Z", null, "All students");
+        when(jdbc.query(anyString(), any(RowMapper.class), eq(44L))).thenAnswer(invocation ->
+            invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
+
+        service.create(12L, new ExamReleaseService.ExamRequest("Exam", null,
+            java.time.OffsetDateTime.parse("2026-10-24T09:00:00Z"), java.time.OffsetDateTime.parse("2026-10-24T12:00:00Z"),
+            7200, 1, "ALL_STUDENTS", true, true), "admin");
+
+        org.mockito.ArgumentCaptor<String> sql = forClass(String.class);
+        verify(jdbc).update(sql.capture(), any(Object[].class));
+        assertTrue(sql.getValue().contains("IF(exam_type_code IN ('SAT', 'PSAT', 'SHSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE')"));
+    }
 
     @Test
     void examListExposesWhetherFormalAttemptsPreventUnpublishing() {

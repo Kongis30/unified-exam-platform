@@ -87,7 +87,7 @@ public class ExamReleaseService {
                  duration_seconds, attempt_limit, answer_visibility, score_visibility, allow_review, auto_submit, created_by)
             SELECT id, default_scoring_profile_id, ?, ?, ?, ?, ?, ?, ?,
                    IF(exam_type_code IN ('SAT', 'PSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
-                   IF(exam_type_code IN ('SAT', 'PSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
+                   IF(exam_type_code IN ('SAT', 'PSAT', 'SHSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
                    COALESCE(?, exam_type_code IN ('SAT', 'PSAT')), COALESCE(?, TRUE), ?
             FROM papers WHERE id = ?
             """, request.title(), request.description(), targetScope,

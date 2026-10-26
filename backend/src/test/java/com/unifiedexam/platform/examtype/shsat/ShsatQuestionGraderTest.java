@@ -30,6 +30,9 @@ class ShsatQuestionGraderTest {
     void gradesEquationEditorEquivalentInequalityAndMultiplicationNotation() throws Exception {
         assertTrue(grade("EQUATION_EDITOR", "{\"acceptedAnswers\":[{\"value\":\"8x+35\\\\le95\"}]}",
             "{\"value\":\"8*x + 35 ≤ 95\"}"));
+        assertTrue(grader.grade("EQUATION_EDITOR", json("{\"acceptedAnswers\":[{\"value\":\"8x+35\\\\le95\"}]}"),
+            json("{\"value\":\"8*x + 35 \\\\le 95\"}"),
+            json("{\"questionConfig\":{\"normalization\":{\"ignoreWhitespace\":true,\"normalizeOperators\":true,\"caseInsensitive\":true}}}"), null));
         assertTrue(grade("EQUATION_EDITOR", "{\"acceptedAnswers\":[\"x\\\\geq2\"]}",
             "{\"value\":\"x >= 2\"}"));
         assertFalse(grade("EQUATION_EDITOR", "{\"acceptedAnswers\":[\"8x+35\\\\le95\"]}",
