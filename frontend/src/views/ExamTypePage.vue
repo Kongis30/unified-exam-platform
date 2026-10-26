@@ -353,6 +353,17 @@ function reviewTaskActionLabel(task) {
   return 'Start review'
 }
 
+function reviewTaskStatusLabel(status) {
+  const labels = {
+    NOT_STARTED: 'Not Started',
+    IN_PROGRESS: 'In Progress',
+    RETRY_REQUIRED: 'More Practice Needed',
+    COMPLETED: 'Completed',
+    ENDED: 'Ended',
+  }
+  return labels[status] || 'Assigned'
+}
+
 function viewShsatAttempt(item) {
   router.push({ name: 'student-attempt-report', params: { attemptId: item.attemptId },
     query: { returnTo: '/student/systems/SHSAT', returnLabel: 'Back to SHSAT' } })
@@ -2159,7 +2170,7 @@ watch(() => props.code, (code) => {
             <strong>{{ task.title }}</strong>
             <small>{{ task.examTitle }} · {{ task.remainingQuestionCount }} questions remaining<span v-if="task.endAt"> · Due {{ formatExamDate(task.endAt) }}</span></small>
           </div>
-          <span class="status-pill" :class="task.status === 'COMPLETED' ? 'is-active' : ''">{{ task.status.replaceAll('_', ' ') }}</span>
+          <span class="status-pill" :class="task.status === 'COMPLETED' ? 'is-active' : ''">{{ reviewTaskStatusLabel(task.status) }}</span>
           <button class="secondary-button compact-button" :disabled="!task.canStart || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
             {{ reviewTaskActionLabel(task) }}<span v-if="task.status !== 'ENDED' && startingReviewTaskId !== task.assignmentId">↗</span>
           </button>

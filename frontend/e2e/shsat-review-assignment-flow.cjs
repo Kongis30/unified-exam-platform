@@ -153,7 +153,7 @@ async function main() {
     await student.screenshot({ path: `/tmp/shsat-review-assignment-student-mobile-${stamp}.png` });
     await startReview.click();
     await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}` && Boolean(url.searchParams.get('practiceAttemptId')));
-    const practiceAttemptId = Number(new URL(student.url()).searchParams.get('practiceAttemptId'));
+    let practiceAttemptId = Number(new URL(student.url()).searchParams.get('practiceAttemptId'));
     const taskAfterStart = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
     assert.equal(taskAfterStart.assignments[0].status, 'IN_PROGRESS');
     assert.equal(taskAfterStart.assignments[0].practiceAttemptId, practiceAttemptId);
@@ -187,6 +187,30 @@ async function main() {
     await admin.waitForURL(url => url.pathname.endsWith(`/wrong-answer-tasks/${taskId}`));
     await admin.locator('.task-table tbody tr').filter({ hasText: `Review Student ${displayStamp}` })
       .getByText('In Progress', { exact: true }).waitFor();
+    const firstPracticeSubmission = await api(student, `/api/student/attempts/${practiceAttemptId}/submit`, 'POST');
+    assert.ok(['SUBMITTED', 'COMPLETED'].includes(firstPracticeSubmission.status));
+    const retryTask = await api(student, '/api/student/wrong-answer-tasks')
+      .then(rows => rows.find(item => item.assignmentId === details.assignments[0].assignmentId));
+    assert.equal(retryTask.status, 'RETRY_REQUIRED', 'unanswered assigned questions require another practice round');
+    assert.equal(retryTask.canStart, true, 'the student can begin another round while the task is available');
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    const retryReview = student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle });
+    await retryReview.getByText('More Practice Needed', { exact: true }).waitFor();
+    await retryReview.waitFor({ timeout: 5000 }).catch(async () => {
+      await student.screenshot({ path: `/tmp/shsat-review-assignment-retry-debug-${stamp}.png` });
+      throw new Error(`Retry task card missing. Student page: ${await student.locator('body').innerText()}`);
+    });
+    await retryReview.getByRole('button', { name: /Try again/ }).click();
+    await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}`
+      && Number(url.searchParams.get('practiceAttemptId')) !== practiceAttemptId);
+    practiceAttemptId = Number(new URL(student.url()).searchParams.get('practiceAttemptId'));
+    assert.ok(practiceAttemptId > 0, 'retry creates a new practice attempt');
+    await admin.reload();
+    await admin.locator('.task-table tbody tr').filter({ hasText: `Review Student ${displayStamp}` })
+      .getByText('In Progress', { exact: true }).waitFor();
+    const retryDetails = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
+    assert.equal(retryDetails.assignments[0].practiceAttemptId, practiceAttemptId,
+      'the assignment now points to the latest retry attempt');
     await admin.screenshot({ path: `/tmp/shsat-review-assignment-progress-${stamp}.png` });
     await admin.setViewportSize({ width: 390, height: 844 });
     await admin.waitForTimeout(250);
@@ -214,8 +238,11 @@ async function main() {
       assert.match(dialog.message(), new RegExp(`End \\"${taskTitle}\\"`));
       return dialog.accept();
     });
+    const endRequest = admin.waitForResponse(response => response.url().includes(`/api/admin/wrong-answer-tasks/${taskId}/end`)
+      && response.request().method() === 'POST');
     await admin.getByRole('menuitem', { name: 'End', exact: true }).click();
     await acceptedEnd;
+    assert.equal((await endRequest).status(), 200, 'the task-end request succeeds');
     const ended = await api(admin, '/api/admin/wrong-answer-tasks').then(rows => rows.find(item => item.taskId === taskId));
     assert.equal(ended.status, 'ENDED');
     const endedDetails = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
@@ -248,6 +275,14 @@ async function main() {
     const endedTaskButton = endedTaskCard.getByRole('button', { name: 'Task ended', exact: true });
     await endedTaskButton.waitFor();
     assert.equal(await endedTaskButton.isDisabled(), true, 'an ended task is clearly labeled and cannot be started');
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-ended-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    await student.evaluate(() => window.scrollTo(0, 0));
+    await student.waitForTimeout(200);
+    const endedTaskMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(endedTaskMobileSize.page <= endedTaskMobileSize.viewport, 'the ended task card fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-review-assignment-ended-mobile-${stamp}.png` });
     taskListOverride = 'COMPLETED';
     await student.reload();
     await student.getByRole('tab', { name: /Review Task History/ }).click();
@@ -297,7 +332,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,
@@ -306,6 +341,7 @@ async function main() {
       reportMobileSize,
       completedHistoryMobileSize,
       completedReportMobileSize,
+      endedTaskMobileSize,
       pageErrors: errors.length,
     }));
   } finally {
