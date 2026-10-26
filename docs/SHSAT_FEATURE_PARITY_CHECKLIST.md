@@ -74,6 +74,7 @@
 - [x] 选择题写入抽测：添加 ELA 题目、编辑题干/选项/答案键，保存成功；API、编辑页刷新和预览内容一致，临时卷已清理。截图 `49-question-editor-before-save.png` 至 `51-question-preview.png`；仅覆盖 `MULTIPLE_CHOICE`。
 - [x] `DRAG_AND_DROP` 学生端作答与保存抽测：从正式卷 247 的 ELA 第 5 题，通过学生界面把 4 个选项按正确答案放入分类框；点 `Next` 后服务端答案与答案键逐项一致，浏览器脚本错误为 0，临时考试和账号已清理。桌面截图 `54-student-drag-answer.png`。这里只验证了学生端交互/保存，不代表编辑器配置、刷新恢复、提交计分和报告复核已通过。
 - [x] `MULTI_SELECT_FIXED` 学生端抽测：正式卷 247 ELA 第 7 题要求恰好选 2 项；通过学生界面选择 D/E，限制提示和选中状态显示正确，继续后服务端答案与答案键相符，浏览器脚本错误为 0，临时数据已清理。截图 `55-student-multi-select-fixed-selected.png`。
+- [x] `MULTI_SELECT` 学生端抽测：正式卷 247 Math 第 58 题选择全部 4 个等价答案，提示未设置数量上限；继续后服务端答案与答案键一致，浏览器脚本错误为 0，临时数据已清理。截图 `60-student-multi-select.png`。
 - [x] `FILL_IN_BLANK` 学生端抽测：正式卷 247 Math 第 65 题输入 `1.93`，通过 `Next` 保存并从考试尝试接口核对答案，浏览器脚本错误为 0，临时数据已清理。桌面截图 `56-student-fill-in-blank.png`。题型创建/编辑/报告闭环仍待覆盖。
 - [x] `INLINE_CHOICE` 学生端抽测：正式卷 247 Math 第 94 题，在两个下拉框分别选择 B/C；通过 `Next` 保存后，服务端返回值与两个空格的答案键一致，浏览器脚本错误为 0，临时数据已清理。桌面截图 `57-student-inline-choice-selected.png`。
 - [x] `TABLE_GRID` 学生端抽测：正式卷 247 Math 第 70 题，按正确答案逐行选择 5 个单选格；点 `Next` 后服务端各行值一致，浏览器脚本错误为 0，临时数据已清理。截图 `59-student-table-grid-selected.png`。该题材料图片 `/uploads/paper-materials/27-92486950-7d42-40d7-94e1-8a84c11069d9.png` 在独立版及统一版均缺失。
