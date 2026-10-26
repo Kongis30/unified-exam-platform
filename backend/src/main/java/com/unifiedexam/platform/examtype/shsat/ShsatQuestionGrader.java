@@ -315,17 +315,42 @@ final class ShsatQuestionGrader {
 
     private String normalizeExpression(String value, String type, JsonNode config) {
         String result = value == null ? "" : value.trim();
-        Matcher fraction = LATEX_FRACTION.matcher(result);
-        result = fraction.replaceAll("$1/$2").replace("\\times", "*").replace("\\cdot", "*")
-            .replace("×", "*").replace("÷", "/").replace("−", "-").replace("−", "-")
-            .replaceAll("\\\\left|\\\\right", "");
-        if (type.equals("EQUATION_EDITOR") || config != null && config.path("normalization").path("ignoreWhitespace").asBoolean(true)) {
-            result = result.replaceAll("\\s+", "");
+        if (type.equals("EQUATION_EDITOR")) {
+            JsonNode normalization = config == null ? null : config.path("normalization");
+            boolean normalizeOperators = normalization == null || normalization.path("normalizeOperators").asBoolean(true);
+            boolean ignoreWhitespace = normalization == null || normalization.path("ignoreWhitespace").asBoolean(true);
+            if (normalizeOperators) result = normalizeEquationEditorOperators(result);
+            result = ignoreWhitespace ? result.replaceAll("\\s+", "") : result.trim();
+            if (normalizeOperators) result = result.replaceAll("(?<=[A-Za-z0-9)])\\*(?=[A-Za-z0-9(])", "");
+        } else {
+            Matcher fraction = LATEX_FRACTION.matcher(result);
+            result = fraction.replaceAll("$1/$2").replace("\\times", "*").replace("\\cdot", "*")
+                .replace("×", "*").replace("÷", "/").replace("−", "-")
+                .replaceAll("\\\\left|\\\\right", "");
+            if (config != null && config.path("normalization").path("ignoreWhitespace").asBoolean(true)) {
+                result = result.replaceAll("\\s+", "");
+            }
         }
         if (config == null || config.path("normalization").path("caseInsensitive").asBoolean(true)) {
             result = result.toUpperCase(Locale.ROOT);
         }
         return result;
+    }
+
+    private String normalizeEquationEditorOperators(String value) {
+        Matcher fraction = LATEX_FRACTION.matcher(value);
+        return fraction.replaceAll("$1/$2")
+            .replaceAll("\\\\sqrt\\s*\\{([^{}]+)}", "sqrt($1)")
+            .replaceAll("\\^\\s*\\{([^{}]+)}", "^$1")
+            .replace("\\left", "").replace("\\right", "")
+            .replace("\\leq", "<=").replace("\\le", "<=")
+            .replace("\\geq", ">=").replace("\\ge", ">=")
+            .replace("\\neq", "!=").replace("\\ne", "!=")
+            .replace("\\times", "*").replace("\\cdot", "*").replace("\\div", "/")
+            .replace("\\pi", "pi").replace("×", "*").replace("·", "*").replace("÷", "/")
+            .replace("−", "-").replace("–", "-").replace("—", "-")
+            .replace("≤", "<=").replace("≥", ">=").replace("≠", "!=").replace("π", "pi")
+            .replaceAll("√\\s*\\(", "sqrt(");
     }
 
     private boolean equivalentNumber(String left, String right) {

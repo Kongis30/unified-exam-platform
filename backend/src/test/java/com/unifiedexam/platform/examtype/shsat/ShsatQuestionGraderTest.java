@@ -25,6 +25,19 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void gradesEquationEditorEquivalentInequalityAndMultiplicationNotation() throws Exception {
+        assertTrue(grade("EQUATION_EDITOR", "{\"acceptedAnswers\":[{\"value\":\"8x+35\\\\le95\"}]}",
+            "{\"value\":\"8*x + 35 ≤ 95\"}"));
+        assertTrue(grade("EQUATION_EDITOR", "{\"acceptedAnswers\":[\"x\\\\geq2\"]}",
+            "{\"value\":\"x >= 2\"}"));
+        assertFalse(grade("EQUATION_EDITOR", "{\"acceptedAnswers\":[\"8x+35\\\\le95\"]}",
+            "{\"value\":\"8x+35 > 95\"}"));
+        assertFalse(grader.grade("EQUATION_EDITOR", json("{\"acceptedAnswers\":[\"x\\\\le2\"]}"),
+            json("{\"value\":\"x<=2\"}"),
+            json("{\"questionConfig\":{\"normalization\":{\"normalizeOperators\":false}}}"), null));
+    }
+
+    @Test
     void gradesInlineChoiceAgainstBlankAndOptionConfiguration() throws Exception {
         assertTrue(grader.grade("INLINE_CHOICE", json("{\"answers\":{\"b1\":\"A\",\"b2\":\"D\"}}"),
             json("{\"answers\":{\"b2\":\"D\",\"b1\":\"a\"}}"),
