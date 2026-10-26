@@ -116,6 +116,11 @@ async function main() {
     assert.ok(historyMobileSize.pageWidth <= historyMobileSize.viewportWidth,
       'repeated attempts fit within the 390px history view');
     await student.screenshot({ path: `/tmp/shsat-student-retake-history-mobile-${stamp}.png` });
+    const historyRefresh = student.locator('.shsat-student-history').getByRole('button', { name: 'Refresh', exact: true });
+    const refreshedHistory = student.waitForResponse(response => response.url().endsWith('/api/student/attempts/history'));
+    await historyRefresh.click();
+    assert.equal((await refreshedHistory).status(), 200, 'history refresh reloads completed attempts successfully');
+    assert.equal(await retakeRows.count(), 2, 'refresh preserves both attempts in latest-first history');
     await retakeRows.nth(0).getByRole('button', { name: 'View report', exact: true }).click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[1]}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
