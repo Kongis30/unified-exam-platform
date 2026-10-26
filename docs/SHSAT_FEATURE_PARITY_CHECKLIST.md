@@ -211,6 +211,9 @@
 - [ ] Math→ELA 起始顺序下纯 UI 完整作答和计分复核、考试工具栏/失焦与全屏违规/计时结束/断网续考仍待验证。ELA→Math 已完成一次 100 题 UI 作答保存与提交，但该次考试隐藏成绩，无法核对计分；刷新恢复及每题导航/工具操作也未完整覆盖。
 - [ ] 12 种题型逐题闭环、管理员各页每个 CRUD/菜单动作、更多教师权限、PDF 极端材料/公式版式、移动端关键页面、图表有真实分数数据，以及与独立版逐页并排核对尚未完成。
 - [x] 教师真实会话权限和导航回归：临时长用户名教师登录后进入 SHSAT 后台，导航只提供 Exam Release、Review Assignments、Classes；Paper Management 不可见，`/api/admin/users` 返回 403。发现 390px 下长用户名把页面撑宽至 410px；顶部账户名现限宽并省略显示。用 53 字符用户名在 390/768/1440px 复测，根节点宽度分别与视口一致，用户名触发省略，页面脚本错误为 0；临时教师已删除。桌面/窄屏截图 `103-teacher-classes-desktop.png`、`105-teacher-classes-mobile-fixed.png`、`106-teacher-classes-desktop-fixed.png`；前端生产构建通过。
+- [x] **认证刷新与角色入口复测（2026-10-27）**：管理员登录 SHSAT 后台并刷新，仍保持登录且页面数据正常；临时教师刷新后仍保持后台会话，只显示 Exam Release、Review Assignments、Classes，调用统一账号 API 返回 403；临时学生刷新后仍停留系统选择页，可进入 SHSAT 学生工作区，看到正确空状态。所有临时账号已删除，浏览器脚本错误为 0。截图 `/tmp/shsat-admin-refresh-session-20261027.png`、`/tmp/shsat-teacher-workspace-20261027.png`、`/tmp/shsat-teacher-workspace-mobile-20261027.png`、`/tmp/shsat-student-system-select-20261027.png`、`/tmp/shsat-student-home-20261027.png`、`/tmp/shsat-student-home-mobile-20261027.png`；教师/学生窄屏页面根宽度均为 390px。此项只覆盖登录后刷新与角色入口，不代表会话过期、退出及登录错误路径已全部验收。
+- [x] **Paper Management 文件夹 CRUD 回归（2026-10-27）**：管理员从页面新建临时分组并填写说明，刷新后仍存在；重命名后刷新仍保留新名称；从确认弹窗删除空分组后，页面及分组 API 均查无该项。临时分组已清理，页面脚本错误为 0。截图 `/tmp/shsat-paper-folder-renamed-20261027.png`。此项未覆盖重名校验、取消操作、非空分组删除限制与排序拖动。
+- [x] 文件夹表单边界回归：空名称显示英文必填提示；重复已有分组名显示英文冲突提示；取消后对话框关闭且未创建记录。页面脚本错误为 0。非空分组删除限制与排序拖动仍待验收。
 
 ## 9. 建议执行顺序与完成门槛
 
