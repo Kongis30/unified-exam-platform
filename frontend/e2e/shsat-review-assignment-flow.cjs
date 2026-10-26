@@ -230,16 +230,26 @@ async function main() {
     await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}` && Number(url.searchParams.get('practiceAttemptId')) === practiceAttemptId);
     const completedAttempt = await api(student, `/api/student/attempts/${practiceAttemptId}/submit`, 'POST');
     assert.ok(['SUBMITTED', 'COMPLETED'].includes(completedAttempt.status), 'the review attempt can be submitted and reported');
+    let taskListOverride = 'ENDED';
     await student.route('**/api/student/wrong-answer-tasks', async route => {
       const response = await route.fetch();
       const tasks = await response.json();
-      const completedTask = tasks.find(item => item.assignmentId === details.assignments[0].assignmentId);
-      completedTask.status = 'COMPLETED';
-      completedTask.clearedQuestionCount = completedTask.totalQuestions;
-      completedTask.remainingQuestionCount = 0;
+      const assignment = tasks.find(item => item.assignmentId === details.assignments[0].assignmentId);
+      assignment.status = taskListOverride;
+      if (taskListOverride === 'ENDED') assignment.canStart = false;
+      if (taskListOverride === 'COMPLETED') {
+        assignment.clearedQuestionCount = assignment.totalQuestions;
+        assignment.remainingQuestionCount = 0;
+      }
       await route.fulfill({ response, json: tasks });
     });
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    const endedTaskCard = student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle });
+    const endedTaskButton = endedTaskCard.getByRole('button', { name: 'Task ended', exact: true });
+    await endedTaskButton.waitFor();
+    assert.equal(await endedTaskButton.isDisabled(), true, 'an ended task is clearly labeled and cannot be started');
+    taskListOverride = 'COMPLETED';
+    await student.reload();
     await student.getByRole('tab', { name: /Review Task History/ }).click();
     const completedTaskRow = student.locator('.shsat-history-row').filter({ hasText: taskTitle });
     await completedTaskRow.getByText(`${details.assignments[0].totalQuestions} / ${details.assignments[0].totalQuestions} questions cleared`).waitFor();
@@ -287,7 +297,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'assignment validation and creation', 'eligible question snapshot', 'student start and progress state', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,

@@ -345,6 +345,14 @@ function selectStudentHistoryTab(tab) {
   localStorage.setItem('shsat.student-history-tab', tab)
 }
 
+function reviewTaskActionLabel(task) {
+  if (startingReviewTaskId.value === task.assignmentId) return 'Starting…'
+  if (task.status === 'ENDED') return 'Task ended'
+  if (task.status === 'IN_PROGRESS') return 'Continue'
+  if (task.status === 'RETRY_REQUIRED') return 'Try again'
+  return 'Start review'
+}
+
 function viewShsatAttempt(item) {
   router.push({ name: 'student-attempt-report', params: { attemptId: item.attemptId },
     query: { returnTo: '/student/systems/SHSAT', returnLabel: 'Back to SHSAT' } })
@@ -2153,7 +2161,7 @@ watch(() => props.code, (code) => {
           </div>
           <span class="status-pill" :class="task.status === 'COMPLETED' ? 'is-active' : ''">{{ task.status.replaceAll('_', ' ') }}</span>
           <button class="secondary-button compact-button" :disabled="!task.canStart || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
-            {{ startingReviewTaskId === task.assignmentId ? 'Starting…' : task.status === 'IN_PROGRESS' ? 'Continue' : task.status === 'RETRY_REQUIRED' ? 'Try again' : 'Start review' }}<span v-if="startingReviewTaskId !== task.assignmentId">↗</span>
+            {{ reviewTaskActionLabel(task) }}<span v-if="task.status !== 'ENDED' && startingReviewTaskId !== task.assignmentId">↗</span>
           </button>
         </article>
       </AppCard>
