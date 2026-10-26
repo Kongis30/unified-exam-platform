@@ -118,7 +118,7 @@
 - [x] 开放期新入班资格端到端：管理员创建临时班级和定向 SHSAT 考试，先加入一名学生并发布，再将第二名学生加入目标班级；该学生在统一学生首页看见考试并进入 ELA 考试说明页。班外学生首页无此考试，直接请求入场返回 404。临时考试、班级、学生均已清理并核对（考试/班级接口均为 404）；截图 `75-open-class-new-student-exam.png`，页面脚本错误为 0。
 - [ ] 主表：搜索、visibility/time window/assigned-to 筛选，Refresh、折叠/展开、每页行数和前后翻页；表头/值对齐、时间 24 小时制到分钟；试卷被删除时考试名下显示明确提示。
 - [ ] Action 菜单：当前场次 `Publish/Unpublish`、`Monitor`、`Delete`；结束场次 `Monitor`、`Delete`，删除始终最后。菜单不能被表格/分页裁切，键盘 Esc 和外部点击可关闭。
-- [ ] Historical Exams：过期场次归档并自动不再对学生开放，展示状态应为 Unpublished；展开/收起、分页；删除需说明连带考试记录/答案/成绩/报告/任务，提供 5 秒冷静期，确认后级联删除，取消不改动数据。过期/学生不可开考与带进行中尝试的删除闭环已实测（见下）；已提交报告、关联 review task、取消删除、折叠和分页仍待验收。
+- [ ] Historical Exams：过期场次归档并自动不再对学生开放，展示状态应为 Unpublished；展开/收起、分页；删除需说明连带考试记录/答案/成绩/报告/任务，提供 5 秒冷静期，确认后级联删除，取消不改动数据。过期状态、已提交尝试与报告、关联 review task、删除确认/取消/级联现已实测（见下）；折叠和分页另有覆盖，主表完整刷新/搜索仍待验收。
 - [x] **删除级联抽测**：有进行中学生尝试的测试考试，经 UI 的 5 秒确认后删除；考试接口返回 404，学生历史不再包含该尝试。截图 `35-monitor-live-data.png`；报告/复习任务等其它关联记录仍需逐类核对。
 - [x] **过期场次与删除冷静期回归**：创建仅对临时学生开放的短时考试，截止后确认服务端自动转为 `CLOSED`、Historical Exams 显示 `Unpublished`、学生列表不再开放且直接开考返回 409。随后通过管理 UI 删除一场带有进行中学生尝试的临时考试：5 秒内按钮禁用，倒计时后确认删除，考试详情返回 404、学生历史尝试被级联清除；临时学生也已清理。桌面/窄屏均目视复核，确认对话框内容完整、按钮可见；浏览器脚本错误为 0。截图 `109-expired-exam-unpublished-desktop.png`、`110-expired-exam-unpublished-mobile.png`、`111-exam-delete-cooldown-desktop.png`、`112-exam-delete-cooldown-mobile.png`。本次没有覆盖已提交报告及关联 review task 的级联数据。
 - [x] 统一账户管理端到端回归：使用临时账户验证创建及可选资料、默认姓名排序、姓名/用户名与联系方式搜索、角色筛选和修改、密码重置后实际登录、禁用/启用、5 秒删除确认与删除后目录查无该账号。测试脚本通过：`frontend/e2e/sat-account-management.cjs`。桌面截图 `/tmp/sat-account-management-ui.png`；390px 窄屏目视复核，页面与文档宽度均为 390px，无横向溢出，截图 `113-admin-accounts-mobile.png`。临时账号已清理。
@@ -126,6 +126,7 @@
 - [x] **Exam Release 管理动作闭环抽测（2026-10-27）**：Create Exam 缺少必填项时显示英文提示；使用临时 SHSAT 发布创建一场未来考试，通过当前行 Action 菜单发布、撤回均返回 200，表格分别显示 Scheduled 与 Not published；删除确认前按钮禁用 5 秒，确认后返回 200，列表中试卷已移除。全程无浏览器脚本错误，临时考试已删除。页面截图 `/tmp/shsat-exam-release-review-20261027.png`。尚未覆盖指定班级/学生目标、时间边界校验、发布风险确认和学生/班级/监考端同步。
 - [x] Exam Release 主表筛选/刷新抽测：临时未来考试分别通过 Published/Unpublished、Upcoming/Live、All students/Specific classes 过滤及标题搜索；Refresh 后行与筛选仍正常。测试发布已删除，浏览器脚本错误为 0。其它 audience 和日期边界、分页/窄屏对齐仍待验收。
 - [x] **Historical Exams 展示与操作回归（2026-10-27）**：真实历史记录都显示 `Unpublished`；分页设置 5 行后前后翻页正确，设为 20 行显示 16 条；折叠/展开有效。历史记录 Action 菜单顺序为 `Monitor`、`Delete`，Esc 可以关闭，删除保持末位。删除确认明确说明关联的学生尝试/答案/分数/报告/复习任务会一并删除，5 秒内按钮禁用；取消后记录仍保留。浏览器脚本错误为 0。截图 `/tmp/shsat-exam-release-review-20261027.png`、`/tmp/shsat-exam-history-pagination-20261027.png`、`/tmp/shsat-exam-history-actions-20261027.png`、`/tmp/shsat-exam-delete-confirm-cancel-20261027.png`。搜索/刷新与点击外部关闭仍待测。
+- [x] **Historical Exams 已提交尝试与复习任务删除级联（2026-10-27）**：新增 `frontend/e2e/shsat-historical-exam-delete.cjs`。真实学生在短时发布中提交正式尝试并成为复习任务来源；时间窗口过期后，管理列表自动将考试状态更新为 `CLOSED`，历史区显示 `Unpublished`。首次确认弹窗明确列出会删除的 student attempt、answer、score、report 和 review assignment；5 秒内禁用删除，取消后考试和任务均保留，二次等待后确认删除，考试/学生尝试/复习任务 API 均返回 404，而学生账号和班级在删除考试后仍保留。之后移除临时成员关系并验证临时班级/学生账号清理成功；桌面与 390px 截图已目视检查，页面错误为 0。截图 `/tmp/shsat-historical-delete-confirm-1793046224519.png`、`/tmp/shsat-historical-delete-confirm-mobile-1793046224519.png`。搜索、刷新、折叠/分页另有覆盖；历史主表的完整搜索/刷新复核待测。
 
 ## 5. Review Assignments 与班级
 
