@@ -13,7 +13,13 @@ async function main() {
   });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const pageErrors = [];
+  const failedApiResponses = [];
   page.on('pageerror', error => pageErrors.push(error.message));
+  page.on('response', async response => {
+    if (response.url().includes('/api/') && response.status() >= 400) {
+      failedApiResponses.push({ status: response.status(), url: response.url(), body: await response.text().catch(() => '') });
+    }
+  });
 
   const stamp = Date.now();
   const paperTitle = `Editor Navigation ${stamp}`;
@@ -92,6 +98,46 @@ async function main() {
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
     await page.getByRole('heading', { name: paperTitle, exact: true }).waitFor();
 
+    const mathematics = page.locator('.subject-group').filter({ has: page.getByRole('heading', { name: 'Mathematics', exact: true }) });
+    await mathematics.getByRole('button', { name: 'Add Question', exact: true }).click();
+    const mathStem = `Mathematics persistence question ${stamp}`;
+    await page.locator('.stem-input').fill(mathStem);
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor({ timeout: 5_000 }).catch(async () => {
+      console.error('Failed API responses:', JSON.stringify(failedApiResponses));
+      console.error('Math question save state:', (await page.locator('body').innerText()).slice(-2_000));
+      await page.screenshot({ path: `/tmp/shsat-paper-editor-math-save-error-${stamp}.png` });
+      throw new Error('The Math question was not saved successfully.');
+    });
+    assert.deepEqual(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).map(question => question.stem),
+      [questionStem, mathStem], 'questions added from separate parts persist in the expected order');
+
+    const nextQuestion = page.getByRole('button', { name: 'Next →', exact: true });
+    assert.equal(await nextQuestion.isDisabled(), true, 'Next is disabled on the last question');
+    const previousQuestion = page.getByRole('button', { name: '← Previous', exact: true });
+    assert.equal(await previousQuestion.isDisabled(), false, 'Previous is enabled when another question exists');
+    await previousQuestion.click();
+    await page.getByRole('heading', { name: 'Question 1 · Multiple Choice', exact: true }).waitFor();
+    await nextQuestion.click();
+    await page.getByRole('heading', { name: 'Question 2 · Multiple Choice', exact: true }).waitFor();
+
+    await page.getByRole('button', { name: 'Delete Question', exact: true }).click();
+    await page.getByRole('heading', { name: 'Delete Question?' }).waitFor();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 2,
+      'cancelling question deletion leaves both saved questions intact');
+    await page.getByRole('button', { name: 'Delete Question', exact: true }).click();
+    await page.getByRole('button', { name: 'Delete Question', exact: true }).last().click();
+    await page.getByText('Question deleted.', { exact: true }).waitFor();
+    assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 2,
+      'question deletion stays local until the paper structure is saved');
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Question 1 · Multiple Choice', exact: true }).waitFor();
+    assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 1,
+      'confirming question deletion removes the selected saved question');
+
+    await page.getByText('All changes saved.', { exact: true }).waitFor({ state: 'hidden' });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('.question-editor').scrollIntoViewIfNeeded();
     const mobileSize = await page.evaluate(() => ({
@@ -135,12 +181,15 @@ async function main() {
     assert.ok(mobileSize.choiceInputWidths.length > 0 && mobileSize.choiceInputWidths.every(width => width >= 120),
       `multiple-choice fields remain usable at 390px: ${JSON.stringify(mobileSize.choiceInputWidths)}`);
     assert.deepEqual(pageErrors, []);
+    assert.deepEqual(failedApiResponses.filter(response => response.status >= 500), [],
+      `paper editor actions have no server errors: ${JSON.stringify(failedApiResponses)}`);
 
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['unchanged save disabled', 'scoring rule persists', 'unsaved preview is blocked',
         'Stay preserves edits', 'Leave Without Saving discards edits', 'saved question survives reload',
-        'preview shows saved question and Back returns to editor', '390px editor layout'],
+        'preview shows saved question and Back returns to editor', 'per-part add and question navigation',
+        'question deletion cancel and confirm', '390px editor layout'],
       mobileSize,
       pageErrors: pageErrors.length,
       screenshots: ['clean', 'saved', 'preview', 'mobile'].map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`),

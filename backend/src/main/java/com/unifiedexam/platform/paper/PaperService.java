@@ -235,7 +235,7 @@ public class PaperService {
             DELETE pi FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
             WHERE ps.paper_id = ?
             """, paperId);
-        jdbcTemplate.update("DELETE FROM paper_sections WHERE paper_id = ?", paperId);
+        deletePaperSectionTree(paperId);
         for (Long questionId : oldQuestionIds) {
             jdbcTemplate.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)",
                 questionId, questionId);
@@ -340,12 +340,34 @@ public class PaperService {
             SELECT DISTINCT pi.question_id FROM paper_items pi
             JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?
             """, (rs, rowNum) -> rs.getLong(1), paperId);
-        // 先删除子题型分组，避免父子分组的 RESTRICT 外键阻止试卷级联删除。
-        jdbcTemplate.update("DELETE FROM paper_sections WHERE paper_id = ? AND parent_section_id IS NOT NULL", paperId);
+        // 先自底向上移除分组，避免父子分组的 RESTRICT 外键阻止级联删除。
+        deletePaperSectionTree(paperId);
         jdbcTemplate.update("DELETE FROM papers WHERE id = ?", paperId);
         for (Long questionId : questionIds) {
             jdbcTemplate.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)",
                 questionId, questionId);
+        }
+    }
+
+    /** 删除分组树的叶节点，再逐层删除父节点，兼容任意子分组深度。 */
+    private void deletePaperSectionTree(long paperId) {
+        while (true) {
+            List<Long> sectionIds = jdbcTemplate.query(
+                "SELECT id FROM paper_sections WHERE paper_id = ?", (rs, rowNum) -> rs.getLong(1), paperId);
+            if (sectionIds.isEmpty()) return;
+
+            Set<Long> parentIds = new HashSet<>(jdbcTemplate.query("""
+                SELECT DISTINCT parent_section_id FROM paper_sections
+                WHERE paper_id = ? AND parent_section_id IS NOT NULL
+                """, (rs, rowNum) -> rs.getLong(1), paperId));
+            List<Long> leafIds = sectionIds.stream().filter(id -> !parentIds.contains(id)).toList();
+            if (leafIds.isEmpty()) {
+                throw new IllegalStateException("Paper section hierarchy contains a cycle.");
+            }
+
+            for (Long sectionId : leafIds) {
+                jdbcTemplate.update("DELETE FROM paper_sections WHERE id = ? AND paper_id = ?", sectionId, paperId);
+            }
         }
     }
 
