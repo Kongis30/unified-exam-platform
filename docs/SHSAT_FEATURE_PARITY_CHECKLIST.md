@@ -95,7 +95,7 @@
 - [x] `EQUATION_EDITOR` 学生端抽测：正式卷 244 Math 第 56 题，通过公式输入控件输入 `8x+35≤95`；公式键盘与输入显示正常，继续后答案保存成功，页面脚本错误为 0，临时数据已清理。截图 `equation-editor-answer.png`。
 - [x] `SOLUTION_SET` 学生端抽测：正式卷 244 Math 第 79 题，选择闭合右射线并在数轴设定端点 9；当前答案提示为 `x ≥ 9`，继续后尝试记录端点与答案键一致，页面脚本错误为 0，临时数据已清理。截图 `solution-set-answer.png`。
 - [x] `TABLE_GRID` 学生端抽测：正式卷 247 Math 第 70 题，按正确答案逐行选择 5 个单选格；点 `Next` 后服务端各行值一致，浏览器脚本错误为 0，临时数据已清理。截图 `59-student-table-grid-selected.png`。该题材料图片 `/uploads/paper-materials/27-92486950-7d42-40d7-94e1-8a84c11069d9.png` 在独立版及统一版均缺失。
-- [ ] `HOT_SPOT` 学生作答被缺失的源图片阻塞：正式卷 247 Math 第 62 题引用 `/uploads/paper-materials/27-3b8171c6-53bf-4796-8f68-532393316cb7.png`，文件在独立版 `shsat_server/uploads` 与统一版 `backend/uploads/paper-materials` 均不存在；不能完成区域选择。已修复图片失败时遗留的破图标/替代文字，并验证英文错误提示干净显示。需要找到源图片后才能验收作答和计分。截图 `58-student-hotspot-unavailable-clean.png`。
+- [ ] `HOT_SPOT` 学生作答被缺失的源图片阻塞：正式卷 247 Math 第 62 题引用 `/uploads/paper-materials/27-3b8171c6-53bf-4796-8f68-532393316cb7.png`，文件在独立版 `shsat_server/uploads` 与统一版 `backend/uploads/paper-materials` 均不存在；不能完成区域选择。已修复图片失败时遗留的破图标/替代文字，并验证英文错误提示干净显示。2026-10-27 对整个本地项目目录按完整文件名和资源 ID 搜索，唯一命中是数据库备份中的引用，没有找到图片副本；用其他图片替代会改变原题内容，因此仍需找回源图片后验收作答和计分。截图 `58-student-hotspot-unavailable-clean.png`。
 - [ ] 素材操作：选择已有、新建、清除文本/图片材料；图片上传、截图粘贴、预览/放大/重置/关闭，Markdown/公式插入与显示；共享材料编辑影响范围与源系统一致。
 - [ ] **逐题型闭环**：12 类题均需完成创建→保存→刷新→预览→作答→提交→报告复核。当前 11 类已有学生 UI 作答及答案持久化抽测证据，但尚未逐类完成创建/编辑、刷新恢复、预览、提交计分和报告复核；`HOT_SPOT` 被源图片缺失阻塞。每类选项/交互数据、答案键、评分及解析需逐字段对照，不能只测选择题。
 - [x] **新增四类学生端作答回归**：`GRAPH_QUESTION`、`HOT_TEXT`、`EQUATION_EDITOR`、`SOLUTION_SET` 均通过实际浏览器交互后保存，并从尝试 API 核对答案；零页面脚本错误，临时考试和学生账号清理完成。截图分别为 `graph-question-answer.png`、`hot-text-answer.png`、`equation-editor-answer.png`、`solution-set-answer.png`。坐标图样题内容不完整，题干为空；其控件行为虽通过，内容质量仍待修复/与独立版对账。此项不替代逐类型提交计分和报告验收。
