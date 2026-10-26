@@ -38,6 +38,7 @@ const result = ref(null);
 const currentIndex = ref(0);
 const answers = ref({});
 const savedQuestionNumbers = ref(new Set());
+const pendingClearedQuestionNumbers = ref(new Set());
 const savingQuestionNumber = ref(null);
 const timeSpentByQuestion = ref({});
 const remainingSeconds = ref(0);
@@ -1025,6 +1026,15 @@ function setAnswer(questionNumber, value) {
     return;
   }
 
+  const wasSaved = isQuestionSaved(questionNumber);
+  const nextPendingCleared = new Set(pendingClearedQuestionNumbers.value);
+  if (hasMeaningfulAnswerValue(value)) {
+    nextPendingCleared.delete(questionNumber);
+  } else if (wasSaved) {
+    nextPendingCleared.add(questionNumber);
+  }
+  pendingClearedQuestionNumbers.value = nextPendingCleared;
+
   answers.value = {
     ...answers.value,
     [questionNumber]: value,
@@ -1523,7 +1533,9 @@ function getAdvanceBlockedMessage(targetQuestion) {
 
 async function saveQuestions(targetQuestions) {
   const dirtyQuestions = targetQuestions.filter((question) => {
-    return hasMeaningfulAnswerValue(getAnswer(question.questionNumber)) && !isQuestionSaved(question.questionNumber);
+    const questionNumber = question.questionNumber;
+    return pendingClearedQuestionNumbers.value.has(questionNumber)
+      || (hasMeaningfulAnswerValue(getAnswer(questionNumber)) && !isQuestionSaved(questionNumber));
   });
 
   for (const question of dirtyQuestions) {
@@ -1535,7 +1547,8 @@ async function saveCurrentAnswerForFreeNavigation() {
   if (!currentQuestion.value || !attemptId.value || isQuestionSaved(currentQuestion.value.questionNumber)) {
     return;
   }
-  if (!hasMeaningfulAnswerValue(getAnswer(currentQuestion.value.questionNumber))) {
+  if (!hasMeaningfulAnswerValue(getAnswer(currentQuestion.value.questionNumber))
+    && !pendingClearedQuestionNumbers.value.has(currentQuestion.value.questionNumber)) {
     return;
   }
 
@@ -1977,12 +1990,22 @@ function toggleMark() {
   markedQuestionNumbers.value = nextMarked;
 }
 
-function clearCurrentAnswer() {
+async function clearCurrentAnswer() {
   if (!currentQuestion.value || isCurrentQuestionReadOnly.value) {
     return;
   }
 
-  setAnswer(currentQuestion.value.questionNumber, '');
+  const question = currentQuestion.value;
+  setAnswer(question.questionNumber, '');
+  if (!pendingClearedQuestionNumbers.value.has(question.questionNumber)) {
+    return;
+  }
+
+  try {
+    await saveAnswer(question);
+  } catch {
+    // 保留待保存标记，后续切题或交卷时会再次尝试。
+  }
 }
 
 function toggleNotes() {
@@ -3117,6 +3140,7 @@ function initializeAnswers(attemptData) {
 
   answers.value = nextAnswers;
   savedQuestionNumbers.value = nextSaved;
+  pendingClearedQuestionNumbers.value = new Set();
   markedQuestionNumbers.value = nextMarked;
 }
 
@@ -3134,6 +3158,7 @@ function initializeAnswersFromResult(resultData) {
 
   answers.value = nextAnswers;
   savedQuestionNumbers.value = nextSaved;
+  pendingClearedQuestionNumbers.value = new Set();
   markedQuestionNumbers.value = new Set();
 }
 
@@ -3221,6 +3246,9 @@ async function saveAnswer(question) {
     if (response?.progressState || response?.accessBoundary) {
       applyProgressUpdate(response);
     }
+    const nextPendingCleared = new Set(pendingClearedQuestionNumbers.value);
+    nextPendingCleared.delete(question.questionNumber);
+    pendingClearedQuestionNumbers.value = nextPendingCleared;
     savedQuestionNumbers.value = new Set([...savedQuestionNumbers.value, question.questionNumber]);
     saveMessage.value = `Question ${question.questionNumber} saved`;
   } catch (error) {
@@ -3256,6 +3284,9 @@ async function submitExam({ autoSubmitted = false, skipConfirm = false } = {}) {
   saveMessage.value = '';
 
   try {
+    await saveQuestions(questions.value.filter((question) =>
+      pendingClearedQuestionNumbers.value.has(question.questionNumber)));
+
     if (!autoSubmitted) {
       const unansweredNumbers = getUnansweredQuestionNumbers();
       if (unansweredNumbers.length > 0) {
@@ -3296,6 +3327,8 @@ async function submitExam({ autoSubmitted = false, skipConfirm = false } = {}) {
     }
 
     submitLoading.value = true;
+    await saveQuestions(questions.value.filter((question) =>
+      pendingClearedQuestionNumbers.value.has(question.questionNumber)));
     if (!autoSubmitted && !(await saveCurrentAnswer())) {
       return;
     }
@@ -3709,7 +3742,7 @@ onBeforeUnmount(() => {
             <button
               class="tool-button"
               type="button"
-              :disabled="!currentQuestion || isCurrentQuestionReadOnly"
+              :disabled="!currentQuestion || isCurrentQuestionReadOnly || savingQuestionNumber === currentQuestion.questionNumber"
               title="Clear Answer"
               aria-label="Clear Answer"
               @click="clearCurrentAnswer"
