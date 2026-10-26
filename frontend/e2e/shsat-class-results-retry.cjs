@@ -55,7 +55,7 @@ async function main() {
     const showsEmptyState = await page.getByText('No submissions are available for this class and exam.', { exact: true }).count();
     assert.ok(showsResults || showsEmptyState,
       `Retry reloads the result table or its accurate empty state (table=${showsResults}, empty=${showsEmptyState}): ${await page.locator('body').innerText()}`);
-    await page.screenshot({ path: `/tmp/shsat-class-results-retry-${stamp}.png`, fullPage: true });
+    await page.screenshot({ path: `/tmp/shsat-class-results-retry-${stamp}.png` });
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => window.scrollTo(0, 0));
