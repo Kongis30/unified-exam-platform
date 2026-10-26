@@ -76,6 +76,8 @@
 - [x] `MULTI_SELECT_FIXED` 学生端抽测：正式卷 247 ELA 第 7 题要求恰好选 2 项；通过学生界面选择 D/E，限制提示和选中状态显示正确，继续后服务端答案与答案键相符，浏览器脚本错误为 0，临时数据已清理。截图 `55-student-multi-select-fixed-selected.png`。
 - [x] `FILL_IN_BLANK` 学生端抽测：正式卷 247 Math 第 65 题输入 `1.93`，通过 `Next` 保存并从考试尝试接口核对答案，浏览器脚本错误为 0，临时数据已清理。桌面截图 `56-student-fill-in-blank.png`。题型创建/编辑/报告闭环仍待覆盖。
 - [x] `INLINE_CHOICE` 学生端抽测：正式卷 247 Math 第 94 题，在两个下拉框分别选择 B/C；通过 `Next` 保存后，服务端返回值与两个空格的答案键一致，浏览器脚本错误为 0，临时数据已清理。桌面截图 `57-student-inline-choice-selected.png`。
+- [x] `TABLE_GRID` 学生端抽测：正式卷 247 Math 第 70 题，按正确答案逐行选择 5 个单选格；点 `Next` 后服务端各行值一致，浏览器脚本错误为 0，临时数据已清理。截图 `59-student-table-grid-selected.png`。该题材料图片 `/uploads/paper-materials/27-92486950-7d42-40d7-94e1-8a84c11069d9.png` 在独立版及统一版均缺失。
+- [ ] `HOT_SPOT` 学生作答被缺失的源图片阻塞：正式卷 247 Math 第 62 题引用 `/uploads/paper-materials/27-3b8171c6-53bf-4796-8f68-532393316cb7.png`，文件在独立版 `shsat_server/uploads` 与统一版 `backend/uploads/paper-materials` 均不存在；不能完成区域选择。已修复图片失败时遗留的破图标/替代文字，并验证英文错误提示干净显示。需要找到源图片后才能验收作答和计分。截图 `58-student-hotspot-unavailable-clean.png`。
 - [ ] 素材操作：选择已有、新建、清除文本/图片材料；图片上传、截图粘贴、预览/放大/重置/关闭，Markdown/公式插入与显示；共享材料编辑影响范围与源系统一致。
 - [ ] **逐题型闭环**：`MULTIPLE_CHOICE`、`MULTI_SELECT`、`MULTI_SELECT_FIXED`、`FILL_IN_BLANK`、`INLINE_CHOICE`、`DRAG_AND_DROP`、`HOT_TEXT`、`HOT_SPOT`、`TABLE_GRID`、`GRAPH_QUESTION`、`EQUATION_EDITOR`、`SOLUTION_SET` 各用一题完成创建→保存→刷新→预览→作答→提交→报告复核。每类的选项/交互数据、答案键、评分及解析需逐字段对照，不能只测选择题。
 - [ ] 题型内按钮：填空可接受答案增删；拖拽 Item/Zone 增删和正确匹配；Hot Text/Spot 区域增删及坐标；图表点、方程输入、解答集等题型专用控件都要检查初始、修改、清空、保存恢复。

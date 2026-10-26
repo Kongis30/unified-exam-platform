@@ -137,7 +137,7 @@ function handleImageFailed() {
     </div>
 
     <div class="hot-spot-answer__canvas" :class="{ 'is-unavailable': !imageReady }">
-      <div v-if="imageUrl" class="hot-spot-answer__stage" :style="imageStageStyle">
+      <div v-if="imageUrl && !imageFailed" class="hot-spot-answer__stage" :style="imageStageStyle">
         <img
           :src="imageUrl"
           alt="Question image"
