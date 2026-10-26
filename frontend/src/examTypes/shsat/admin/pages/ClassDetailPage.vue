@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
@@ -14,7 +14,7 @@ const router = useRouter();
 const loading = ref(false);
 const errorMessage = ref('');
 const formError = ref('');
-const formNotice = ref('');
+const classToast = ref('');
 const showClassModal = ref(false);
 const submittingClass = ref(false);
 const showStudentModal = ref(false);
@@ -40,6 +40,7 @@ const classes = ref([]);
 const exams = ref([]);
 const students = ref([]);
 const examKeyword = ref('');
+let classToastTimer = null;
 
 const classId = computed(() => route.params.classId);
 
@@ -225,7 +226,6 @@ function openEditClassModal() {
   const item = classInfo.value || {};
 
   formError.value = '';
-  formNotice.value = '';
   Object.assign(classForm, {
     className: item.className || '',
     classDescription: item.classDescription || '',
@@ -245,12 +245,24 @@ function closeClassModal() {
 
   showClassModal.value = false;
   formError.value = '';
-  formNotice.value = '';
+}
+
+function closeClassToast() {
+  if (classToastTimer) {
+    window.clearTimeout(classToastTimer);
+    classToastTimer = null;
+  }
+  classToast.value = '';
+}
+
+function showClassToast(message) {
+  closeClassToast();
+  classToast.value = message;
+  classToastTimer = window.setTimeout(closeClassToast, 3_500);
 }
 
 async function submitClass() {
   formError.value = '';
-  formNotice.value = '';
 
   if (!classForm.className.trim()) {
     formError.value = 'Class name is required.';
@@ -264,7 +276,7 @@ async function submitClass() {
       await adminApi.updateClass(classId.value, { ...classForm }),
       'Failed to update class'
     );
-    formNotice.value = 'Class updated.';
+    showClassToast('Class updated.');
     showClassModal.value = false;
   } catch (error) {
     formError.value = error.message || 'Failed to update class';
@@ -710,11 +722,22 @@ watch(classExamTotalPages, (totalPages) => {
 });
 
 onMounted(loadPage);
+onBeforeUnmount(closeClassToast);
 </script>
 
 <template>
   <AdminLayout>
     <section class="page-shell class-detail-page">
+      <Teleport to="body">
+        <div v-if="classToast" class="class-detail-toast" role="status" aria-live="polite">
+          <div>
+            <strong>Saved</strong>
+            <p>{{ classToast }}</p>
+          </div>
+          <button type="button" aria-label="Close notification" @click="closeClassToast">&times;</button>
+        </div>
+      </Teleport>
+
       <section class="class-detail-hero">
         <div class="class-detail-hero__top">
           <button class="class-back-button" type="button" @click="goBack">
@@ -1060,7 +1083,6 @@ onMounted(loadPage);
             </div>
 
             <p v-if="formError" class="error-text">{{ formError }}</p>
-            <p v-if="formNotice" class="success-text">{{ formNotice }}</p>
 
             <footer class="modal-card__footer">
               <AppButton variant="secondary" type="button" @click="closeClassModal">Cancel</AppButton>
@@ -1182,6 +1204,60 @@ onMounted(loadPage);
 </template>
 
 <style scoped>
+.class-detail-toast {
+  position: fixed;
+  z-index: 2000;
+  right: 24px;
+  bottom: 24px;
+  top: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  width: min(360px, calc(100vw - 32px));
+  border: 1px solid #b8e5d1;
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: #174c3d;
+  background: #f5fcf8;
+  box-shadow: 0 14px 32px rgba(23, 32, 51, 0.16);
+}
+
+.class-detail-toast strong,
+.class-detail-toast p {
+  margin: 0;
+}
+
+.class-detail-toast p {
+  margin-top: 4px;
+  color: #47685e;
+  font-size: 14px;
+}
+
+.class-detail-toast button {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  color: #47685e;
+  background: transparent;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.class-detail-toast button:hover {
+  background: #e5f5ec;
+}
+
+@media (max-width: 600px) {
+  .class-detail-toast {
+    right: 12px;
+    bottom: 12px;
+  }
+}
+
 .class-detail-page {
   display: grid;
   gap: 22px;
