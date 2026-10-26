@@ -123,6 +123,7 @@
 - [x] 学生真实错题源任务启动抽测：临时学生完成一场已发布 SHSAT 考试后，教师创建班级 Review Assignment；接口核对已生成错题题目及 `NOT_STARTED` 资格。学生从 SHSAT 首页的 Review Assignments 点击 `Start review`，通过全屏提示进入独立 SHSAT 考试界面；服务端关联练习 attempt，教师进度状态更新为 `IN_PROGRESS`。零页面脚本错误；结束后考试、任务、临时学生及班级已清理。截图 `121-review-assigned-exam-desktop.png`。选用的源卷（Official SHSAT Label Template）有 9 道样题，其中图表第 1 题题干为空，这是源数据问题；任务完成/重试/报告闭环、窄屏该入口仍待测。
 - [x] 学生 Review Assignment 完成/重做回归：从首页 `Start review` 启动后，在考试页用 `Submit Exam` 和确认弹窗提交；任务状态变为 `RETRY_REQUIRED`，仍有 9 题。首页 `Try again` 创建新练习，提交其中一道答对的选择题后再次经 UI 确认交卷并进入报告；报告答案与得分为 1/1 正确，任务剩余题由 9 降至 8，状态仍为 `RETRY_REQUIRED`。页面脚本错误为 0，考试/任务/临时账户已清理。报告截图 `123-review-report-after-retry-desktop.png`；此测试卷只有 9 题，若干题无技能标签，图表题题干为空，仍是源卷内容问题；全做正确后的 `COMPLETED` 状态及移动端仍待测。
 - [ ] Classes 首页：搜索、`Create Class`、刷新、卡片打开、空班删除、拖动顺序持久化；同一学生可加入多个班级；班级能接收 SHSAT 或 SAT 场次。
+- [x] 学生多班归属隔离烟测：将临时学生同时加入两个班级，从其中一个班移除后，另一个班仍保留其成员关系；随后删除临时班级和账号，均成功且无遗留。
 - [ ] Unassigned Students：刷新/折叠、最多 800px 内滚动、表头全选/逐项多选、`Assign selected`、班级选择、取消/提交；已在其他班的学生不应被误标“未分配”。
 - [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。
 - [x] `Class Exam Score Trend`：复核 SHSAT 文案、raw/scaled 提示和无数据状态；桌面截图确认没有 SAT/PSAT 范围提示。仍需用带 SHSAT 折算分/考试点的数据验证曲线与悬浮内容。
