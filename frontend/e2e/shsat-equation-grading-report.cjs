@@ -62,6 +62,16 @@ async function main() {
               answerKey: { acceptedAnswers: [{ value: '8x+35\\le95' }] }, grading: {},
               explanation: 'Subtract 35 and divide by 8.', categoryId: null, sortOrder: 0,
               displayNumber: 58, maxPoints: 1, scoringSectionCode: 'MATH',
+            }, {
+              questionTypeCode: 'GRAPH_QUESTION', payloadSchemaVersion: 1,
+              stem: 'Plot the point (2, 3).',
+              render: { questionConfig: {
+                graphMode: 'point_graph', showCandidatePoints: false,
+                graph: { xMin: -5, xMax: 5, xStep: 1, yMin: -5, yMax: 5, yStep: 1 },
+                interaction: { snapToGrid: true },
+              }, validationRules: {} },
+              answerKey: { points: [{ x: 2, y: 3 }] }, grading: {}, explanation: 'The point is (2, 3).',
+              categoryId: null, sortOrder: 1, displayNumber: 59, maxPoints: 1, scoringSectionCode: 'MATH',
             }],
           }],
         },
@@ -110,20 +120,32 @@ async function main() {
     });
     const answerSave = student.waitForResponse(response => response.url().endsWith(`/api/student/attempts/${attemptId}/answers/${paperItemId}`)
       && response.request().method() === 'PUT');
-
+    await student.getByRole('button', { name: 'Next', exact: true }).click();
+    assert.equal((await answerSave).status(), 200, 'the MathLive equation answer saves before moving to the next question');
+    await student.getByText('Plot the point (2, 3).', { exact: true }).waitFor();
+    const graphItem = (attempt.items || attempt.questions || []).find(item => item.questionTypeCode === 'GRAPH_QUESTION');
+    assert.ok(graphItem, 'the point graph item is included in the active student attempt');
+    const graphItemId = Number(graphItem.paperItemId || graphItem.id);
+    const graphSave = student.waitForResponse(response => response.url().endsWith(`/api/student/attempts/${attemptId}/answers/${graphItemId}`)
+      && response.request().method() === 'PUT');
+    const plot = await student.locator('.graph-plot__svg').boundingBox();
+    assert.ok(plot, 'the coordinate graph is rendered for the student');
+    await student.locator('.graph-plot__svg').click({
+      position: { x: plot.width * (474 / 680), y: plot.height * (112 / 420) },
+    });
     await student.getByRole('button', { name: 'Submit Exam', exact: true }).click();
-    assert.equal((await answerSave).status(), 200, 'the MathLive equation answer saves before final submission');
+    assert.equal((await graphSave).status(), 200, 'the plotted point is saved to the active attempt');
     await student.getByRole('dialog').getByRole('button', { name: 'Submit Exam', exact: true }).click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${attemptId}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
 
     const result = await api(admin, `/api/admin/reports/attempts/${attemptId}/result`);
-    assert.equal(result.totalScore, 2, `the ELA choice and visually equivalent Math answer both receive credit; report=${JSON.stringify(result)}`);
-    assert.deepEqual(result.questions.map(question => [question.partCode, question.correct]), [['ELA', true], ['MATH', true]]);
+    assert.equal(result.totalScore, 3, `the ELA choice, equivalent Math equation, and plotted coordinate receive credit; report=${JSON.stringify(result)}`);
+    assert.deepEqual(result.questions.map(question => [question.partCode, question.correct]), [['ELA', true], ['MATH', true], ['MATH', true]]);
     const studentReport = await api(student, `/api/student/attempts/${attemptId}/report`);
     assert.equal(studentReport.scoreVisible, true, 'SHSAT scores are visible after submission by default, as in the independent system');
     await student.getByText('Raw Total', { exact: true }).waitFor();
-    assert.equal(await student.locator('.summary-field').filter({ hasText: 'Raw Total' }).locator('.summary-field__value').textContent(), '2 / 2');
+    assert.equal(await student.locator('.summary-field').filter({ hasText: 'Raw Total' }).locator('.summary-field__value').textContent(), '3 / 3');
     await student.screenshot({ path: `/tmp/shsat-equation-report-${stamp}.png` });
     await student.setViewportSize({ width: 390, height: 844 });
     const mobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));

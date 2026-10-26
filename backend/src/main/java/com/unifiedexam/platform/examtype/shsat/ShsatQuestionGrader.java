@@ -33,7 +33,7 @@ final class ShsatQuestionGrader {
         if (type.equals("HOT_TEXT")) return selectionSet(key, answer, config, true);
         if (type.equals("HOT_SPOT")) return selectionSet(key, answer, config, false);
         if (type.equals("TABLE_GRID")) return tableGrid(key, answer, config);
-        if (type.equals("GRAPH_QUESTION") || type.contains("POINT_GRAPH")) return graph(key, answer, config, grading);
+        if (type.equals("GRAPH_QUESTION") || type.contains("POINT_GRAPH")) return graph(key, answer, config);
         if (type.equals("SOLUTION_SET")) return solutionSet(key, answer);
         if (type.contains("FILL") || type.contains("BLANK") || type.contains("SHORT")
             || type.equals("TEXT") || type.equals("EQUATION_EDITOR")) return textAnswer(type, key, answer, config);
@@ -196,35 +196,78 @@ final class ShsatQuestionGrader {
         return result;
     }
 
-    private boolean graph(JsonNode key, JsonNode answer, JsonNode config, JsonNode grading) {
-        Set<String> expectedIds = tokens(first(key, "selectedPointIds", "pointIds"));
-        Set<String> submittedIds = tokens(first(answer, "selectedPointIds", "pointIds"));
-        if (!expectedIds.isEmpty() || !submittedIds.isEmpty()) {
+    private boolean graph(JsonNode key, JsonNode answer, JsonNode config) {
+        String mode = token(text(first(config, "graphMode"))).toLowerCase(Locale.ROOT);
+        if (mode.equals("select_points")) {
+            JsonNode expectedNode = first(key, "selectedPointIds");
+            JsonNode submittedNode = first(answer, "selectedPointIds");
+            Set<String> expected = tokens(expectedNode);
+            Set<String> submitted = tokens(submittedNode);
             Set<String> configured = ids(array(config, "points"));
-            return !expectedIds.isEmpty() && expectedIds.equals(submittedIds)
-                && (configured.isEmpty() || configured.containsAll(expectedIds));
+            return !expected.isEmpty() && expected.equals(submitted)
+                && duplicateTokenCount(expectedNode) == 0 && duplicateTokenCount(submittedNode) == 0
+                && configured.containsAll(expected);
         }
-        List<double[]> expected = points(first(key, "points", "placedPoints", "selectedPoints"));
-        List<double[]> submitted = points(first(answer, "points", "placedPoints", "selectedPoints"));
-        if (expected.isEmpty() || expected.size() != submitted.size()) return false;
-        double tolerance = decimal(first(grading, "tolerance"), decimal(first(key, "tolerance"), 0));
-        for (double[] target : expected) {
-            boolean found = submitted.stream().anyMatch(value -> Math.abs(target[0] - value[0]) <= tolerance + 1e-9
-                && Math.abs(target[1] - value[1]) <= tolerance + 1e-9);
-            if (!found) return false;
-        }
-        return true;
+
+        GraphBounds bounds = graphBounds(config);
+        CoordinateSet expected = coordinatePoints(first(key, "points", "placedPoints", "selectedPoints"), bounds);
+        CoordinateSet submitted = coordinatePoints(first(answer, "points", "placedPoints", "selectedPoints"), bounds);
+        return !expected.points().isEmpty() && expected.invalidCount() == 0 && submitted.invalidCount() == 0
+            && expected.points().equals(submitted.points());
     }
 
-    private List<double[]> points(JsonNode node) {
-        List<double[]> result = new ArrayList<>();
-        if (node == null || !node.isArray()) return result;
+    private CoordinateSet coordinatePoints(JsonNode node, GraphBounds bounds) {
+        Set<String> coordinates = new LinkedHashSet<>();
+        if (node == null || !node.isArray()) return new CoordinateSet(coordinates, 0);
+        int invalidCount = 0;
         for (JsonNode point : node) {
-            if (!point.hasNonNull("x") || !point.hasNonNull("y")) return List.of();
-            try { result.add(new double[]{Double.parseDouble(text(point.get("x"))), Double.parseDouble(text(point.get("y")))}); }
-            catch (NumberFormatException exception) { return List.of(); }
+            if (!point.isObject() || !point.hasNonNull("x") || !point.hasNonNull("y")) {
+                invalidCount++;
+                continue;
+            }
+            try {
+                double x = Double.parseDouble(text(point.get("x")));
+                double y = Double.parseDouble(text(point.get("y")));
+                String coordinate = coordinateValue(x) + "," + coordinateValue(y);
+                if (!Double.isFinite(x) || !Double.isFinite(y) || !bounds.contains(x, y) || !coordinates.add(coordinate)) {
+                    invalidCount++;
+                }
+            } catch (NumberFormatException exception) {
+                invalidCount++;
+            }
         }
-        return result;
+        return new CoordinateSet(coordinates, invalidCount);
+    }
+
+    private String coordinateValue(double value) {
+        return value == Math.rint(value) ? Long.toString(Math.round(value)) : Double.toString(value);
+    }
+
+    private GraphBounds graphBounds(JsonNode config) {
+        JsonNode graph = config == null ? null : config.path("graph");
+        JsonNode source = graph != null && graph.isObject() ? graph : config;
+        return new GraphBounds(optionalDouble(source, "xMin"), optionalDouble(source, "xMax"),
+            optionalDouble(source, "yMin"), optionalDouble(source, "yMax"));
+    }
+
+    private Double optionalDouble(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.get(field);
+        if (value == null || value.isNull()) return null;
+        try {
+            double parsed = Double.parseDouble(text(value));
+            return Double.isFinite(parsed) ? parsed : null;
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private record CoordinateSet(Set<String> points, int invalidCount) {}
+
+    private record GraphBounds(Double xMin, Double xMax, Double yMin, Double yMax) {
+        private boolean contains(double x, double y) {
+            return (xMin == null || x >= xMin) && (xMax == null || x <= xMax)
+                && (yMin == null || y >= yMin) && (yMax == null || y <= yMax);
+        }
     }
 
     private boolean solutionSet(JsonNode key, JsonNode answer) {
@@ -400,11 +443,6 @@ final class ShsatQuestionGrader {
     private boolean sameDecimal(JsonNode left, JsonNode right) {
         try { return new BigDecimal(text(left)).compareTo(new BigDecimal(text(right))) == 0; }
         catch (NumberFormatException exception) { return false; }
-    }
-
-    private double decimal(JsonNode node, double fallback) {
-        if (node == null) return fallback;
-        try { return Double.parseDouble(text(node)); } catch (NumberFormatException exception) { return fallback; }
     }
 
     private String normalizedField(JsonNode value) {

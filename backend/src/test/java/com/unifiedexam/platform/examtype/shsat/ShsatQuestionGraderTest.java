@@ -86,9 +86,25 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
-    void gradesGraphPointsWithinConfiguredTolerance() throws Exception {
-        assertTrue(grader.grade("GRAPH_QUESTION", json("{\"points\":[{\"x\":2,\"y\":3}]}"),
-            json("{\"points\":[{\"x\":2.1,\"y\":3}]}"), null, json("{\"tolerance\":0.1}")));
+    void gradesGraphCoordinatesExactlyRejectsDuplicatePointsAndHonorsBounds() throws Exception {
+        assertTrue(grade("GRAPH_QUESTION", "{\"points\":[{\"x\":2,\"y\":3}]}",
+            "{\"points\":[{\"x\":2.0,\"y\":3.0}]}"));
+        assertFalse(grader.grade("GRAPH_QUESTION", json("{\"points\":[{\"x\":2,\"y\":3}]}"),
+            json("{\"points\":[{\"x\":2.1,\"y\":3}]}"),
+            json("{\"questionConfig\":{\"graph\":{\"xMin\":-5,\"xMax\":5,\"yMin\":-5,\"yMax\":5}}}"),
+            json("{\"tolerance\":0.1}")));
+        assertFalse(grade("GRAPH_QUESTION", "{\"points\":[{\"x\":2,\"y\":3},{\"x\":2,\"y\":3}]}",
+            "{\"points\":[{\"x\":2,\"y\":3},{\"x\":2,\"y\":3}]}"));
+        assertFalse(grader.grade("GRAPH_QUESTION", json("{\"points\":[{\"x\":2,\"y\":3}]}"),
+            json("{\"points\":[{\"x\":6,\"y\":3}]}"),
+            json("{\"questionConfig\":{\"graph\":{\"xMin\":-5,\"xMax\":5,\"yMin\":-5,\"yMax\":5}}}"), null));
+        JsonNode selectionConfig = json("{\"questionConfig\":{\"graphMode\":\"select_points\",\"points\":[{\"id\":\"p1\"}]}}");
+        assertTrue(grader.grade("GRAPH_QUESTION", json("{\"selectedPointIds\":[\"p1\"]}"),
+            json("{\"selectedPointIds\":[\"p1\"]}"), selectionConfig, null));
+        assertFalse(grader.grade("GRAPH_QUESTION", json("{\"selectedPointIds\":[\"p1\",\"p1\"]}"),
+            json("{\"selectedPointIds\":[\"p1\",\"p1\"]}"), selectionConfig, null));
+        assertFalse(grader.grade("GRAPH_QUESTION", json("{\"selectedPointIds\":[\"missing\"]}"),
+            json("{\"selectedPointIds\":[\"missing\"]}"), selectionConfig, null));
     }
 
     @Test
