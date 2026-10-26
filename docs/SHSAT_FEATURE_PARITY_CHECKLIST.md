@@ -215,6 +215,7 @@
 - [x] **Paper Management 文件夹 CRUD 回归（2026-10-27）**：管理员从页面新建临时分组并填写说明，刷新后仍存在；重命名后刷新仍保留新名称；从确认弹窗删除空分组后，页面及分组 API 均查无该项。临时分组已清理，页面脚本错误为 0。截图 `/tmp/shsat-paper-folder-renamed-20261027.png`。此项未覆盖重名校验、取消操作、非空分组删除限制与排序拖动。
 - [x] 文件夹表单边界回归：空名称显示英文必填提示；重复已有分组名显示英文冲突提示；取消后对话框关闭且未创建记录。页面脚本错误为 0。非空分组删除限制与排序拖动仍待验收。
 - [x] **SHSAT Paper List 筛选回归（2026-10-27）**：对照独立版查询参数，在统一版发现 Online/Offline 选择未应用；现 `getPapers` 按 READY 状态过滤。用真实 SHSAT CRASH COURSE 数据核对：Online 4 卷、Offline 2 卷；文件夹、状态、名称组合筛选均匹配，浏览器脚本错误为 0。E2E 回归保存在 `frontend/e2e/shsat-paper-filters.cjs`，桌面截图 `/tmp/shsat-paper-filter-online-20261027.png`、`/tmp/shsat-paper-filter-offline-20261027.png`。清空筛选、空结果提示与筛选后刷新行为仍待验收。
+- [x] **SHSAT 试卷基础 CRUD 抽测（2026-10-27）**：管理员从 `Create Paper` 新建临时空白卷后进入编辑器，ELA/Math 区域可见；修改名称和说明，刷新后仍能按新名称检索；随后通过列表删除菜单确认影响并等待冷静期，试卷及 API 记录均已删除。浏览器脚本错误为 0。截图 `/tmp/shsat-paper-editor-created-20261027.png`。题目结构编辑、预览、PDF 导出和更多字段校验仍待覆盖。
 
 ## 9. 建议执行顺序与完成门槛
 
