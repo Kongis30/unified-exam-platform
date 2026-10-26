@@ -67,7 +67,11 @@ async function main() {
     const second = await runAttempt(student, examId, 'MATH', { ELA: 'B', MATH: 'B' });
     const firstReport = await api(admin, `/api/admin/reports/attempts/${first.attemptId}/result`);
     const secondReport = await api(admin, `/api/admin/reports/attempts/${second.attemptId}/result`);
+    const firstStudentReport = await api(student, `/api/student/attempts/${first.attemptId}/report`);
     assert.equal(firstReport.totalScore, 1, 'ELA-first attempt awards one raw point');
+    assert.equal(firstReport.correctCount, 1);
+    assert.equal(firstReport.wrongCount, 1);
+    assert.equal(firstReport.unansweredCount, 0);
     assert.equal(firstReport.elaRawScore, 1);
     assert.equal(firstReport.mathRawScore, 0);
     assert.equal(secondReport.totalScore, 1, 'Math-first attempt awards one raw point');
@@ -77,6 +81,11 @@ async function main() {
       'ELA-first results preserve ELA and Math answer ownership');
     assert.deepEqual(secondReport.questions.map(question => [question.partCode, question.correct]), [['ELA', false], ['MATH', true]],
       'Math-first attempt preserves section ownership and scores in canonical paper order');
+    assert.equal(firstStudentReport.scoreVisible, true, 'students see the score after submitting this exam');
+    assert.equal(firstStudentReport.answersVisible, false, 'answer details remain hidden before the exam closes');
+    assert.equal(firstStudentReport.correctCount, null, 'correct counts remain hidden with answer details');
+    assert.equal(firstStudentReport.wrongCount, null, 'wrong counts remain hidden with answer details');
+    assert.equal(firstStudentReport.accuracy, null, 'accuracy remains hidden with answer details');
     await student.screenshot({ path: `/tmp/shsat-two-section-report-${stamp}.png` });
     await student.setViewportSize({ width: 390, height: 844 });
     const mobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
@@ -86,7 +95,7 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student starts from the SHSAT workspace', 'ELA then Math order and section submit transition', 'Math then ELA order and section submit transition', 'both reports preserve correct section grading', 'desktop and 390px report layout'],
+      checks: ['student starts from the SHSAT workspace', 'ELA then Math order and section submit transition', 'Math then ELA order and section submit transition', 'admin scores and counts match both section attempts', 'student score/answer visibility follows exam policy', 'desktop and 390px report layout'],
       attemptIds: [first.attemptId, second.attemptId], mobileSize, pageErrors: pageErrors.length,
       screenshots: [`/tmp/shsat-two-section-report-${stamp}.png`, `/tmp/shsat-two-section-report-mobile-${stamp}.png`],
     }));
