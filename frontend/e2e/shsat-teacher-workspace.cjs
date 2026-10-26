@@ -101,8 +101,29 @@ async function main() {
       'teachers are not offered the destructive release action');
     await teacher.screenshot({ path: `/tmp/shsat-teacher-release-published-${stamp}.png` });
 
+    await teacher.getByRole('menuitem', { name: 'Monitor', exact: true }).click();
+    await teacher.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/exams/${examId}/monitor`);
+    assert.equal((await raw(teacher, `/api/admin/reports/exams/${examId}/monitor/live`)).status, 200,
+      'teachers can load SHSAT live monitoring data');
+    assert.equal((await raw(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`)).status, 200,
+      'teachers can load SHSAT monitoring analytics');
+    await teacher.getByRole('heading', { name: 'Current Question Distribution' }).waitFor();
+    await teacher.getByText('No response-time data has been recorded for this exam yet.').waitFor();
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-${stamp}.png` });
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    await teacher.evaluate(() => window.scrollTo(0, 0));
+    const monitorMobileSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(monitorMobileSize.page <= monitorMobileSize.viewport, 'teacher monitor fits a 390px viewport');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-mobile-${stamp}.png` });
+    await teacher.locator('.monitor-back-button').click();
+    await teacher.waitForURL(url => url.pathname === '/exam-types/SHSAT/admin');
+    await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).waitFor();
+    await teacher.setViewportSize({ width: 1440, height: 900 });
+    await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).click();
+
     const forbiddenDelete = await raw(teacher, `/api/admin/exams/${examId}`, 'DELETE');
     assert.equal(forbiddenDelete.status, 403, 'the backend also denies teacher release deletion');
+    await row.getByRole('button', { name: `Actions for ${examTitle}` }).click();
     await teacher.getByRole('menuitem', { name: 'Unpublish', exact: true }).click();
     await teacher.getByRole('button', { name: 'Unpublish Exam', exact: true }).click();
     const unpublished = await api(teacher, '/api/admin/exam-types/SHSAT/exams');
@@ -120,8 +141,10 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['teacher SHSAT tab access', 'shared all-class directory', 'account directory denied',
-        'create, publish and unpublish release', 'delete hidden in UI and forbidden by API', '390px layout'],
+        'create, publish and unpublish release', 'monitor access, empty analytics and return path',
+        'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
+      monitorMobileSize,
       pageErrors: errors.length,
     }));
   } finally {
