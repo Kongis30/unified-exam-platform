@@ -335,6 +335,8 @@ public class PaperService {
             SELECT DISTINCT pi.question_id FROM paper_items pi
             JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?
             """, (rs, rowNum) -> rs.getLong(1), paperId);
+        // 先删除子题型分组，避免父子分组的 RESTRICT 外键阻止试卷级联删除。
+        jdbcTemplate.update("DELETE FROM paper_sections WHERE paper_id = ? AND parent_section_id IS NOT NULL", paperId);
         jdbcTemplate.update("DELETE FROM papers WHERE id = ?", paperId);
         for (Long questionId : questionIds) {
             jdbcTemplate.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)",

@@ -58,6 +58,8 @@
 - [x] 新建/删除试卷烟测：Paper Name 为空显示英文校验；补正后错误即时清除；成功创建后进入该试卷编辑器，ELA/Math 区域显示，列表/API 均可查到；从列表走 10 秒冷静期删除，确认后行消失且详情 API 为 404。临时试卷已删除；截图 `46-paper-create.png`、`47-new-paper-editor.png`、`48-paper-delete-cooldown.png`。此项只验证新建空草稿元数据和删除，不代表添加题目/保存题目通过。
 - [x] Paper List action 菜单接入：发现 SHSAT AdminHome 漏导入共享 `AdminActionMenu`，导致菜单按钮未渲染、操作项作为普通按钮显示；补齐导入后确认每行显示省略号入口、Delete 排最后、Escape 可关闭；`Export PDF` 可进入导出页。115 题卷 PDF 输出 218,673 bytes、13 页 Letter，抽取文本含章节/题目内容，浏览器脚本错误为 0。封面后的空白页在独立版导出中也明确存在，是双面打印留白，保持一致；截图 `37-paper-export.png`，PDF `37-paper-export.pdf`。`Move` 仍待验证。
 - [x] 纸卷只读操作抽测（SHSAT CRASH COURSE TEST 6）：`Detail` 显示纸卷名/分组题数，关闭正常；`Edit Info` 字段正确载入，取消不改数据；`Preview` 可显示题目并用 Back 回到 Paper Management；`Edit Paper` 可加载题树/当前题，未修改时 `Save Changes` 禁用；Delete 对临时新卷显示 10 秒冷静期，期满 UI 删除成功。浏览器脚本错误为 0；桌面截图 `38-paper-detail.png` 至 `41-paper-editor.png`、`48-paper-delete-cooldown.png`。此测试样卷有 Math 50 题、ELA 0 题，不能代替完整正式卷验收；编辑保存、拖题、导入等写操作仍待验证。
+- [x] 选择题编辑保存闭环：临时创建 SHSAT 试卷，在 ELA 添加选择题并编辑题干、选项和正确答案；保存后从详情 API 核对，再刷新编辑器核对字段仍保留，预览中显示相同题干/选项；浏览器脚本错误为 0。临时试卷已清理。截图 `49-question-editor-before-save.png`、`50-question-editor-after-reload.png`、`51-question-preview.png`。仅覆盖 `MULTIPLE_CHOICE`，其它题型继续逐类验收。
+- [x] 修复带题目试卷删除 500：保存一题后删除会被 `paper_sections` 的父子 `RESTRICT` 外键阻止；删除服务现在先移除子分组，再级联删除父试卷，并清理不再被其它纸卷引用的题目。保存闭环临时试卷删除返回 200，随后详情查询已不存在；关联已有考试记录的删除约束仍按下方项目继续验收。
 - [ ] 逐卷 Action 菜单：`Move`、`Detail`、`Edit Info`、`Edit Paper`、`Preview`、`Export PDF`、`Delete` 按独立版逐个操作；弹窗可关闭、保存后刷新，删除有影响说明和确认，删除后引用处处理明确；危险动作始终排最后。
 - [ ] 试卷列表：名称、题量、时长、分数、状态/Online 与详情相同；长名称、空字段、离线/草稿、缺失资源显示合理；排序/过滤后菜单仍对准当前行。
 
@@ -68,6 +70,7 @@
 - [ ] `Import from Exam`：源考试/题型/分析筛选、展开分组、预览、单选/多选、确认导入、取消；材料、答案、标签、图片关联不丢失，不重复导入。
 - [ ] `Parts`/`Types`：新增、编辑、删除主/次类型及次序；已被题引用时给出合理处理，编辑后题目树/预览同步。
 - [ ] 单题通用编辑：题型、主/次类型、难度、官方 SHSAT 技能标签、题干、解析、分值/计分段、素材类型；`Add`、`Delete`、预览和保存后结构不变形。
+- [x] 选择题写入抽测：添加 ELA 题目、编辑题干/选项/答案键，保存成功；API、编辑页刷新和预览内容一致，临时卷已清理。截图 `49-question-editor-before-save.png` 至 `51-question-preview.png`；仅覆盖 `MULTIPLE_CHOICE`。
 - [ ] 素材操作：选择已有、新建、清除文本/图片材料；图片上传、截图粘贴、预览/放大/重置/关闭，Markdown/公式插入与显示；共享材料编辑影响范围与源系统一致。
 - [ ] **逐题型闭环**：`MULTIPLE_CHOICE`、`MULTI_SELECT`、`MULTI_SELECT_FIXED`、`FILL_IN_BLANK`、`INLINE_CHOICE`、`DRAG_AND_DROP`、`HOT_TEXT`、`HOT_SPOT`、`TABLE_GRID`、`GRAPH_QUESTION`、`EQUATION_EDITOR`、`SOLUTION_SET` 各用一题完成创建→保存→刷新→预览→作答→提交→报告复核。每类的选项/交互数据、答案键、评分及解析需逐字段对照，不能只测选择题。
 - [ ] 题型内按钮：填空可接受答案增删；拖拽 Item/Zone 增删和正确匹配；Hot Text/Spot 区域增删及坐标；图表点、方程输入、解答集等题型专用控件都要检查初始、修改、清空、保存恢复。
