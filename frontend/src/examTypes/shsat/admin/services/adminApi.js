@@ -431,6 +431,8 @@ export const adminApi = {
       durationSeconds: Math.max(1, Number(payload.duration || 0) * 60),
       attemptLimit: Number(payload.attemptLimit || 1),
       targetScope: payload.targetType === 'ALL_STUDENTS' ? 'ALL_STUDENTS' : 'SELECTED',
+      autoSubmit: payload.autoSubmit,
+      allowReview: payload.allowReview,
     });
     if (payload.targetType === 'SPECIFIC_CLASSES') {
       const classIds = payload.target_ids || [];
@@ -445,6 +447,8 @@ export const adminApi = {
       opensAt: new Date(payload.startTime).toISOString(), closesAt: new Date(payload.endTime).toISOString(),
       durationSeconds: Math.max(1, Number(payload.duration || 0) * 60), attemptLimit: Number(payload.attemptLimit || 1),
       targetScope: payload.targetType === 'ALL_STUDENTS' ? 'ALL_STUDENTS' : 'SELECTED',
+      autoSubmit: payload.autoSubmit,
+      allowReview: payload.allowReview,
     });
     if (payload.targetType === 'SPECIFIC_CLASSES') {
       await saveExamTargets(examId, { classIds: payload.target_ids || [], studentUserIds: [] });

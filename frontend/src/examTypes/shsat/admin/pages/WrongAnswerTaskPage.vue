@@ -43,6 +43,7 @@ function formatDateTime(value) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 

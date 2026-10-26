@@ -35,7 +35,7 @@ public class ExamReleaseService {
             SELECT e.id, p.exam_type_code, e.paper_id, p.title AS paper_title, e.title, e.description,
                    e.status, e.target_scope, e.opens_at, e.closes_at,
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
-                   e.attempt_limit,
+                   e.attempt_limit, e.allow_review, e.auto_submit,
                    EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
                    e.created_at, e.updated_at, e.published_at
             FROM exams e JOIN papers p ON p.id = e.paper_id
@@ -73,15 +73,16 @@ public class ExamReleaseService {
         jdbcTemplate.update("""
             INSERT INTO exams
                 (paper_id, scoring_profile_id, title, description, target_scope, opens_at, closes_at,
-                 duration_seconds, attempt_limit, answer_visibility, score_visibility, allow_review, created_by)
+                 duration_seconds, attempt_limit, answer_visibility, score_visibility, allow_review, auto_submit, created_by)
             SELECT id, default_scoring_profile_id, ?, ?, ?, ?, ?, ?, ?,
                    IF(exam_type_code IN ('SAT', 'PSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
                    IF(exam_type_code IN ('SAT', 'PSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
-                   exam_type_code IN ('SAT', 'PSAT'), ?
+                   COALESCE(?, exam_type_code IN ('SAT', 'PSAT')), COALESCE(?, TRUE), ?
             FROM papers WHERE id = ?
             """, request.title(), request.description(), targetScope,
             Timestamp.from(request.opensAt().toInstant()), Timestamp.from(request.closesAt().toInstant()),
-            resolveDuration(paperId, request.durationSeconds()), request.attemptLimit(), actorId, paperId);
+            resolveDuration(paperId, request.durationSeconds()), request.attemptLimit(), request.allowReview(),
+            request.autoSubmit(), actorId, paperId);
         Long examId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         return get(examId);
     }
@@ -102,10 +103,12 @@ public class ExamReleaseService {
         String targetScope = normalizeTargetScope(request.targetScope());
         jdbcTemplate.update("""
             UPDATE exams SET title = ?, description = ?, target_scope = ?, opens_at = ?, closes_at = ?,
-                duration_seconds = ?, attempt_limit = ? WHERE id = ? AND status = 'DRAFT'
+                duration_seconds = ?, attempt_limit = ?, allow_review = COALESCE(?, allow_review),
+                auto_submit = COALESCE(?, auto_submit) WHERE id = ? AND status = 'DRAFT'
             """, request.title(), request.description(), targetScope,
             Timestamp.from(request.opensAt().toInstant()), Timestamp.from(request.closesAt().toInstant()),
-            resolveDuration(paperId(examId), request.durationSeconds()), request.attemptLimit(), examId);
+            resolveDuration(paperId(examId), request.durationSeconds()), request.attemptLimit(),
+            request.allowReview(), request.autoSubmit(), examId);
         if ("ALL_STUDENTS".equals(targetScope)) {
             jdbcTemplate.update("DELETE FROM exam_target_classes WHERE exam_id = ?", examId);
             jdbcTemplate.update("DELETE FROM exam_target_students WHERE exam_id = ?", examId);
@@ -259,7 +262,7 @@ public class ExamReleaseService {
             SELECT e.id, p.exam_type_code, e.title, e.description, e.opens_at, e.closes_at,
                    p.title AS paper_title,
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
-                   e.attempt_limit,
+                   e.attempt_limit, e.allow_review, e.auto_submit,
                    (SELECT COUNT(*) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ?
                        AND (a.status IN ('SUBMITTED','COMPLETED','EXPIRED') OR
                             (a.status = 'IN_PROGRESS' AND a.expires_at <= CURRENT_TIMESTAMP(6)))
@@ -295,7 +298,7 @@ public class ExamReleaseService {
             SELECT e.id, p.exam_type_code, e.paper_id, p.title AS paper_title, e.title, e.description,
                    e.status, e.target_scope, e.opens_at, e.closes_at,
                    COALESCE(NULLIF(e.duration_seconds, 0), p.default_duration_seconds) AS duration_seconds,
-                   e.attempt_limit,
+                   e.attempt_limit, e.allow_review, e.auto_submit,
                    EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
                    e.created_at, e.updated_at, e.published_at
             FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ? AND NOT EXISTS (
@@ -314,7 +317,8 @@ public class ExamReleaseService {
             rs.getString("paper_title"), rs.getString("title"), rs.getString("description"), rs.getString("status"),
             rs.getString("target_scope"), rs.getTimestamp("opens_at").toInstant().toString(),
             rs.getTimestamp("closes_at").toInstant().toString(), nullableInt(rs, "duration_seconds"),
-            rs.getInt("attempt_limit"), rs.getBoolean("has_student_attempts"), rs.getTimestamp("created_at").toInstant().toString(),
+            rs.getInt("attempt_limit"), rs.getBoolean("has_student_attempts"), rs.getBoolean("allow_review"),
+            rs.getBoolean("auto_submit"), rs.getTimestamp("created_at").toInstant().toString(),
             rs.getTimestamp("updated_at").toInstant().toString(),
             publishedAt == null ? null : publishedAt.toInstant().toString());
     }
@@ -402,12 +406,13 @@ public class ExamReleaseService {
     public record ExamRequest(@NotBlank @Size(max = 200) String title, @Size(max = 2000) String description,
                               @NotNull OffsetDateTime opensAt, @NotNull OffsetDateTime closesAt,
                               @Positive Integer durationSeconds, @NotNull @Positive Integer attemptLimit,
-                              String targetScope) { }
+                              String targetScope, Boolean autoSubmit, Boolean allowReview) { }
     public record TargetRequest(@NotNull List<@Positive Long> classIds,
                                 @NotNull List<@Positive Long> studentUserIds) { }
     public record ExamSummary(long id, String examTypeCode, long paperId, String paperTitle, String title,
                               String description, String status, String targetScope, String opensAt,
                               String closesAt, Integer durationSeconds, int attemptLimit, boolean hasStudentAttempts,
+                              boolean allowReview, boolean autoSubmit,
                               String createdAt, String updatedAt, String publishedAt) { }
     public record ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds) { }
     public record StudentExamView(long id, String examTypeCode, String title, String description,

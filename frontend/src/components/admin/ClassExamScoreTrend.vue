@@ -15,6 +15,13 @@ const error = ref('')
 const rows = ref([])
 const hoveredPoint = ref(null)
 const scoreMetric = ref('scaled')
+const isShsatOnly = computed(() => props.examTypeCodes.length === 1 && props.examTypeCodes[0] === 'SHSAT')
+const chartSubtitle = computed(() => isShsatOnly.value
+  ? 'Compare class averages for completed SHSAT exams.'
+  : 'Compare class averages for completed SAT and PSAT exams.')
+const scaledScoreHint = computed(() => isShsatOnly.value
+  ? 'Scaled score follows the SHSAT scoring table.'
+  : 'SAT 400–1600 · PSAT 320–1520')
 
 const chart = computed(() => {
   const width = 760
@@ -115,7 +122,7 @@ watch(scoreMetric, () => { hoveredPoint.value = null })
 </script>
 
 <template>
-  <AppCard title="Class Exam Score Trend" subtitle="Compare class averages for completed SAT and PSAT exams.">
+  <AppCard title="Class Exam Score Trend" :subtitle="chartSubtitle">
     <div v-if="loading" class="admin-state">Loading score trend...</div>
     <div v-else-if="error" class="admin-state admin-state--error">
       <p class="error-text">{{ error }}</p>
@@ -128,7 +135,7 @@ watch(scoreMetric, () => { hoveredPoint.value = null })
           <option value="scaled">Scaled score</option>
           <option value="raw">Raw score</option>
         </select>
-        <span>{{ scoreMetric === 'scaled' ? 'SAT 400–1600 · PSAT 320–1520' : 'Raw score is the number of correct answers' }}</span>
+        <span>{{ scoreMetric === 'scaled' ? scaledScoreHint : 'Raw score is the number of correct answers' }}</span>
       </div>
       <div v-if="chart.points.length" class="class-score-chart-wrap">
         <svg

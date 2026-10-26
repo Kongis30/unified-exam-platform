@@ -22,6 +22,7 @@ import {
   savePaperStructure, sealPaper, setPaperArchived, updateExam, updatePaper, updatePaperGroup,
 } from '@/api/platform'
 import { authState } from '@/auth'
+import { studentApi as shsatStudentApi } from '@shsat/admin/services/studentApi'
 
 const props = defineProps({ code: { type: String, required: true } })
 const route = useRoute()
@@ -38,6 +39,11 @@ const practiceHistoryTotal = ref(0)
 const practiceHistoryDeleteTarget = ref(null)
 const deletingPracticeAttemptId = ref(null)
 const studentReviewTasks = ref([])
+const studentAttemptHistory = ref([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const activeHistoryTab = ref(localStorage.getItem('shsat.student-history-tab') || 'history')
+const startingWrongAnswerAttemptId = ref(null)
 const startingReviewTaskId = ref(null)
 const startingPracticePaperId = ref(null)
 const classes = ref([])
@@ -275,9 +281,74 @@ async function loadStudentExams() {
     studentPracticeHistory.value = []
     practiceHistoryTotal.value = 0
   }
-  studentReviewTasks.value = props.code === 'SHSAT'
-    ? await apiRequest('/api/student/wrong-answer-tasks')
-    : []
+  if (props.code === 'SHSAT') {
+    historyLoading.value = true
+    historyError.value = ''
+    try {
+      const [tasks, history] = await Promise.all([
+        apiRequest('/api/student/wrong-answer-tasks'),
+        shsatStudentApi.getAttemptHistory(),
+      ])
+      studentReviewTasks.value = tasks
+      studentAttemptHistory.value = history
+    } catch (requestError) {
+      studentReviewTasks.value = []
+      studentAttemptHistory.value = []
+      historyError.value = requestError.message || 'Unable to load exam history.'
+    } finally {
+      historyLoading.value = false
+    }
+  } else {
+    studentReviewTasks.value = []
+    studentAttemptHistory.value = []
+  }
+}
+
+const shsatFormalHistory = computed(() => studentAttemptHistory.value.filter((item) => !item.practice))
+const shsatWrongAnswerBooks = computed(() => shsatFormalHistory.value.filter((item) => Number(item.reviewCount) > 0))
+const latestWrongAnswerPractice = computed(() => {
+  const latest = new Map()
+  for (const item of studentAttemptHistory.value) {
+    if (item.practice && item.practiceSourceAttemptId && !latest.has(String(item.practiceSourceAttemptId))) {
+      latest.set(String(item.practiceSourceAttemptId), item)
+    }
+  }
+  return latest
+})
+
+function selectStudentHistoryTab(tab) {
+  activeHistoryTab.value = tab
+  localStorage.setItem('shsat.student-history-tab', tab)
+}
+
+function viewShsatAttempt(item) {
+  router.push({ name: 'student-attempt-report', params: { attemptId: item.attemptId },
+    query: { returnTo: '/student/systems/SHSAT', returnLabel: 'Back to SHSAT' } })
+}
+
+function viewShsatWrongAnswers(item) {
+  if (!item.answersVisible || !item.remainingReviewCount) return
+  router.push({ name: 'student-wrong-answer-review', params: { attemptId: item.attemptId },
+    query: { returnTo: '/student/systems/SHSAT' } })
+}
+
+async function practiceShsatWrongAnswers(item) {
+  if (startingWrongAnswerAttemptId.value !== null || !item.answersVisible || !item.remainingReviewCount) return
+  startingWrongAnswerAttemptId.value = item.attemptId
+  try {
+    const attempt = await shsatStudentApi.startWrongAnswerPractice(item.attemptId)
+    router.push({ name: 'shsat-student-exam', params: { examId: item.examId },
+      query: { practiceAttemptId: attempt.attemptId } })
+  } catch (requestError) {
+    historyError.value = requestError.message || 'Unable to start wrong-answer practice.'
+  } finally {
+    startingWrongAnswerAttemptId.value = null
+  }
+}
+
+function viewLatestShsatPractice(item) {
+  const practice = latestWrongAnswerPractice.value.get(String(item.attemptId))
+  if (practice) viewShsatAttempt(practice)
 }
 
 async function changePracticeHistoryPage(page) {
@@ -2068,6 +2139,52 @@ watch(() => props.code, (code) => {
         </article>
         <p v-if="!studentExams.length && !isLoading" class="table-empty">No exams have been assigned to you yet.</p>
       </AppCard>
+      <AppCard v-if="props.code === 'SHSAT'" class="management-card shsat-student-history">
+        <div class="card-heading"><div><span class="eyebrow">YOUR SHSAT RECORDS</span><h2>Exam History</h2><p>Review completed exams, personal wrong answers, and assigned review tasks.</p></div>
+          <button class="secondary-button compact-button" :disabled="historyLoading" @click="loadStudentExams">{{ historyLoading ? 'Refreshing…' : 'Refresh' }}</button>
+        </div>
+        <p v-if="historyError" class="error-text" role="alert">{{ historyError }}</p>
+        <div class="history-tabs" role="tablist" aria-label="SHSAT student history">
+          <button v-for="tab in [
+            { key: 'history', label: 'Exam History' },
+            { key: 'wrong-answers', label: 'Wrong Answer Book', count: shsatWrongAnswerBooks.length },
+            { key: 'review-tasks', label: 'Review Tasks', count: studentReviewTasks.length },
+          ]" :key="tab.key" class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === tab.key }"
+            type="button" role="tab" :aria-selected="activeHistoryTab === tab.key" @click="selectStudentHistoryTab(tab.key)">
+            {{ tab.label }} <span v-if="tab.count" class="history-tab__count">{{ tab.count }}</span>
+          </button>
+        </div>
+        <div v-if="activeHistoryTab === 'history'" class="shsat-history-list">
+          <article v-for="item in shsatFormalHistory" :key="item.attemptId" class="shsat-history-row">
+            <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>Attempt #{{ item.attemptNumber }} · {{ formatExamDate(item.submittedAt || item.startedAt) }}</small></div>
+            <div class="shsat-history-score"><strong>{{ item.scoreVisible ? (item.totalScore ?? '—') : 'Not available yet' }}</strong><small>Raw score</small></div>
+            <AppButton variant="secondary" @click="viewShsatAttempt(item)">View report</AppButton>
+          </article>
+          <p v-if="!shsatFormalHistory.length && !historyLoading" class="table-empty">No completed SHSAT exams yet.</p>
+        </div>
+        <div v-else-if="activeHistoryTab === 'wrong-answers'" class="shsat-history-list">
+          <article v-for="item in shsatWrongAnswerBooks" :key="item.attemptId" class="shsat-history-row">
+            <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>Attempt #{{ item.attemptNumber }} · {{ item.remainingReviewCount }} questions remaining</small></div>
+            <div class="shsat-history-actions">
+              <AppButton variant="secondary" :disabled="!item.answersVisible || !item.remainingReviewCount" @click="viewShsatWrongAnswers(item)">View wrong answers</AppButton>
+              <AppButton variant="primary" :disabled="!item.answersVisible || !item.remainingReviewCount || startingWrongAnswerAttemptId !== null" @click="practiceShsatWrongAnswers(item)">
+                {{ startingWrongAnswerAttemptId === item.attemptId ? 'Starting…' : 'Practice' }}
+              </AppButton>
+              <AppButton variant="ghost" :disabled="!latestWrongAnswerPractice.get(String(item.attemptId))" @click="viewLatestShsatPractice(item)">Latest practice report</AppButton>
+            </div>
+          </article>
+          <p v-if="!shsatWrongAnswerBooks.length && !historyLoading" class="table-empty">No wrong answers are available for review.</p>
+        </div>
+        <div v-else class="shsat-history-list">
+          <article v-for="task in studentReviewTasks" :key="task.assignmentId" class="shsat-history-row">
+            <div class="paper-copy"><strong>{{ task.title }}</strong><small>{{ task.examTitle }} · {{ task.remainingQuestionCount }} questions remaining · {{ task.status.replaceAll('_', ' ') }}</small></div>
+            <AppButton variant="secondary" :disabled="!task.canStart || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
+              {{ startingReviewTaskId === task.assignmentId ? 'Starting…' : task.status === 'IN_PROGRESS' ? 'Continue' : task.status === 'RETRY_REQUIRED' ? 'Try again' : 'Start review' }}
+            </AppButton>
+          </article>
+          <p v-if="!studentReviewTasks.length && !historyLoading" class="table-empty">No review tasks have been assigned.</p>
+        </div>
+      </AppCard>
     </template>
     <div v-if="isLoading" class="loading-state"><span class="loading-rule"></span>Loading…</div>
   </div>
@@ -2083,6 +2200,30 @@ watch(() => props.code, (code) => {
   line-height: 1.55;
 }
 .historical-exam-count { margin-right: 4px; color: var(--color-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.history-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 8px; border-bottom: 1px solid var(--color-border); }
+.history-tab { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; padding: 0 12px; background: transparent; color: var(--color-muted); cursor: pointer; font: inherit; font-weight: 650; }
+.history-tab--active { border-bottom-color: var(--color-primary); color: var(--color-primary-strong); }
+.history-tab__count { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border-radius: 999px; padding: 0 5px; background: #edf3ff; color: var(--color-primary-strong); font-size: 12px; }
+.shsat-history-list { display: grid; }
+.shsat-history-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(110px, auto) auto; align-items: center; gap: 18px; border-bottom: 1px solid var(--color-border); padding: 14px 2px; }
+.shsat-history-row:last-child { border-bottom: 0; }
+.shsat-history-score { display: grid; gap: 3px; text-align: right; font-variant-numeric: tabular-nums; }
+.shsat-history-score strong { color: var(--color-text); font-size: 15px; }
+.shsat-history-score small, .shsat-history-row .paper-copy small { color: var(--color-muted); font-size: 13px; }
+.shsat-history-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+@media (max-width: 760px) { .shsat-history-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } .shsat-history-score { text-align: left; } .shsat-history-actions { justify-content: flex-start; } }
+.history-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 8px; border-bottom: 1px solid var(--color-border); }
+.history-tab { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; padding: 0 12px; background: transparent; color: var(--color-muted); cursor: pointer; font: inherit; font-weight: 650; }
+.history-tab--active { border-bottom-color: var(--color-primary); color: var(--color-primary-strong); }
+.history-tab__count { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border-radius: 999px; padding: 0 5px; background: #edf3ff; color: var(--color-primary-strong); font-size: 12px; }
+.shsat-history-list { display: grid; }
+.shsat-history-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(110px, auto) auto; align-items: center; gap: 18px; border-bottom: 1px solid var(--color-border); padding: 14px 2px; }
+.shsat-history-row:last-child { border-bottom: 0; }
+.shsat-history-score { display: grid; gap: 3px; text-align: right; font-variant-numeric: tabular-nums; }
+.shsat-history-score strong { color: var(--color-text); font-size: 15px; }
+.shsat-history-score small, .shsat-history-row .paper-copy small { color: var(--color-muted); font-size: 13px; }
+.shsat-history-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+@media (max-width: 760px) { .shsat-history-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } .shsat-history-score { text-align: left; } .shsat-history-actions { justify-content: flex-start; } }
 .exam-list-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 9px; margin-top: 12px; color: var(--color-muted); font-size: 13px; }
 .exam-list-pagination > span:first-child { margin-right: auto; }
 .exam-list-pagination label { display: flex; align-items: center; gap: 7px; font-weight: 650; }

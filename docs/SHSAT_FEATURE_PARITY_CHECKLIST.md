@@ -22,14 +22,14 @@
 | 原 `StudentExam` 预览模式 | `/exam-types/SHSAT/admin/papers/:paperId/preview` | 已能加载，题型与导航待验收 |
 | `PaperExportPage` | `/exam-types/SHSAT/admin/papers/:paperId/export` | 已能加载，打印输出待验收 |
 | `ExamMonitorPage` | `/exam-types/SHSAT/admin/exams/:examId/monitor` | 已能加载，实时数据待验收 |
-| `ClassDetailPage` | `/exam-types/SHSAT/admin/classes/:classId` | 已能加载，见视觉问题 V1 |
+| `ClassDetailPage` | `/exam-types/SHSAT/admin/classes/:classId` | 可加载；V1 已修复，详见第 8 节 |
 | `ClassExamResultsPage` | `/exam-types/SHSAT/admin/classes/:classId/exams/:examId/results` | 已能加载，统计待验收 |
 | `StudentDetailPage` | `/exam-types/SHSAT/admin/classes/:classId/students/:studentId` | 已能加载，趋势/历史待验收 |
 | `WrongAnswerTaskPage` | `/exam-types/SHSAT/admin/classes/:classId/exams/:examId/wrong-answer-tasks/:taskId` | 已能加载，任务记录待验收 |
-| `StudentHome` | `/student/systems/SHSAT` | **功能未对齐**，见 G1/G2 |
+| `StudentHome` | `/student/systems/SHSAT` | 已补 History 三标签；核心列表与练习链路开始实测，详见第 8 节 |
 | `StudentExam` | `/student/shsat/exams/:examId`；管理员兼容入口 `/student/exams/:examId` | 入场页已能加载，完整作答待验收 |
-| `StudentAttemptReport` | `/student/attempts/:attemptId/report` | 迁移报告可加载，见视觉问题 V2 |
-| `WrongAnswerReviewPage` | 无对应路由/页面 | **缺失 G2** |
+| `StudentAttemptReport` | `/student/attempts/:attemptId/report` | 可加载；V2 已修复，详见第 8 节 |
+| `WrongAnswerReviewPage` | `/student/attempts/:attemptId/wrong-answers` | 已迁入页面和路由；真实学生错题复习页已渲染 |
 
 ## 1. 统一入口与 SHSAT 首页
 
@@ -38,11 +38,11 @@
 - [ ] 管理员首页 Available Exams：刷新、折叠/展开及刷新后记忆；卡片只展示开放期内可进入的考试，显示时间、试卷、时长、状态；`Start Exam` 进入考试、退出返回原处；空状态正确。
 - [ ] 管理员首页 Assigned Review：刷新、折叠/记忆、任务卡片 `View Progress`、返回原标签位置；任务人数、完成数与详情一致。
 - [ ] 管理标签：`Paper Management`、`Exam Release`、`Review Assignments`、`Classes` 切换后滚动位置稳定，路由返回时恢复标签/筛选；教师只见获授权操作。
-- [!] **G1 学生工作区缺少独立版 `StudentHome` 的 History 三标签。** 独立版有 `Exam History`、`Wrong Answer Book`、`Review Tasks`，含刷新、详情/报告及进度；统一版当前仅有 `Your exams` 和条件显示的 review assignment 列表。应逐项恢复历史可达性与相关操作。
+- [x] **G1 History 三标签已补齐。** 桌面/窄屏空状态截图及含真实临时尝试的历史数据已验证；刷新、报告入口、标签过滤尚需继续逐按钮验收（证据见第 8 节）。
 - [ ] 学生 Available Exams：刷新/错误重试、按考试窗口和名额呈现 Upcoming/Available/In progress/Completed/Ended；`Start/Continue/View attempt` 分别正确进入、续考、看报告；无资格考试不泄露。
 - [ ] 学生 Assigned Review：待开始、进行中、需重做、完成、截止状态；`Start review`/`Continue`/`Try again`/`View report`、剩余题量和截止时间正确。
 - [ ] 学生 Exam History：按时间排序、刷新、`View Details`/`View Report`、重考多次记录、只有本人记录可见；返回后保留列表位置。
-- [!] **G2 错题本链路缺失。** 独立版 `Wrong Answer Book` 卡片含 `View Wrong Answers`、`Practice Wrong Answers`、`View Latest Practice Report`，专用 `WrongAnswerReviewPage` 有题号跳转、上一题/下一题、图片放大和返回。统一版路由及学生考试控制器当前未见独立版的历史/错题练习端点，需要按源行为补齐并验证与“教师布置的错题任务”互不混淆。
+- [x] **G2 个人错题本核心链路已补齐并通过真实数据烟测。** 检查清单中仍需逐项验收的题号导航、上一题/下一题、图片放大、最近练习报告及与教师任务隔离。
 
 ## 2. Paper Management：每组与每卷
 
@@ -85,7 +85,7 @@
 - [ ] Classes 首页：搜索、`Create Class`、刷新、卡片打开、空班删除、拖动顺序持久化；同一学生可加入多个班级；班级能接收 SHSAT 或 SAT 场次。
 - [ ] Unassigned Students：刷新/折叠、最多 800px 内滚动、表头全选/逐项多选、`Assign selected`、班级选择、取消/提交；已在其他班的学生不应被误标“未分配”。
 - [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。
-- [ ] `Class Exam Score Trend`：SHSAT 的 raw/scaled 单位、纵轴范围、空状态、考试点悬浮信息、跨 SAT/SHSAT 班级时的筛选与归属。**不得出现 SAT/PSAT 文案或范围提示。**
+- [x] `Class Exam Score Trend`：复核 SHSAT 文案、raw/scaled 提示和无数据状态；桌面截图确认没有 SAT/PSAT 范围提示。仍需用带 SHSAT 折算分/考试点的数据验证曲线与悬浮内容。
 - [ ] 班级考试成绩页：Back、Monitor、Retry、总分/ELA/Math/正确率/提交时间排序、学生 View；无成绩/未开始/进行中/已完成统计与实际尝试一致，表头和数据逐列对齐。
 - [ ] 学生详情页：Back/Refresh/Retry、总尝试/完成/平均/最高、Score Trend 的 Raw/Scaled 切换和点悬浮信息、Score History 原始分与折算分排序、`View Report`；重复考试按每次尝试显示，源记录缺少赋分表时显示 `—` 而非伪造分数。
 
@@ -116,19 +116,30 @@
 
 | 截图 | 页面/状态 | 目视结论 |
 |---|---|---|
-| `01-login.png`、`15-student-workspace.png` | 登录、学生空工作区 | 可加载；学生页大面积空白，缺 History/错题本 G1/G2 |
+| `01-login.png`、`15-student-workspace.png` | 登录、学生空工作区 | 首轮基线；之后已补 History/错题入口，见 `18`–`20` |
 | `02-admin-papers.png`、`03-exam-release.png` | 管理首页、Paper、Release/History | 页面可读；Available/Assigned Review 在少量卡片时留白偏多；过期记录显示 Unpublished |
 | `04-review-assignments.png`、`16-review-task-progress.png` | 任务列表、进度 | 可加载；任务表信息过密、时间/数字/状态字号和列宽需再调；进度页时间仍是 AM/PM，与 24 小时规范不一致 |
-| `05-classes.png`、`06-class-detail.png` | 班级首页、班级详情 | 可加载；班级详情趋势出现 **SAT/PSAT** 文案和范围控件，见 V1 |
+| `05-classes.png`、`06-class-detail.png` | 班级首页、班级详情 | `06-class-detail.png` 已重拍；SHSAT 文案与赋分提示已正确 |
 | `07-class-results.png`、`08-student-detail.png` | 班级结果、学生详情 | 可加载；成绩表有排序入口；趋势需拿有 SHSAT 折算分样本复核 |
-| `09-report.png` | 已有 SHSAT 尝试报告 | ELA/Math raw、技能明细可见；页头空方框图标，见 V2；打印尚未验证 |
+| `09-report.png` | 已有 SHSAT 尝试报告 | 已重拍；ELA/Math raw、技能明细与刷新图标可见；打印尚未验证 |
 | `10-paper-editor.png`、`11-paper-preview.png`、`12-paper-export.png` | 编辑、预览、导出 | 可加载；抽样的 `Official SHSAT Label Template` 有题目无题干、导出提示缺标签，须查源数据是否本来如此；实际打印待验收 |
 | `13-monitor.png`、`17-student-exam-route.png` | 结束考试 Monitor、考试入场说明 | 可加载；历史场次平均用时只有孤立柱，需核对数据语义；考试未真实作答 |
 | `14-admin-mobile.png` | 390px 管理首页首屏 | 首屏未见横向溢出；其它页面窄屏截图未完成 |
 
-- [!] **V1**：`ClassDetailPage.vue` 的 Class Exam Score Trend 显示 “completed SAT and PSAT exams”、“SAT 400–1600 · PSAT 320–1520”。这是 SHSAT 班级页明显的跨模块残留，应按 SHSAT 计分规则设计文案与范围。
-- [!] **V2**：`StudentAttemptReportPage.vue` 的报告页头有空方框图标（截图 `09-report.png`），需定位字符/图标资源并检查打印模式是否同样出现。
-- [ ] 将全部剩余弹窗、菜单、题型实际作答、报告完整页和窄屏状态补齐截图；与独立版相同状态并排比较，修复后重拍。首轮只截了实际可达的代表页面，不能据此判定整套 UI 达标。
+- [x] **V1 已修复并截图确认**：SHSAT 班级趋势文案改为 SHSAT 专属说明，折算分提示采用 SHSAT 赋分表表述；截图 `06-class-detail.png`。
+- [x] **V2 已修复并截图确认**：报告刷新按钮现在显示圆形刷新图标；重拍 `09-report.png` 已目视通过。打印模式仍待验收。
+- [ ] 将全部剩余弹窗、菜单、题型实际作答、报告完整页和窄屏状态补齐截图；与独立版相同状态并排比较，修复后重拍。当前只截了代表页面，不能据此判定整套 UI 达标。
+
+
+### 第二轮真实业务验证（2026-10-26）
+
+- [x] 修复真实烟测发现的创建考试 500：创建后详情查询遗漏 `allow_review`、`auto_submit`，现已补入详情 SQL，并增加 `ExamReleaseServiceTest.examDetailsReadReviewSettingsAfterCreation` 回归测试。
+- [x] 后端单元/集成测试套件通过，前端 Vite production build 通过；构建仅有已有的大型分包提示。`git diff --check` 通过。
+- [x] 学生个人错题端到端：临时学生登录、临时 SHSAT 考试创建/发布、正式提交、考试结束后答案开放、历史记录显示、个人练习只纳入错/空题、答对一题后从错题本清除、个人练习报告记录可见、错题页面无浏览器异常；115 道初始待复习降至 114，临时考试与账户已删除。截图 `20-wrong-answer-review.png`。
+- [x] 教师登录烟测：可访问 SHSAT 班级/试卷/考试列表，可创建并编辑班级；统一账号目录返回 403，符合管理员权限边界；硬删除班级仅管理员允许，测试班级由管理员清理。
+- [x] 桌面截图目视：`06-class-detail.png` 的 SHSAT 趋势文案正确；`09-report.png` 刷新控件正常；`20-wrong-answer-review.png` 问题列表、答案状态、题目材料和返回操作可读。
+- [ ] 学生完整考试的真实浏览器全流程、两种 section 起始顺序、刷新续考、section/整卷提交确认仍待完成。浏览器已进入正式题目，验证了无平台导航及答案保存后刷新恢复；API 级正式交卷和个人练习已过。浏览器自动化需模拟全屏，且尚未稳定完成整卷提交，因此不能算完整流程通过。
+- [ ] 12 种题型逐题闭环、管理员各页每个 CRUD/菜单动作、更多教师权限、报告 PDF 实际打印、移动端关键页面、图表有真实分数数据，以及与独立版逐页并排核对尚未完成。
 
 ## 9. 建议执行顺序与完成门槛
 

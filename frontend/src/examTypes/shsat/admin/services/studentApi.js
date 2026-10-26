@@ -155,5 +155,14 @@ export const studentApi = {
   async getAttemptResult(attemptId) {
     return apiRequest(`/api/student/attempts/${attemptId}/report`);
   },
+  async getAttemptHistory() {
+    return apiRequest('/api/student/attempts/history');
+  },
+  async getWrongAnswerQuestionNumbers(attemptId) {
+    return apiRequest(`/api/student/attempts/${attemptId}/wrong-answer-question-numbers`);
+  },
+  async startWrongAnswerPractice(attemptId) {
+    return mapAttempt(await apiRequest(`/api/student/attempts/${attemptId}/wrong-answers/practice`, { method: 'POST' }));
+  },
   async getPaperDetail() { throw new Error('This exam paper is unavailable. Please contact your teacher.'); },
 };

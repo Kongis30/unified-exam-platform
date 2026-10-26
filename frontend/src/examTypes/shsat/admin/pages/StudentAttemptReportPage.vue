@@ -1512,6 +1512,31 @@ onMounted(loadReport);
   gap: 12px;
 }
 
+.icon-refresh-button {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cfe0ff;
+  border-radius: 50%;
+  color: var(--color-primary-strong);
+  background: var(--color-primary-soft);
+  cursor: pointer;
+}
+
+.icon-refresh-button__icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+
+.icon-refresh-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .attempt-report__eyebrow {
   display: flex;
   align-items: center;

@@ -13,6 +13,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -33,6 +34,25 @@ class ExamReleaseServiceTest {
 
         verify(jdbc).query(argThat(sql -> sql.contains("AS has_student_attempts")
                 && sql.contains("a.is_practice = FALSE")), any(RowMapper.class), eq("SAT"));
+    }
+
+    @Test
+    void examDetailsReadReviewSettingsAfterCreation() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(41L, "SHSAT", 12L,
+            "Practice Paper", "Saturday Test", null, "DRAFT", "SELECTED", "2026-10-24T09:00:00Z",
+            "2026-10-24T12:00:00Z", 7200, 1, false, true, true,
+            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z", null);
+        when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
+            invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
+
+        ExamReleaseService.ExamDetail detail = service.get(41L);
+
+        assertTrue(detail.summary().allowReview());
+        assertTrue(detail.summary().autoSubmit());
+        verify(jdbc).query(argThat(sql -> sql.contains("e.allow_review") && sql.contains("e.auto_submit")),
+            any(RowMapper.class), eq(41L));
     }
 
     @Test
@@ -84,7 +104,8 @@ class ExamReleaseServiceTest {
         ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
         ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(41L, "SAT", 12L,
             "Practice Paper", "Saturday Test", null, "CLOSED", "SELECTED", "2026-10-24T09:00:00Z",
-            "2026-10-24T12:00:00Z", 7200, 1, false, "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z",
+            "2026-10-24T12:00:00Z", 7200, 1, false, false, true,
+            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z",
             "2026-10-20T09:00:00Z");
 
         when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(41L))).thenReturn(false);

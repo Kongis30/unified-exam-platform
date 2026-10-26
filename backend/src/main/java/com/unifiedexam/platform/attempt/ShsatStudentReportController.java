@@ -20,6 +20,11 @@ public class ShsatStudentReportController {
         this.reportService = reportService;
     }
 
+    @GetMapping("/history")
+    public java.util.List<Map<String, Object>> history(Authentication authentication) {
+        return reportService.studentOwnAttemptHistory(authentication.getName());
+    }
+
     @GetMapping("/{attemptId}/report")
     public Map<String, Object> report(@PathVariable long attemptId, Authentication authentication) {
         return reportService.studentAttemptResult(attemptId, authentication.getName());

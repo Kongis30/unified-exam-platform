@@ -37,6 +37,18 @@ public class StudentAttemptController {
         return attemptService.get(attemptId, authentication.getName());
     }
 
+    @PostMapping("/attempts/{attemptId}/wrong-answers/practice")
+    public StudentAttemptService.AttemptView startWrongAnswerPractice(@PathVariable long attemptId,
+            Authentication authentication) {
+        return attemptService.startWrongAnswerPractice(attemptId, authentication.getName());
+    }
+
+    @GetMapping("/attempts/{attemptId}/wrong-answer-question-numbers")
+    public java.util.List<Integer> wrongAnswerQuestionNumbers(@PathVariable long attemptId,
+            Authentication authentication) {
+        return attemptService.wrongAnswerQuestionNumbers(attemptId, authentication.getName());
+    }
+
     @PostMapping("/attempts/{attemptId}/sections/submit")
     public StudentAttemptService.AttemptView submitSection(@PathVariable long attemptId, Authentication authentication) {
         return attemptService.submitSection(attemptId, authentication.getName());

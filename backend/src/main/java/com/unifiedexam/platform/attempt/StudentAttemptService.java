@@ -56,6 +56,89 @@ public class StudentAttemptService {
         return start(examId, null, username, true, false);
     }
 
+    /** 仅为本人可查看答案的 SHSAT 正式尝试建立个人错题练习，不复用教师任务记录。 */
+    @Transactional
+    public AttemptView startWrongAnswerPractice(long sourceAttemptId, String username) {
+        Account student = account(username);
+        if (!"STUDENT".equals(student.roleCode())) throw notFound("Attempt not found.");
+        AttemptState source = lockOwnedAttempt(sourceAttemptId, student.id());
+        if (!"SHSAT".equals(source.examTypeCode()) || source.practice()
+                || !List.of("SUBMITTED", "COMPLETED", "EXPIRED").contains(source.status())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A completed SHSAT exam is required.");
+        }
+        requireStudentAnswersVisible(sourceAttemptId);
+
+        Long openPracticeId = jdbcTemplate.query("""
+            SELECT id FROM attempts WHERE shsat_self_practice_source_attempt_id = ? AND student_user_id = ?
+              AND status = 'IN_PROGRESS' ORDER BY started_at DESC, id DESC LIMIT 1
+            """, rs -> rs.next() ? rs.getLong(1) : null, sourceAttemptId, student.id());
+        if (openPracticeId != null) return getOwnedAttempt(openPracticeId, student.id());
+
+        List<SelfPracticeQuestion> questions = findRemainingWrongQuestions(sourceAttemptId, student.id());
+        if (questions.isEmpty()) throw new ResponseStatusException(HttpStatus.CONFLICT, "There are no wrong answers left to practice.");
+        List<Integer> numbers = questions.stream().map(SelfPracticeQuestion::displayNumber).toList();
+        Integer attemptNo = jdbcTemplate.queryForObject(
+            "SELECT COALESCE(MAX(attempt_no), 0) + 1 FROM attempts WHERE exam_id = ? AND student_user_id = ?",
+            Integer.class, source.examId(), student.id());
+        jdbcTemplate.update("""
+            INSERT INTO attempts (exam_id, student_user_id, attempt_no, is_practice,
+                shsat_self_practice_source_attempt_id, shsat_self_practice_questions_json, expires_at)
+            SELECT e.id, ?, ?, TRUE, ?, CAST(? AS JSON),
+                   CASE WHEN COALESCE(e.duration_seconds, p.default_duration_seconds) IS NULL THEN NULL
+                        ELSE DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL COALESCE(e.duration_seconds, p.default_duration_seconds) SECOND) END
+            FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ?
+            """, student.id(), attemptNo, sourceAttemptId, json(objectMapper.valueToTree(numbers)), source.examId());
+        Long practiceId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        List<Object> parameters = new ArrayList<>();
+        parameters.add(practiceId);
+        questions.forEach(question -> parameters.add(question.paperItemId()));
+        String placeholders = String.join(",", java.util.Collections.nCopies(questions.size(), "?"));
+        jdbcTemplate.update("""
+            INSERT INTO attempt_items (attempt_id, paper_item_id, served_order)
+            SELECT ?, pi.id, ROW_NUMBER() OVER (ORDER BY pi.display_number, pi.id)
+            FROM paper_items pi WHERE pi.id IN (""" + placeholders + ")", parameters.toArray());
+        initializeShsatAttemptState(practiceId, null);
+        return getOwnedAttempt(practiceId, student.id());
+    }
+
+    /** 返回当前仍需复习的错题编号；没有本人权限或答案尚未开放时不暴露题目数据。 */
+    @Transactional(readOnly = true)
+    public List<Integer> wrongAnswerQuestionNumbers(long sourceAttemptId, String username) {
+        Account student = account(username);
+        if (!"STUDENT".equals(student.roleCode())) throw notFound("Attempt not found.");
+        AttemptState source = ownedAttemptState(sourceAttemptId, student.id());
+        if (!"SHSAT".equals(source.examTypeCode()) || source.practice()
+                || !List.of("SUBMITTED", "COMPLETED", "EXPIRED").contains(source.status())) {
+            throw notFound("Attempt not found.");
+        }
+        requireStudentAnswersVisible(sourceAttemptId);
+        return findRemainingWrongQuestions(sourceAttemptId, student.id()).stream()
+            .map(SelfPracticeQuestion::displayNumber).toList();
+    }
+
+    private void requireStudentAnswersVisible(long attemptId) {
+        Boolean visible = jdbcTemplate.queryForObject("""
+            SELECT e.allow_review AND (e.answer_visibility = 'AFTER_SUBMIT'
+                OR (e.answer_visibility = 'AFTER_CLOSE' AND e.closes_at <= CURRENT_TIMESTAMP(6)))
+            FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE a.id = ?
+            """, Boolean.class, attemptId);
+        if (!Boolean.TRUE.equals(visible)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Answers are not available for this exam yet.");
+    }
+
+    private List<SelfPracticeQuestion> findRemainingWrongQuestions(long sourceAttemptId, long studentId) {
+        return jdbcTemplate.query("""
+            SELECT pi.id, pi.display_number
+            FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+            LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
+            WHERE ai.attempt_id = ? AND (aa.paper_item_id IS NULL OR aa.is_correct = FALSE)
+              AND NOT EXISTS (SELECT 1 FROM shsat_self_practice_cleared_questions cleared
+                  WHERE cleared.source_attempt_id = ai.attempt_id AND cleared.student_user_id = ?
+                    AND cleared.paper_item_id = pi.id)
+            ORDER BY pi.display_number, pi.id
+            """, (rs, rowNum) -> new SelfPracticeQuestion(rs.getLong("id"), rs.getInt("display_number")),
+            sourceAttemptId, studentId);
+    }
+
     private AttemptView start(long examId, String firstSection, String username, boolean requestedPractice,
                               boolean expiredAttemptWasSubmitted) {
         Account account = account(username);
@@ -472,7 +555,19 @@ public class StudentAttemptService {
         persistResultBreakdowns(attemptId, sections, resultBreakdowns);
         jdbcTemplate.update("UPDATE attempts SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP(6) WHERE id = ?", attemptId);
         updateWrongAnswerAssignmentStatus(attemptId);
+        clearCorrectSelfPracticeQuestions(attemptId, studentId);
         return getOwnedAttempt(attemptId, studentId);
+    }
+
+    private void clearCorrectSelfPracticeQuestions(long attemptId, long studentId) {
+        jdbcTemplate.update("""
+            INSERT IGNORE INTO shsat_self_practice_cleared_questions
+                (source_attempt_id, student_user_id, paper_item_id)
+            SELECT practice.shsat_self_practice_source_attempt_id, practice.student_user_id, answer.paper_item_id
+            FROM attempts practice JOIN attempt_answers answer ON answer.attempt_id = practice.id
+            WHERE practice.id = ? AND practice.shsat_self_practice_source_attempt_id IS NOT NULL
+              AND practice.student_user_id = ? AND answer.is_correct = TRUE
+            """, attemptId, studentId);
     }
 
     private void updateWrongAnswerAssignmentStatus(long attemptId) {
@@ -571,11 +666,23 @@ public class StudentAttemptService {
 
     private AttemptState lockOwnedAttempt(long attemptId, long studentId) {
         AttemptState state = jdbcTemplate.query("""
-            SELECT a.status, a.is_practice, p.exam_type_code, p.id AS paper_id FROM attempts a
+            SELECT a.status, a.is_practice, a.exam_id, p.exam_type_code, p.id AS paper_id FROM attempts a
             JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             WHERE a.id = ? AND a.student_user_id = ? FOR UPDATE
             """, rs -> rs.next() ? new AttemptState(rs.getString("status"), rs.getBoolean("is_practice"),
-                rs.getString("exam_type_code"), rs.getLong("paper_id")) : null,
+                rs.getLong("exam_id"), rs.getString("exam_type_code"), rs.getLong("paper_id")) : null,
+            attemptId, studentId);
+        if (state == null) throw notFound("Attempt not found.");
+        return state;
+    }
+
+    private AttemptState ownedAttemptState(long attemptId, long studentId) {
+        AttemptState state = jdbcTemplate.query("""
+            SELECT a.status, a.is_practice, a.exam_id, p.exam_type_code, p.id AS paper_id FROM attempts a
+            JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
+            WHERE a.id = ? AND a.student_user_id = ?
+            """, rs -> rs.next() ? new AttemptState(rs.getString("status"), rs.getBoolean("is_practice"),
+                rs.getLong("exam_id"), rs.getString("exam_type_code"), rs.getLong("paper_id")) : null,
             attemptId, studentId);
         if (state == null) throw notFound("Attempt not found.");
         return state;
@@ -780,7 +887,8 @@ public class StudentAttemptService {
     private record Account(long id, String roleCode) { }
     private record ExamRow(long id, long paperId, Integer durationSeconds, Integer paperDefaultSeconds,
                            int attemptLimit, String examTypeCode, boolean satPractice) { }
-    private record AttemptState(String status, boolean practice, String examTypeCode, long paperId) { }
+    private record AttemptState(String status, boolean practice, long examId, String examTypeCode, long paperId) { }
+    private record SelfPracticeQuestion(long paperItemId, int displayNumber) { }
     private record OwnedAttemptSummary(AttemptView view, boolean allowReview, JsonNode progressState) { }
     private record GradingRow(long paperItemId, long sectionId, String questionTypeCode, JsonNode answerKey,
                               JsonNode render, JsonNode grading, BigDecimal maxPoints, JsonNode answer,

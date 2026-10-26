@@ -109,9 +109,66 @@ public class ShsatAdminReportService {
             """, (rs, rowNum) -> historyRow(rs), studentId);
     }
 
+    /** 学生工作区仅返回本人 SHSAT 已结束尝试，并按发布策略标注成绩与答案可见性。 */
+    public List<Map<String, Object>> studentOwnAttemptHistory(String username) {
+        return jdbcTemplate.query("""
+            SELECT a.id, a.exam_id, a.attempt_no, a.status, a.is_practice, a.started_at, a.submitted_at,
+                   a.shsat_self_practice_source_attempt_id, e.title AS exam_title, e.answer_visibility,
+                   e.score_visibility, e.allow_review, e.closes_at <= CURRENT_TIMESTAMP(6) AS exam_closed,
+                   p.id AS paper_id, p.title AS paper_name, r.total_points, COALESCE(r.ungraded_count, 0) AS ungraded_count,
+                   (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
+                   (SELECT COUNT(*) FROM shsat_self_practice_cleared_questions cleared
+                    WHERE cleared.source_attempt_id = a.id AND cleared.student_user_id = a.student_user_id) AS cleared_count
+            FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
+            JOIN users u ON u.id = a.student_user_id LEFT JOIN attempt_results r ON r.attempt_id = a.id
+            WHERE u.username = ? AND u.role_code = 'STUDENT' AND p.exam_type_code = 'SHSAT'
+              AND a.status IN ('SUBMITTED', 'COMPLETED', 'EXPIRED')
+            ORDER BY COALESCE(a.submitted_at, a.started_at) DESC, a.id DESC
+            """, (rs, rowNum) -> {
+                long questionCount = rs.getLong("question_count");
+                long answered = rs.getLong("answered_count");
+                long reviewCount = rs.getLong("wrong_count") + Math.max(0, questionCount - answered);
+                boolean practice = rs.getBoolean("is_practice");
+                boolean submitted = "SUBMITTED".equals(rs.getString("status"))
+                    || "COMPLETED".equals(rs.getString("status")) || "EXPIRED".equals(rs.getString("status"));
+                boolean scoreVisible = practice || (rs.getInt("ungraded_count") == 0
+                    && ReportVisibilityPolicy.isVisible(rs.getString("score_visibility"), submitted, rs.getBoolean("exam_closed")));
+                boolean answersVisible = practice || (rs.getBoolean("allow_review")
+                    && ReportVisibilityPolicy.isVisible(rs.getString("answer_visibility"), submitted, rs.getBoolean("exam_closed")));
+                long cleared = practice ? 0 : rs.getLong("cleared_count");
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("attemptId", rs.getLong("id"));
+                row.put("examId", rs.getLong("exam_id"));
+                row.put("examTitle", rs.getString("exam_title"));
+                row.put("paperId", rs.getLong("paper_id"));
+                row.put("paperName", rs.getString("paper_name"));
+                row.put("attemptNumber", rs.getInt("attempt_no"));
+                row.put("status", reportStatus(rs.getString("status")));
+                row.put("practice", practice);
+                row.put("practiceSourceAttemptId", nullableLong(rs, "shsat_self_practice_source_attempt_id"));
+                row.put("scoreVisible", scoreVisible);
+                row.put("answersVisible", answersVisible);
+                row.put("totalScore", scoreVisible ? rs.getBigDecimal("total_points") : null);
+                row.put("rawTotalScore", scoreVisible ? rs.getBigDecimal("total_points") : null);
+                row.put("correctCount", rs.getLong("correct_count"));
+                row.put("wrongCount", rs.getLong("wrong_count"));
+                row.put("unansweredCount", Math.max(0, questionCount - answered));
+                row.put("reviewCount", practice ? 0 : reviewCount);
+                row.put("clearedReviewCount", cleared);
+                row.put("remainingReviewCount", Math.max(0, reviewCount - cleared));
+                row.put("accuracy", scoreVisible ? percent(rs.getLong("correct_count"), answered) : null);
+                row.put("startedAt", local(rs.getTimestamp("started_at")));
+                row.put("submittedAt", local(rs.getTimestamp("submitted_at")));
+                return row;
+            }, username);
+    }
+
     public Map<String, Object> attemptResult(long attemptId) {
         Map<String, Object> report = jdbcTemplate.query("""
-            SELECT a.id, a.exam_id, a.student_user_id, a.attempt_no, a.status, a.started_at, a.submitted_at,
+            SELECT a.id, a.exam_id, a.student_user_id, a.attempt_no, a.status, a.is_practice, a.started_at, a.submitted_at,
                    e.title AS exam_title, e.answer_visibility, e.score_visibility, p.id AS paper_id, p.title AS paper_name,
                    u.real_name, r.total_points, r.max_points, r.is_estimated, r.scoring_profile_id,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
@@ -134,6 +191,7 @@ public class ShsatAdminReportService {
                 row.put("paperName", rs.getString("paper_name"));
                 row.put("studentName", rs.getString("real_name"));
                 row.put("attemptNumber", rs.getInt("attempt_no"));
+                row.put("practice", rs.getBoolean("is_practice"));
                 row.put("status", reportStatus(rs.getString("status")));
                 row.put("scoreVisible", true);
                 row.put("answersVisible", true);
@@ -162,24 +220,24 @@ public class ShsatAdminReportService {
     /** 学生报告复用管理报告的展示结构，但先验证本人归属并按可见策略清除答案与成绩字段。 */
     public Map<String, Object> studentAttemptResult(long attemptId, String username) {
         StudentReportAccess access = jdbcTemplate.query("""
-            SELECT a.status, e.answer_visibility, e.score_visibility, e.allow_review,
+            SELECT a.status, a.is_practice, e.answer_visibility, e.score_visibility, e.allow_review,
                    e.closes_at <= CURRENT_TIMESTAMP(6) AS exam_closed,
                    COALESCE(r.ungraded_count, 0) AS ungraded_count
             FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             JOIN users u ON u.id = a.student_user_id LEFT JOIN attempt_results r ON r.attempt_id = a.id
-            WHERE a.id = ? AND u.username = ? AND p.exam_type_code = 'SHSAT'
-            """, rs -> rs.next() ? new StudentReportAccess(rs.getString("status"),
+            WHERE a.id = ? AND u.username = ? AND u.role_code = 'STUDENT' AND p.exam_type_code = 'SHSAT'
+            """, rs -> rs.next() ? new StudentReportAccess(rs.getString("status"), rs.getBoolean("is_practice"),
                 rs.getString("answer_visibility"), rs.getString("score_visibility"), rs.getBoolean("allow_review"),
                 rs.getBoolean("exam_closed"), rs.getInt("ungraded_count")) : null, attemptId, username);
         if (access == null) throw notFound("Attempt report not found.");
-        if (!"SUBMITTED".equals(access.status())) {
+        if (!List.of("SUBMITTED", "COMPLETED", "EXPIRED").contains(access.status())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "The exam report is not ready yet.");
         }
 
-        boolean scoreVisible = access.ungradedCount() == 0
-            && ReportVisibilityPolicy.isVisible(access.scoreVisibility(), true, access.examClosed());
-        boolean answersVisible = access.allowReview()
-            && ReportVisibilityPolicy.isVisible(access.answerVisibility(), true, access.examClosed());
+        boolean scoreVisible = access.practice() || (access.ungradedCount() == 0
+            && ReportVisibilityPolicy.isVisible(access.scoreVisibility(), true, access.examClosed()));
+        boolean answersVisible = access.practice() || (access.allowReview()
+            && ReportVisibilityPolicy.isVisible(access.answerVisibility(), true, access.examClosed()));
         Map<String, Object> report = attemptResult(attemptId);
         report.put("scoreVisible", scoreVisible);
         report.put("answersVisible", answersVisible);
@@ -487,6 +545,6 @@ public class ShsatAdminReportService {
         }
     }
 
-    private record StudentReportAccess(String status, String answerVisibility, String scoreVisibility,
+    private record StudentReportAccess(String status, boolean practice, String answerVisibility, String scoreVisibility,
                                        boolean allowReview, boolean examClosed, int ungradedCount) { }
 }
