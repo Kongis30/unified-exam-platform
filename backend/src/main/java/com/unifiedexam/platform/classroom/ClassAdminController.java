@@ -114,20 +114,20 @@ public class ClassAdminController {
                    e.duration_seconds, e.attempt_limit, p.title AS paper_name,
                    COALESCE((SELECT JSON_ARRAYAGG(tc.class_id) FROM exam_target_classes tc WHERE tc.exam_id = e.id), JSON_ARRAY()) AS target_class_ids
             FROM exams e JOIN papers p ON p.id = e.paper_id
-            WHERE p.exam_type_code IN (%s) AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
-                SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = ?
-            ) OR EXISTS (
-                SELECT 1 FROM exam_target_students ts
-                JOIN class_memberships cm ON cm.student_user_id = ts.student_user_id
-                WHERE ts.exam_id = e.id AND cm.class_id = ? AND cm.left_at IS NULL
-            )) AND NOT EXISTS (
+            WHERE p.exam_type_code IN (%s) AND EXISTS (
+                SELECT 1 FROM attempts a
+                JOIN class_memberships cm ON cm.student_user_id = a.student_user_id
+                WHERE a.exam_id = e.id AND a.is_practice = FALSE AND cm.class_id = ?
+                  AND cm.joined_at <= a.started_at
+                  AND (cm.left_at IS NULL OR a.started_at <= cm.left_at)
+            ) AND NOT EXISTS (
                 SELECT 1 FROM sat_exam_settings ses
                 WHERE ses.exam_id = e.id AND ses.is_practice_archive = TRUE
             )
             ORDER BY e.created_at DESC, e.id DESC
             """.formatted(typePlaceholders);
         Object[] parameters = Stream.concat(Stream.of((Object) classId),
-            Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId, classId))).toArray();
+            Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId))).toArray();
         return jdbcTemplate.query(sql, (rs, rowNum) -> new ClassExamView(rs.getLong("id"), rs.getString("title"),
                 rs.getString("paper_name"), rs.getString("target_type"), rs.getString("target_class_ids"),
                 "PUBLISHED".equals(rs.getString("status")), rs.getString("status"),

@@ -132,7 +132,8 @@
 - [x] 学生多班归属隔离烟测：将临时学生同时加入两个班级，从其中一个班移除后，另一个班仍保留其成员关系；随后删除临时班级和账号，均成功且无遗留。
 - [ ] Unassigned Students：刷新/折叠、最多 800px 内滚动、表头全选/逐项多选、`Assign selected`、班级选择、取消/提交；已在其他班的学生不应被误标“未分配”。
 - [x] Unassigned Students 数据筛选回归：只显示当前没有任何有效班级归属的学生账户；已分配到其它班的测试账户不会进入未分配列表。测试账户和班级已清理，截图 `133-unassigned-students-filtered.png`。
-- [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Delete`、批量 `Add student` 搜索与已属班级标注、多选加入；不得误删统一账号而只应移除本班归属（具体删除语义需与当前按钮文案核对）。
+- [ ] 班级详情：Back、`Edit Class`、Refresh、字段校验、保存反馈；班级考试搜索/排序/分页、`View Results`/`Monitor`；学生表 `View`/`Edit`/`Remove`、批量 `Add Students` 搜索与已属班级标注、多选加入；不得误删统一账号而只移除本班归属。
+- [x] **Class Exams 参与记录筛选回归（2026-10-27）**：发现空班级因查询仅按 `ALL_STUDENTS` 发布范围加载考试，错误显示 6 场与本班无关的考试。现改为只列该学生在本班有效归属期间实际开始的正式考试，沿用独立版“participated exams”语义。临时空班级 UI/API 显示 0 场；有 18 名学生、4 场实际考试的 SHSAT 班级仍列出 4 场，和班级统计一致。截图 `/tmp/shsat-class-bulk-add-result-20261027.png`；控制器测试通过。班级考试筛选、排序、分页及结果/监考入口仍待测。
 - [x] 班级详情批量添加学生回归：将入口明确为 `Add Students`；弹窗提供搜索表格、多选、全选当前结果，并显示学生姓名、用户名、现有班级和邮箱。已用临时学生验证从搜索到加入成功、刷新后成员关系落库；该学生可同时属于多个班级。桌面截图 `130-class-add-students-desktop.png`，390px 窄屏截图 `132-class-add-students-mobile-fixed.png`、`136-add-student-membership-mobile.png`；窄屏根节点宽度为 390px，无横向溢出，移动端保留学生姓名和现有班级列。后端学生选项接口现返回邮箱，控制器测试覆盖字段映射。
 - [x] 班级成员移除语义修正并端到端回归：班级详情操作由 `Delete` 改为 `Remove`，确认窗口说明只移除当前班级成员关系，账户、考试历史及其它班级关系保留；不再使用误导性的永久删除措辞或 10 秒冷静期。临时学生同时加入两个班后，从一个班移除，再次验证账户仍存在且另一个班成员关系保留；随后从批量添加弹窗重新加入并确认两班关系都存在。截图 `134-remove-student-modal.png`；页面脚本错误为 0，相关测试数据已清理。
 - [x] SHSAT 班级资料编辑持久化：发现详情表单中的教师姓名/邮箱、年级、学年、Active 状态没有接入共享班级 API，且详情查询会丢弃这些字段；现使用现有 `shsat_class_metadata` 保存 SHSAT 扩展资料，通用班级状态仍写 `classes`。界面修改并保存后，刷新核对资料与 Inactive 状态，API 字段一致；SAT 班级创建/更新回归仍返回 ACTIVE，SHSAT 扩展字段保持为空；临时班级已删除。Java 控制器测试及全量 92 项后端测试、前端生产构建通过；桌面/390px 截图 `127-class-metadata-before.png`、`128-class-metadata-after.png`、`129-class-metadata-mobile.png`，窄屏无横向溢出。班级字段校验和其它按钮继续待测。

@@ -225,7 +225,7 @@ class ClassAdminControllerTest {
     }
 
     @Test
-    void classExamListIncludesReleasesAssignedToCurrentStudents() {
+    void classExamListIncludesOnlyExamsTakenDuringClassMembership() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
@@ -234,10 +234,12 @@ class ClassAdminControllerTest {
 
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("ELSE 'SPECIFIC_STUDENTS'")
-                && sql.contains("FROM exam_target_students ts")
-                && sql.contains("cm.class_id = ? AND cm.left_at IS NULL")
+                && sql.contains("FROM attempts a")
+                && sql.contains("a.is_practice = FALSE AND cm.class_id = ?")
+                && sql.contains("cm.joined_at <= a.started_at")
+                && sql.contains("a.started_at <= cm.left_at")
                 && sql.contains("ses.is_practice_archive = TRUE")),
-            any(RowMapper.class), eq(12L), eq("SAT"), eq(12L), eq(12L));
+            any(RowMapper.class), eq(12L), eq("SAT"), eq(12L));
     }
 
     @Test
