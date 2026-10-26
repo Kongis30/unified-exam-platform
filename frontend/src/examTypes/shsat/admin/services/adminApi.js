@@ -70,7 +70,7 @@ function mapPaperDetail(detail) {
   const paperSections = detail.sections.filter((section) => section.sectionKind !== 'UNASSIGNED');
   const parts = paperSections.map((section) => ({
     partId: String(section.id), paperId: detail.summary.id,
-    partNumber: section.sortOrder + 1, partCode: section.sectionCode,
+    partNumber: section.sortOrder + 1, partCode: section.settings?.partCode || section.sectionCode,
     partName: section.title, partIntro: section.instructions || '',
     questionRange: section.settings?.questionRange || '',
     questionCount: section.settings?.questionCount || section.questions.length,
@@ -78,7 +78,10 @@ function mapPaperDetail(detail) {
   }));
   const subTypes = paperSections.flatMap((part) => part.children.map((section) => ({
     subTypeId: String(section.id), paperId: detail.summary.id,
-    partId: String(part.id), subTypeCode: section.sectionCode,
+    partId: String(part.id), subTypeCode: section.settings?.subTypeCode
+      || (section.sectionCode.startsWith(`${part.sectionCode}_`)
+        ? section.sectionCode.slice(part.sectionCode.length + 1)
+        : section.sectionCode),
     subTypeName: section.title, subTypeIntro: section.instructions || '',
     questionRange: section.settings?.questionRange || '',
     questionCount: section.settings?.questionCount || section.questions.length,

@@ -90,6 +90,46 @@ async function main() {
       'the saved question is restored in the editor after reload');
     await page.screenshot({ path: `/tmp/shsat-paper-editor-saved-${stamp}.png` });
 
+    const customPartCode = `CUSTOM_${stamp}`;
+    const customPartName = `Custom Part ${stamp}`;
+    await page.getByRole('button', { name: 'Parts', exact: true }).click();
+    const partsModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Primary Types' }) });
+    const officialEla = partsModal.locator('.structure-item').filter({ hasText: 'English Language Arts' }).first();
+    assert.equal(await officialEla.getByRole('button', { name: 'Delete', exact: true }).isDisabled(), true,
+      'official SHSAT primary types cannot be deleted');
+    const newPart = partsModal.locator('.new-structure');
+    await newPart.getByPlaceholder('Code, e.g. ELA').fill(customPartCode);
+    await newPart.getByPlaceholder('Part name').fill(customPartName);
+    await newPart.getByRole('button', { name: 'Add Primary Type', exact: true }).click();
+    await page.getByText(`Primary type "${customPartName}" created.`, { exact: true }).waitFor();
+    await partsModal.locator('.modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    assert.ok((await api(page, `/api/admin/papers/${paperId}`)).sections.some(section => section.sectionCode === customPartCode),
+      'a custom primary type persists as a section');
+
+    const savedEla = (await api(page, `/api/admin/papers/${paperId}`)).sections.find(section => section.sectionCode === 'ELA');
+    assert.ok(savedEla, 'the official ELA primary type remains available');
+    const customSubTypeCode = `CUSTOM_TYPE_${stamp}`;
+    const customSubTypeName = `Custom Secondary ${stamp}`;
+    await page.getByRole('button', { name: 'Types', exact: true }).click();
+    const typesModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Secondary Types' }) });
+    const officialSubType = typesModal.locator('.structure-item').filter({ hasText: 'Revising/Editing Part A' }).first();
+    assert.equal(await officialSubType.getByRole('button', { name: 'Delete', exact: true }).isDisabled(), true,
+      'official SHSAT secondary types cannot be deleted');
+    const newSubType = typesModal.locator('.new-structure');
+    await newSubType.locator('select').first().selectOption(String(savedEla.id));
+    await newSubType.getByPlaceholder('Code, e.g. CUSTOM_READING').fill(customSubTypeCode);
+    await newSubType.getByPlaceholder('Type name').fill(customSubTypeName);
+    await newSubType.getByRole('button', { name: 'Add Secondary Type', exact: true }).click();
+    await page.getByText(`Secondary type "${customSubTypeName}" created.`, { exact: true }).waitFor();
+    await typesModal.locator('.modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    assert.ok((await api(page, `/api/admin/papers/${paperId}`)).sections
+      .find(section => section.sectionCode === 'ELA')?.children.some(section => section.sectionCode === `ELA_${customSubTypeCode}`),
+    'a custom secondary type persists under its selected primary type');
+
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
     await page.getByText(questionStem, { exact: true }).waitFor();
@@ -136,6 +176,31 @@ async function main() {
     await page.getByRole('heading', { name: 'Question 1 · Multiple Choice', exact: true }).waitFor();
     assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 1,
       'confirming question deletion removes the selected saved question');
+
+    await page.getByRole('button', { name: 'Parts', exact: true }).click();
+    const reopenedPartsModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Primary Types' }) });
+    const savedCustomPart = reopenedPartsModal.locator('.structure-item').filter({ hasText: customPartName });
+    assert.equal(await savedCustomPart.count(), 1, 'custom primary type remains visible after reload and further edits');
+    await savedCustomPart.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByText('Primary type deleted.', { exact: true }).waitFor();
+    await reopenedPartsModal.locator('.modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).sections.some(section => section.sectionCode === customPartCode), false,
+      'deleting an unused custom primary type persists');
+
+    await page.getByRole('button', { name: 'Types', exact: true }).click();
+    const reopenedTypesModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Secondary Types' }) });
+    const savedCustomSubType = reopenedTypesModal.locator('.structure-item').filter({ hasText: customSubTypeName });
+    assert.equal(await savedCustomSubType.count(), 1, 'custom secondary type remains visible after reload and further edits');
+    await savedCustomSubType.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByText('Secondary type deleted.', { exact: true }).waitFor();
+    await reopenedTypesModal.locator('.modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).sections
+      .find(section => section.sectionCode === 'ELA')?.children.some(section => section.sectionCode === `ELA_${customSubTypeCode}`), false,
+    'deleting an unused custom secondary type persists');
 
     await page.getByText('All changes saved.', { exact: true }).waitFor({ state: 'hidden' });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -188,6 +253,7 @@ async function main() {
       result: 'PASS',
       checks: ['unchanged save disabled', 'scoring rule persists', 'unsaved preview is blocked',
         'Stay preserves edits', 'Leave Without Saving discards edits', 'saved question survives reload',
+        'primary and secondary type create/delete', 'official SHSAT labels are protected',
         'preview shows saved question and Back returns to editor', 'per-part add and question navigation',
         'question deletion cancel and confirm', '390px editor layout'],
       mobileSize,
