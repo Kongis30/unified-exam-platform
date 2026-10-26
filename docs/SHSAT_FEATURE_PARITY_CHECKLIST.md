@@ -39,6 +39,7 @@
 - [ ] 系统选择：学生选择 SHSAT；管理员/教师进入 SHSAT 后台；顶部导航与其它模块一致，考试作答页不显示平台导航。
 - [x] 三种角色登录入口烟测：管理员账号 `admin` / `1` 能进入平台；临时教师账号能进入 SHSAT 后台并看到 Exam Release、Review Assignments、Classes，同时不显示 Paper Management；临时学生账号登录后进入系统选择并打开 SHSAT 学生工作区；教师刷新后会话身份保留。错误密码和禁用账号均显示英文 `Invalid username or password.`；临时账号已删除，脚本错误为 0。截图 `52-teacher-shsat-admin.png`、`53-student-shsat-home-mobile.png`。必填校验、退出及会话过期仍待验收。
 - [ ] 管理员首页 Available Exams：刷新、折叠/展开及刷新后记忆；卡片只展示开放期内可进入的考试，显示时间、试卷、时长、状态；`Start Exam` 进入考试、退出返回原处；空状态正确。
+- [x] 管理员首页折叠记忆回归：分别折叠 Available Exams 与 Assigned Review 后刷新，两区仍保持折叠；清除本次测试偏好并恢复页面初始展开状态。当前数据库没有开放中的 SHSAT 考试，Available Exams 正确显示空状态，因此本次不据此判断开放考试卡片字段和 Start Exam。
 - [ ] 管理员首页 Assigned Review：刷新、折叠/记忆、任务卡片 `View Progress`、返回原标签位置；任务人数、完成数与详情一致。
 - [ ] 管理标签：`Paper Management`、`Exam Release`、`Review Assignments`、`Classes` 切换后滚动位置稳定，路由返回时恢复标签/筛选；教师只见获授权操作。
 - [x] SHSAT 无历史返回兜底：发现多个页面 push 到不存在的路由名 `admin`，修正为 `shsat-admin` 并附带目标标签。用新浏览器页直达后分别点击 Class Detail、Monitor、Paper Preview、Paper Editor 的返回按钮，均到达正确 SHSAT 后台标签；页面脚本错误为 0。完整返回上一页栈的行为仍需从各入口复核。
