@@ -571,6 +571,15 @@ td small { margin-top: 4px; color: #8795aa; font-size: 9px; }
   .paper-list-toolbar__actions { justify-content: flex-start; }
 }
 
+@media (max-width: 760px) {
+  .attempt-heading { align-items: stretch; flex-direction: column; gap: 14px; }
+  .attempt-heading > div:first-child { min-width: 0; }
+  .attempt-heading h1 { overflow-wrap: anywhere; }
+  .attempt-clock { box-sizing: border-box; grid-template-columns: 1fr auto; align-items: center; width: 100%; min-width: 0; text-align: left; }
+  .attempt-result { flex-wrap: wrap; gap: 8px 12px; }
+  .attempt-result small { flex-basis: 100%; margin-left: 0; }
+}
+
 @media (max-width: 480px) {
   .paper-list-toolbar__search { grid-template-columns: 1fr 1fr; }
   .paper-list-toolbar__search .app-button { grid-column: 1 / -1; }

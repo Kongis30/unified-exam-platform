@@ -102,6 +102,30 @@ async function main() {
     assert.deepEqual(retakeHistory.map(item => Number(item.attemptId)), [...retakeAttempts].reverse(),
       'student history exposes the expected attempts for this exam');
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    const retakeCard = student.locator('.student-exam-list article.paper-row').filter({ hasText: retake.title });
+    const viewAttemptButton = retakeCard.getByRole('button', { name: 'View attempt', exact: true });
+    await viewAttemptButton.waitFor();
+    await viewAttemptButton.click();
+    await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[1]}`);
+    await student.getByRole('heading', { name: retake.title, exact: true }).waitFor();
+    await student.getByText('Your answers are locked. Results will be available according to the exam settings.',
+      { exact: true }).waitFor();
+    await student.getByRole('link', { name: /Return to your exams/ }).waitFor();
+    await student.screenshot({ path: `/tmp/shsat-student-view-attempt-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const attemptMobileSize = await student.evaluate(() => ({
+      pageWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    assert.ok(attemptMobileSize.pageWidth <= attemptMobileSize.viewportWidth,
+      'the submitted attempt detail fits the 390px viewport');
+    const statusBounds = await student.locator('.attempt-clock').boundingBox();
+    assert.ok(statusBounds && statusBounds.x >= 0
+      && statusBounds.x + statusBounds.width <= attemptMobileSize.viewportWidth + 1,
+    'the submitted attempt status card stays within the mobile content area');
+    await student.screenshot({ path: `/tmp/shsat-student-view-attempt-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 900 });
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
     await student.getByRole('tab', { name: 'Exam History', exact: true }).click();
     const retakeRows = student.locator('.shsat-history-row').filter({ hasText: retake.title });
     assert.equal(await retakeRows.count(), 2, 'the student sees both retakes in Exam History');
@@ -141,7 +165,8 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['Upcoming status and disabled start', 'Available status and start action',
-        'target eligibility isolation', 'repeated attempts and latest-first history',
+        'target eligibility isolation', 'View attempt opens the latest submitted read-only attempt',
+        'repeated attempts and latest-first history',
         'student report access remains private', '390px layout'],
       mobileSize,
       historyMobileSize,
