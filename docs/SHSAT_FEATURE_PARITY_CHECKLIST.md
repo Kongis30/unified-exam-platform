@@ -500,4 +500,5 @@
 - Monitor 接口变更后再次以教师账号运行 `teacher-workspace`，准确率、结束场次汇总、题目详情/缺图状态、权限拒绝等全部通过，`pageErrors=0`、390px 无页面溢出。手机热图和题目详情截图 `/tmp/shsat-teacher-monitor-accuracy-mobile-1793111633499.png`、`/tmp/shsat-teacher-monitor-image-unavailable-mobile-1793111633499.png` 已检查。
 - 学生资格与历史流程再次运行 `student-states` 通过：Upcoming/Available/Closed、目标资格隔离、重试及最新优先、历史报告返回状态、错误密码/禁用账号/会话刷新、跨学生隐私均通过；桌面与 390px 首屏截图 `/tmp/shsat-student-exam-states-1793111818890.png`、`/tmp/shsat-student-exam-states-mobile-1793111818890.png` 已复核，页面错误为 0。
 - 班级考试详情再次运行 `class-detail-exams` 通过：搜索、排序、分页、View Results 和 Monitor 返回后筛选/分页状态恢复；桌面、390px 及成绩/监考页截图 `/tmp/shsat-class-detail-exams-desktop-1793111846293.png`、`/tmp/shsat-class-detail-exams-mobile-1793111846293.png`、`/tmp/shsat-class-detail-exams-results-1793111846293.png`、`/tmp/shsat-class-detail-exams-monitor-1793111846293.png` 已目视检查，浏览器错误为 0。
+- 原题素材恢复核查：重新检查独立版 `uploads/paper-materials`，仅有 `monitor-render-test.png` 和 `.svg` 两份测试图；项目内迁移备份为 SQL，不包含上传文件，因此仍需用户提供四张 Hot Spot 原图。
 - Java 17 `mvn -q clean test`：113 项通过，失败/错误/跳过均为 0；`npm run build` 成功。当前增量已提交 `980fa37`。整体目标继续进行，不能视作清单全部完成。
