@@ -124,8 +124,18 @@ async function main() {
     const firstQuestion = (attempt.questions || []).find(question => Number(question.displayNumber) === 1);
     assert.ok(firstQuestion, 'the published SHSAT exam gives the student a first question');
     await api(student, `/api/student/attempts/${attemptId}/presence`, 'POST', { questionNumber: 1 });
+    const paperDetails = await api(admin, '/api/admin/papers/247');
+    const paperQuestions = [];
+    const collectQuestions = section => {
+      paperQuestions.push(...(section.questions || []));
+      (section.children || []).forEach(collectQuestions);
+    };
+    (paperDetails.sections || []).forEach(collectQuestions);
+    const firstQuestionDetails = paperQuestions.find(question =>
+      Number(question.paperItemId) === Number(firstQuestion.paperItemId));
+    assert.ok(firstQuestionDetails?.answerKey?.answers?.[0], 'the administrator paper detail exposes the answer key for the test question');
     await api(student, `/api/student/attempts/${attemptId}/answers/${firstQuestion.paperItemId}`, 'PUT', {
-      answer: { selectedOptionIds: ['A'] }, timeSpentSeconds: 38,
+      answer: { answers: [firstQuestionDetails.answerKey.answers[0]] }, timeSpentSeconds: 38,
     });
 
     const liveMonitor = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/live`);
@@ -136,12 +146,40 @@ async function main() {
     const questionOneAnalytics = analytics.questionAnalytics.find(item => Number(item.questionNumber) === 1);
     assert.equal(Number(questionOneAnalytics?.attemptedCount), 1, 'monitor analytics counts the saved answer');
     assert.equal(Number(questionOneAnalytics?.averageTimeSpent), 38, 'monitor analytics reports the saved response time');
+    assert.equal(questionOneAnalytics?.accuracy, null, 'an unsubmitted answer remains pending rather than affecting accuracy');
 
     await teacher.reload();
     await teacher.getByRole('heading', { name: 'Current Question Distribution' }).waitFor();
     await teacher.locator('.chart-bar--blue title').filter({ hasText: 'Question 1: 1 students' }).waitFor({ state: 'attached' });
     await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 38s' }).waitFor({ state: 'attached' });
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-${stamp}.png` });
+
+    const submittedAttempt = await api(student, `/api/student/attempts/${attemptId}/submit`, 'POST');
+    assert.equal(submittedAttempt.status, 'SUBMITTED', 'submitting the attempt finalizes the saved answer for scoring');
+    const submittedReport = await api(admin, `/api/admin/reports/attempts/${attemptId}/result`);
+    const firstQuestionResult = submittedReport.questions.find(question => Number(question.questionNumber) === 1);
+    assert.equal(firstQuestionResult?.correct, true, 'the control report confirms the saved answer is correct');
+    const scoredAnalytics = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`);
+    const scoredQuestionOne = scoredAnalytics.questionAnalytics.find(item => Number(item.questionNumber) === 1);
+    assert.equal(Number(scoredQuestionOne?.accuracy), 100, 'monitor analytics updates accuracy after the answer is scored');
+    assert.equal(Number(scoredQuestionOne?.pendingCount), 0, 'a scored answer is removed from the pending count');
+
+    await teacher.reload();
+    await teacher.getByRole('heading', { name: 'Accuracy Heatmap' }).waitFor();
+    const scoredTile = teacher.getByRole('button', { name: 'Open question 1 details' });
+    await scoredTile.waitFor();
+    assert.equal((await scoredTile.locator('span').innerText()).trim(), '100%', 'the heatmap displays the scored accuracy');
+    assert.ok((await scoredTile.getAttribute('class')).includes('accuracy-tile--high'),
+      'the heatmap uses the high-accuracy color for a correct response');
+    await scoredTile.scrollIntoViewIfNeeded();
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-accuracy-${stamp}.png` });
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    await scoredTile.scrollIntoViewIfNeeded();
+    const accuracyMobileSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(accuracyMobileSize.page <= accuracyMobileSize.viewport, 'the scored accuracy heatmap fits the 390px viewport');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-accuracy-mobile-${stamp}.png` });
+    await teacher.setViewportSize({ width: 1440, height: 900 });
+    await teacher.evaluate(() => window.scrollTo(0, 0));
 
     const firstQuestionTile = teacher.getByRole('button', { name: 'Open question 1 details' });
     await firstQuestionTile.waitFor();
@@ -259,13 +297,14 @@ async function main() {
       result: 'PASS',
       checks: ['teacher SHSAT tab access', 'shared all-class directory', 'account directory denied',
         'create, publish and unpublish release', 'empty and populated monitoring charts from a real student attempt',
-        'monitor analytics and return path',
+        'monitor accuracy updates after a scored response', 'monitor analytics and return path',
         'heatmap question details drawer and backdrop close', 'desktop/mobile monitor image preview and close controls',
         'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
       monitorMobileSize,
       mobileChartScroll,
       mobileDrawerSize,
+      accuracyMobileSize,
       pageErrors: errors.length,
     }));
   } finally {
