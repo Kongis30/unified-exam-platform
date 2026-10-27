@@ -479,6 +479,8 @@
 - [x] **Paper Detail 答案 PDF 计数恢复（2026-10-27）**：对照独立版确认其详情响应包含答案 PDF 记录并在详情弹窗显示数量；统一版原先详情 DTO 未返回数量，适配层又固定 `solutions: []`，导致已迁移记录始终显示 0。现由详情 API 返回 SHSAT 答案 PDF 记录数，前端直接展示；SAT 类型返回 0。扩展 `paper-filters`，逐卷核对详情计数与删除影响预览计数一致，并要求已有迁移答案 PDF 的试卷在 UI 弹窗显示正确数值；桌面和 390px 下均验证弹窗尺寸与页面无横向溢出。`npm run test:e2e:shsat:paper-filters`、`npm run build` 及 Java 17 `mvn test -q` 通过；无浏览器错误。截图 `/tmp/shsat-paper-answer-pdf-count-20261027.png`、`/tmp/shsat-paper-answer-pdf-count-mobile-20261027.png` 已目视检查，信息层级清楚、手机排版正常。该修复仅恢复现有详情数量，不新增源版 UI 未提供的上传/下载操作。
 - [x] **Paper Detail 接口相关页面回归（2026-10-27）**：修复详情响应后依次复跑 `paper-create`、`paper-editor-navigation`、`materials`、`paper-export`。覆盖纸卷创建/编辑/删除影响预览、题目编辑保存和预览、材料库写入/复制、Student/Answer Key 导出与返回；四项均通过，临时数据由各脚本清理，`pageErrors=0`。导出桌面/390px 截图 `/tmp/shsat-paper-export-desktop-1793106203941.png`、`/tmp/shsat-paper-export-mobile-1793106203941.png` 已目视检查；手机纸张在独立横向滚动区中展示，根页面没有被 Letter 页面撑宽。PDF 非空和各模式内容断言通过。
 
+- [x] **选择题数量限制与独立版评分规则对齐（2026-10-27）**：对照独立版 `SelectionGradingStrategy`，发现统一版未执行 `requiredSelections` / `exactSelections` / `selectionCount` 和 `selectionLimit` / `maxSelections` / `maxSelected`，因此部分配置下会把超出或不足数量的集合判为正确。统一版现从题目配置及 `grading_json` 读取这些约束，并保留 FIXED/EXACT 题型的默认答案数量规则。新增回归覆盖题目配置的必选数、评分规则的最多选择数及固定选择题；`ShsatQuestionGraderTest` 和完整后端测试均通过（Java 17，22 个测试套件、110 项，失败/错误/跳过均为 0）。
+
 ## 9. 建议执行顺序与完成门槛
 
 1. **P0 学生主链路**：补齐 G1/G2；用真实学生跑完整考试、两种 section 顺序、12 题型答案保存与报告；这是切换独立 SHSAT 的门槛。

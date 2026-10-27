@@ -19,6 +19,8 @@ import java.util.regex.Pattern;
 @Component
 final class ShsatQuestionGrader {
 
+    private static final String[] MAX_SELECTION_FIELDS = {"selectionLimit", "maxSelections", "maxSelected"};
+    private static final String[] EXACT_SELECTION_FIELDS = {"requiredSelections", "exactSelections", "selectCount", "selectionCount"};
     private static final Pattern LATEX_FRACTION = Pattern.compile("\\\\frac\\s*\\{([^{}]+)}\\s*\\{([^{}]+)}");
     private static final Pattern INTEGER = Pattern.compile("[+-]?\\d+");
     private static final Pattern DECIMAL = Pattern.compile("[+-]?(?:\\d+\\.\\d+|\\d+\\.|\\.\\d+)");
@@ -30,7 +32,7 @@ final class ShsatQuestionGrader {
             ? render.path("questionConfig") : render;
         if (type.contains("ESSAY") || type.contains("WRITING") || type.contains("UPLOAD")) return null;
 
-        if (isSelection(type)) return selection(key, answer, render);
+        if (isSelection(type)) return selection(type, key, answer, render, config, grading);
         if (type.equals("INLINE_CHOICE")) return inlineChoice(key, answer, config);
         if (type.equals("DRAG_AND_DROP")) return dragAndDrop(key, answer, config);
         if (type.equals("HOT_TEXT")) return selectionSet(key, answer, config, true);
@@ -68,7 +70,8 @@ final class ShsatQuestionGrader {
             || type.contains("MULTIPLE_ANSWER") || type.contains("CHECKBOX");
     }
 
-    private Boolean selection(JsonNode key, JsonNode answer, JsonNode render) {
+    private Boolean selection(String type, JsonNode key, JsonNode answer, JsonNode render,
+                              JsonNode config, JsonNode grading) {
         JsonNode expected = first(key, "correct", "answers", "selectedAnswers", "answer", "value");
         if (expected == null && key != null && !key.isObject()) expected = key;
         JsonNode actual = first(answer, "value", "answers", "selectedAnswers", "answer");
@@ -76,10 +79,45 @@ final class ShsatQuestionGrader {
         Set<String> validOptions = optionKeys(render == null ? null : render.path("options"));
         Set<String> expectedTokens = tokens(expected);
         Set<String> actualTokens = tokens(actual);
+        boolean fixedSelection = type.contains("FIXED") || type.contains("EXACT");
+        Integer requiredCount = firstConfiguredCount(config, grading,
+            fixedSelection ? concat(MAX_SELECTION_FIELDS, EXACT_SELECTION_FIELDS) : EXACT_SELECTION_FIELDS);
+        if (requiredCount == null && fixedSelection && !expectedTokens.isEmpty()) requiredCount = expectedTokens.size();
+        if (requiredCount != null && actualTokens.size() != requiredCount) return false;
+        Integer maxCount = firstConfiguredCount(config, grading, MAX_SELECTION_FIELDS);
+        if (requiredCount == null && maxCount != null && actualTokens.size() > maxCount) return false;
         return expected != null && actual != null && !empty(actual)
             && duplicateTokenCount(expected) == 0 && duplicateTokenCount(actual) == 0
             && (validOptions.isEmpty() || (validOptions.containsAll(expectedTokens) && validOptions.containsAll(actualTokens)))
             && expectedTokens.equals(actualTokens);
+    }
+
+    /** 固定/最多选择数可存在题目配置或评分规则中，和独立 SHSAT 保持一致。 */
+    private Integer firstConfiguredCount(JsonNode config, JsonNode grading, String... fields) {
+        Integer count = positiveInteger(config, fields);
+        return count != null ? count : positiveInteger(grading, fields);
+    }
+
+    private Integer positiveInteger(JsonNode node, String... fields) {
+        if (node == null || !node.isObject()) return null;
+        for (String field : fields) {
+            JsonNode value = node.get(field);
+            if (value == null || value.isNull()) continue;
+            try {
+                int count = value.isNumber() ? value.intValue() : Integer.parseInt(value.asText().trim());
+                if (count > 0 && (value.isNumber() ? value.asDouble() == count : true)) return count;
+            } catch (NumberFormatException ignored) {
+                // Ignore malformed constraints, matching standalone behavior.
+            }
+        }
+        return null;
+    }
+
+    private String[] concat(String[] first, String[] second) {
+        String[] fields = new String[first.length + second.length];
+        System.arraycopy(first, 0, fields, 0, first.length);
+        System.arraycopy(second, 0, fields, first.length, second.length);
+        return fields;
     }
 
     /** 选择题答案键和提交值都必须引用试题实际配置的选项；旧题没有选项配置时保留兼容行为。 */

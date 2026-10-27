@@ -43,6 +43,21 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void appliesSelectionCountConstraintsFromQuestionAndScoringConfiguration() throws Exception {
+        JsonNode questionConfig = json("{\"questionConfig\":{\"requiredSelections\":2}}");
+        assertFalse(grader.grade("MULTI_SELECT", json("{\"answers\":[\"A\"]}"),
+            json("{\"answers\":[\"A\"]}"), questionConfig, null));
+
+        JsonNode scoringRules = json("{\"maxSelections\":1}");
+        assertFalse(grader.grade("MULTI_SELECT", json("{\"answers\":[\"A\",\"B\"]}"),
+            json("{\"answers\":[\"A\",\"B\"]}"), null, scoringRules));
+
+        JsonNode fixedConfig = json("{\"questionConfig\":{\"selectionLimit\":2}}");
+        assertFalse(grader.grade("MULTI_SELECT_FIXED", json("{\"answers\":[\"A\"]}"),
+            json("{\"answers\":[\"A\"]}"), fixedConfig, null));
+    }
+
+    @Test
     void rejectsSelectionAnswersThatAreNotConfiguredOptions() throws Exception {
         JsonNode render = json("{\"options\":[{\"key\":\"A\"},{\"key\":\"B\"}]}");
         assertFalse(grader.grade("MULTIPLE_CHOICE", json("{\"answers\":[\"Z\"]}"),
