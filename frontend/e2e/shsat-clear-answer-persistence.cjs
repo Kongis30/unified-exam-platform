@@ -136,7 +136,8 @@ async function main() {
       `the student can scroll the toolbar until Submit Exam is fully visible; bounds=${JSON.stringify(submitBounds)}, toolbar=${JSON.stringify(toolbarMetrics)}, scrollLeft=${await toolbar.evaluate(element => element.scrollLeft)}`);
     await student.screenshot({ path: `/tmp/shsat-clear-answer-mobile-toolbar-${stamp}.png` });
 
-    timerExamId = await createTimedExam(admin, userId, timerExamTitle, 20, true);
+    const autoSubmitDurationSeconds = 20;
+    timerExamId = await createTimedExam(admin, userId, timerExamTitle, autoSubmitDurationSeconds, true);
 
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     await installFullscreenMock(student);
@@ -151,10 +152,21 @@ async function main() {
     const timerAttemptId = Number(timerAttempt.id || timerAttempt.attemptId);
     assert.ok(timerAttemptId > 0, 'the short exam creates an active attempt');
     assert.equal(timerAttempt.autoSubmit, true, 'the timed attempt reports auto-submit enabled');
-    await student.locator('.exam-transition-page .exam-transition-card__button').click();
-    await student.locator('.question-number').filter({ hasText: 'Question 1' }).waitFor();
+    await continueExamDirections(student);
+    try {
+      await student.locator('.question-number').filter({ hasText: 'Question 1' }).waitFor();
+    } catch (error) {
+      const state = await api(student, `/api/student/attempts/${timerAttemptId}`)
+        .then(attempt => ({ status: attempt.status, expiresAt: attempt.expiresAt, questionCount: attempt.questions?.length }))
+        .catch(requestError => requestError.message);
+      console.error('Short timed exam did not open Question 1:', JSON.stringify({
+        url: student.url(), state, body: (await student.locator('body').innerText()).slice(-1200),
+      }));
+      await student.screenshot({ path: `/tmp/shsat-exam-timer-start-failure-${stamp}.png`, fullPage: true });
+      throw error;
+    }
     const shortTimerStart = parseTimer(await student.locator('.timer-display').innerText());
-    assert.ok(shortTimerStart > 0 && shortTimerStart <= 20, 'the exam shows its configured countdown');
+    assert.ok(shortTimerStart > 0 && shortTimerStart <= autoSubmitDurationSeconds, 'the exam shows its configured countdown');
     await student.setViewportSize({ width: 1440, height: 900 });
     await student.screenshot({ path: `/tmp/shsat-exam-timer-desktop-${stamp}.png` });
     await student.setViewportSize({ width: 390, height: 844 });
@@ -198,7 +210,7 @@ async function main() {
     const manualAttempt = await (await manualAttemptResponse).json();
     const manualAttemptId = Number(manualAttempt.id || manualAttempt.attemptId);
     assert.equal(manualAttempt.autoSubmit, false, 'the attempt response preserves auto-submit disabled');
-    await student.locator('.exam-transition-page .exam-transition-card__button').click();
+    await continueExamDirections(student);
     await student.locator('.question-number').filter({ hasText: 'Question 1' }).waitFor();
     await student.locator('.student-exam__alert--error').getByText(
       'Time is up. Auto-submit is disabled for this exam; please contact your teacher.', { exact: true },
