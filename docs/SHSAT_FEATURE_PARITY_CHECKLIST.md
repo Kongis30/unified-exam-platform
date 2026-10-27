@@ -458,6 +458,7 @@
 
 ### 本轮追加复测（2026-10-27）
 
+- [x] **真实答题计分、报告和班级趋势复测**：`npm run test:e2e:shsat:equation-grading-report` 通过，真实 13 题答卷 raw `11/13`、scaled `160/720`，ELA `4/4`、Math `7/9`；核对题目正确/错误/未答、技能标签、用时、学生/管理员报告、答案未开放时的访问限制和班级趋势图。桌面/390px 报告、学生详情及趋势悬浮截图 `/tmp/shsat-equation-report-1793105511925.png`、`/tmp/shsat-equation-report-mobile-1793105511925.png`、`/tmp/shsat-student-report-review-disabled-mobile-1793105511925.png`、`/tmp/shsat-scaled-student-detail-mobile-1793105511925.png`、`/tmp/shsat-class-score-trend-tooltip-1793105511925.png` 已目视检查；报告 PDF 为 922,452 bytes，所有相关移动端根宽均为 390px，浏览器错误为 0。此复测覆盖 11 种有代表性的非 Hot Spot 题型和受限答案状态；原题 Hot Spot 图片、跨科冲突技能标签及极端用时组合继续按清单记录。
 - [x] **Hot Spot 合成样题作答/评分/报告复测**：`npm run test:e2e:shsat:hotspot-flow` 通过，学生真实点选目标区域、保存并交卷，报告按答案键评分为 2 分；桌面及 390px 考试/报告页面无整页横向溢出，`pageErrors=0`。截图 `/tmp/shsat-hotspot-active-1793105434004.png`、`/tmp/shsat-hotspot-active-mobile-1793105434004.png`、`/tmp/shsat-hotspot-report-1793105434004.png`、`/tmp/shsat-hotspot-report-mobile-1793105434004.png` 已检查。**此项证明 Hot Spot 交互链路正常，不覆盖 4 道源题缺失的原图；原题视觉和目标区域含义仍待恢复素材后验收。**
 - [x] **正式 100 题考试与报告流程复测**：`npm run test:e2e:shsat:full-length-navigation` 通过，验证 ELA→Math 分段交卷、旧分段写入拒绝、重复最终交卷幂等、书签/Review 受限导航、画笔实际绘制与清除、100 题成绩及师生报告题数一致。390px 根页面无横向溢出，`pageErrors=0`；桌面/手机真实考试界面截图 `/tmp/shsat-exam-drawing-desktop-1793105439924.png`、`/tmp/shsat-exam-drawing-mobile-1793105439924.png` 已检查。该流程证明考试主链路，不替代 12 种题型分别按迁移原题数据逐项对账。
 
