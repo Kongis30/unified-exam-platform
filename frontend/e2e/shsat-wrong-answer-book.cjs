@@ -83,17 +83,37 @@ async function main() {
       answer: { value: 'B' }, timeSpentSeconds: 3,
     });
     await api(student, `/api/student/attempts/${sourceAttempt.id}/submit`, 'POST');
-    await api(admin, `/api/admin/exams/${examId}/close`, 'POST');
 
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     await student.getByRole('tab', { name: /Wrong Answer Book/ }).click();
     const book = student.locator('.shsat-history-row').filter({ hasText: title });
     await book.waitFor();
-    await book.getByText('2 questions remaining', { exact: false }).waitFor();
     const viewAnswers = book.getByRole('button', { name: 'View wrong answers', exact: true });
     const practice = book.getByRole('button', { name: 'Practice', exact: true });
     const latestReport = book.getByRole('button', { name: 'Latest practice report', exact: true });
     assert.equal(await latestReport.isDisabled(), true, 'no practice report is available before the first practice');
+    await book.getByText('Review locked', { exact: false }).waitFor();
+    assert.equal(await viewAnswers.isDisabled(), true, 'wrong-answer details stay locked until the exam closes');
+    assert.equal(await practice.isDisabled(), true, 'personal practice stays locked until the exam closes');
+    const lockedPracticeStyle = await practice.evaluate(element => ({
+      backgroundImage: getComputedStyle(element).backgroundImage,
+      boxShadow: getComputedStyle(element).boxShadow,
+    }));
+    assert.equal(lockedPracticeStyle.backgroundImage, 'none', 'locked primary action is visually muted');
+    assert.equal(lockedPracticeStyle.boxShadow, 'none', 'locked primary action has no active shadow');
+    await student.screenshot({ path: `/tmp/shsat-wrong-book-locked-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    await book.scrollIntoViewIfNeeded();
+    const lockedMobileSize = await pageSize(student);
+    assert.ok(lockedMobileSize.page <= lockedMobileSize.viewport, `locked wrong-answer book fits mobile: ${JSON.stringify(lockedMobileSize)}`);
+    await student.screenshot({ path: `/tmp/shsat-wrong-book-locked-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 900 });
+
+    await api(admin, `/api/admin/exams/${examId}/close`, 'POST');
+    await student.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await book.getByText('2 questions remaining', { exact: false }).waitFor();
+    assert.equal(await viewAnswers.isEnabled(), true, 'wrong-answer details unlock after the exam closes');
+    assert.equal(await practice.isEnabled(), true, 'personal practice unlocks after the exam closes');
 
     await viewAnswers.click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${sourceAttempt.id}/wrong-answers`);
@@ -166,8 +186,9 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS', examId, sourceAttemptId: sourceAttempt.id, practiceAttemptId,
-      reviewMobileSize, clearMobileSize, pageErrors: pageErrors.length,
+      lockedMobileSize, reviewMobileSize, clearMobileSize, pageErrors: pageErrors.length,
       screenshots: [
+        `/tmp/shsat-wrong-book-locked-${stamp}.png`, `/tmp/shsat-wrong-book-locked-mobile-${stamp}.png`,
         `/tmp/shsat-wrong-book-review-${stamp}.png`, `/tmp/shsat-wrong-book-review-mobile-${stamp}.png`,
         `/tmp/shsat-wrong-book-practice-report-desktop-${stamp}.png`,
         `/tmp/shsat-wrong-book-practice-report-${stamp}.png`, `/tmp/shsat-wrong-book-cleared-mobile-${stamp}.png`,

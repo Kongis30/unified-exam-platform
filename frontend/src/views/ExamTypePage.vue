@@ -408,6 +408,11 @@ function viewShsatWrongAnswers(item) {
     query: { returnTo: '/student/systems/SHSAT' } })
 }
 
+function wrongAnswerBookStatus(item) {
+  if (!item.answersVisible) return `Attempt #${item.attemptNumber} · Review locked`
+  return `Attempt #${item.attemptNumber} · ${item.remainingReviewCount} questions remaining`
+}
+
 async function practiceShsatWrongAnswers(item) {
   if (startingWrongAnswerAttemptId.value !== null || !item.answersVisible || !item.remainingReviewCount) return
   startingWrongAnswerAttemptId.value = item.attemptId
@@ -2242,7 +2247,7 @@ watch(() => props.code, (code) => {
         </div>
         <div v-else-if="activeHistoryTab === 'wrong-answers'" class="shsat-history-list">
           <article v-for="item in shsatWrongAnswerBooks" :key="item.attemptId" class="shsat-history-row">
-            <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>Attempt #{{ item.attemptNumber }} · {{ item.remainingReviewCount }} questions remaining</small></div>
+            <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>{{ wrongAnswerBookStatus(item) }}</small></div>
             <div class="shsat-history-actions">
               <AppButton variant="secondary" :disabled="!item.answersVisible || !item.remainingReviewCount" @click="viewShsatWrongAnswers(item)">View wrong answers</AppButton>
               <AppButton variant="primary" :disabled="!item.answersVisible || !item.remainingReviewCount || startingWrongAnswerAttemptId !== null" @click="practiceShsatWrongAnswers(item)">
@@ -2285,6 +2290,7 @@ watch(() => props.code, (code) => {
 .shsat-history-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(110px, auto) auto; align-items: center; gap: 18px; border-bottom: 1px solid var(--color-border); padding: 14px 2px; }
 .shsat-history-row > .status-pill { justify-self: start; }
 .shsat-history-row:last-child { border-bottom: 0; }
+.shsat-history-actions .app-button--primary:disabled { color: var(--color-muted); background: #eef2f8; border-color: #dce4ef; box-shadow: none; opacity: 1; }
 .shsat-history-score { display: grid; gap: 3px; text-align: right; font-variant-numeric: tabular-nums; }
 .shsat-history-score strong { color: var(--color-text); font-size: 15px; }
 .shsat-history-score small, .shsat-history-row .paper-copy small { color: var(--color-muted); font-size: 13px; }
