@@ -462,24 +462,26 @@ onBeforeUnmount(() => {
             <div v-if="!hasCurrentDistribution" class="monitor-chart-empty">
               No live question positions are available. In-progress students may be away from the exam.
             </div>
-            <svg v-else class="monitor-chart" :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`" role="img" aria-label="Current question distribution">
-              <g v-for="tick in currentQuestionChart.ticks" :key="`current-${tick.value}`">
-                <line class="chart-grid-line" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="tick.y" :y2="tick.y" />
-                <text class="chart-y-label" :x="PLOT.left - 12" :y="tick.y + 5" text-anchor="end">{{ tick.label }}</text>
-              </g>
-              <line class="chart-axis" :x1="PLOT.left" :x2="PLOT.left" :y1="PLOT.top" :y2="PLOT.top + plotHeight" />
-              <line class="chart-axis" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="PLOT.top + plotHeight" :y2="PLOT.top + plotHeight" />
-              <text class="chart-axis-title" :x="18" :y="PLOT.top + plotHeight / 2" :transform="`rotate(-90 18 ${PLOT.top + plotHeight / 2})`" text-anchor="middle">Students</text>
-              <g v-for="bar in currentQuestionChart.bars" :key="`current-bar-${bar.questionNumber}`">
-                <rect class="chart-bar chart-bar--blue" :x="bar.x" :y="bar.y" :width="bar.width" :height="bar.height" rx="1">
-                  <title>Question {{ bar.questionNumber }}: {{ bar.value }} students</title>
-                </rect>
-              </g>
-              <g v-for="tick in currentQuestionChart.xTicks" :key="`current-x-${tick.value}`">
-                <text class="chart-x-label" :x="tick.x" :y="PLOT.top + plotHeight + 22" text-anchor="middle">{{ tick.value }}</text>
-              </g>
-              <text class="chart-axis-title" :x="CHART_WIDTH / 2" :y="CHART_HEIGHT - 10" text-anchor="middle">Question Number</text>
-            </svg>
+            <div v-else class="monitor-chart-scroll">
+              <svg class="monitor-chart" :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`" role="img" aria-label="Current question distribution">
+                <g v-for="tick in currentQuestionChart.ticks" :key="`current-${tick.value}`">
+                  <line class="chart-grid-line" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="tick.y" :y2="tick.y" />
+                  <text class="chart-y-label" :x="PLOT.left - 12" :y="tick.y + 5" text-anchor="end">{{ tick.label }}</text>
+                </g>
+                <line class="chart-axis" :x1="PLOT.left" :x2="PLOT.left" :y1="PLOT.top" :y2="PLOT.top + plotHeight" />
+                <line class="chart-axis" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="PLOT.top + plotHeight" :y2="PLOT.top + plotHeight" />
+                <text class="chart-axis-title" :x="18" :y="PLOT.top + plotHeight / 2" :transform="`rotate(-90 18 ${PLOT.top + plotHeight / 2})`" text-anchor="middle">Students</text>
+                <g v-for="bar in currentQuestionChart.bars" :key="`current-bar-${bar.questionNumber}`">
+                  <rect class="chart-bar chart-bar--blue" :x="bar.x" :y="bar.y" :width="bar.width" :height="bar.height" rx="1">
+                    <title>Question {{ bar.questionNumber }}: {{ bar.value }} students</title>
+                  </rect>
+                </g>
+                <g v-for="tick in currentQuestionChart.xTicks" :key="`current-x-${tick.value}`">
+                  <text class="chart-x-label" :x="tick.x" :y="PLOT.top + plotHeight + 22" text-anchor="middle">{{ tick.value }}</text>
+                </g>
+                <text class="chart-axis-title chart-axis-title--question" :x="CHART_WIDTH / 2" :y="CHART_HEIGHT - 10" text-anchor="middle">Question Number</text>
+              </svg>
+            </div>
           </article>
 
           <article class="monitor-panel">
@@ -487,24 +489,26 @@ onBeforeUnmount(() => {
             <div v-if="!hasAverageTimeData" class="monitor-chart-empty">
               No response-time data has been recorded for this exam yet.
             </div>
-            <svg v-else class="monitor-chart" :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`" role="img" aria-label="Average time per question">
-              <g v-for="tick in averageTimeChart.ticks" :key="`time-${tick.value}`">
-                <line class="chart-grid-line" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="tick.y" :y2="tick.y" />
-                <text class="chart-y-label" :x="PLOT.left - 12" :y="tick.y + 5" text-anchor="end">{{ tick.label }}</text>
-              </g>
-              <line class="chart-axis" :x1="PLOT.left" :x2="PLOT.left" :y1="PLOT.top" :y2="PLOT.top + plotHeight" />
-              <line class="chart-axis" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="PLOT.top + plotHeight" :y2="PLOT.top + plotHeight" />
-              <text class="chart-axis-title" :x="18" :y="PLOT.top + plotHeight / 2" :transform="`rotate(-90 18 ${PLOT.top + plotHeight / 2})`" text-anchor="middle">Avg Time</text>
-              <g v-for="bar in averageTimeChart.bars" :key="`time-bar-${bar.questionNumber}`">
-                <rect class="chart-bar chart-bar--orange" :x="bar.x" :y="bar.y" :width="bar.width" :height="bar.height" rx="1">
-                  <title>Question {{ bar.questionNumber }}: {{ formatDuration(bar.value) }}</title>
-                </rect>
-              </g>
-              <g v-for="tick in averageTimeChart.xTicks" :key="`time-x-${tick.value}`">
-                <text class="chart-x-label" :x="tick.x" :y="PLOT.top + plotHeight + 22" text-anchor="middle">{{ tick.value }}</text>
-              </g>
-              <text class="chart-axis-title" :x="CHART_WIDTH / 2" :y="CHART_HEIGHT - 10" text-anchor="middle">Question Number</text>
-            </svg>
+            <div v-else class="monitor-chart-scroll">
+              <svg class="monitor-chart" :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`" role="img" aria-label="Average time per question">
+                <g v-for="tick in averageTimeChart.ticks" :key="`time-${tick.value}`">
+                  <line class="chart-grid-line" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="tick.y" :y2="tick.y" />
+                  <text class="chart-y-label" :x="PLOT.left - 12" :y="tick.y + 5" text-anchor="end">{{ tick.label }}</text>
+                </g>
+                <line class="chart-axis" :x1="PLOT.left" :x2="PLOT.left" :y1="PLOT.top" :y2="PLOT.top + plotHeight" />
+                <line class="chart-axis" :x1="PLOT.left" :x2="CHART_WIDTH - PLOT.right" :y1="PLOT.top + plotHeight" :y2="PLOT.top + plotHeight" />
+                <text class="chart-axis-title" :x="18" :y="PLOT.top + plotHeight / 2" :transform="`rotate(-90 18 ${PLOT.top + plotHeight / 2})`" text-anchor="middle">Avg Time</text>
+                <g v-for="bar in averageTimeChart.bars" :key="`time-bar-${bar.questionNumber}`">
+                  <rect class="chart-bar chart-bar--orange" :x="bar.x" :y="bar.y" :width="bar.width" :height="bar.height" rx="1">
+                    <title>Question {{ bar.questionNumber }}: {{ formatDuration(bar.value) }}</title>
+                  </rect>
+                </g>
+                <g v-for="tick in averageTimeChart.xTicks" :key="`time-x-${tick.value}`">
+                  <text class="chart-x-label" :x="tick.x" :y="PLOT.top + plotHeight + 22" text-anchor="middle">{{ tick.value }}</text>
+                </g>
+                <text class="chart-axis-title chart-axis-title--question" :x="CHART_WIDTH / 2" :y="CHART_HEIGHT - 10" text-anchor="middle">Question Number</text>
+              </svg>
+            </div>
           </article>
         </section>
 
@@ -654,6 +658,7 @@ onBeforeUnmount(() => {
 .monitor-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
 .monitor-panel { min-width: 0; border: 1px solid #d9e2ec; border-radius: 12px; padding: 28px 30px 22px; background: #fff; box-shadow: 0 2px 6px rgba(37, 57, 84, 0.1); }
 .monitor-panel h1 { margin: 0 0 18px; color: #101b2f; font-size: 26px; line-height: 1.2; letter-spacing: 0; }
+.monitor-chart-scroll { width: 100%; overflow-x: auto; }
 .monitor-chart { display: block; width: 100%; height: auto; overflow: visible; }
 .monitor-chart-empty { display: grid; min-height: 220px; place-items: center; border: 1px dashed #d5deea; border-radius: 8px; padding: 24px; color: #748198; background: #f8faff; font-size: 15px; text-align: center; }
 .chart-grid-line { stroke: #e5eaf0; stroke-width: 1; stroke-dasharray: 4 4; }
@@ -711,5 +716,5 @@ onBeforeUnmount(() => {
 @keyframes monitor-spin { to { transform: rotate(360deg); } }
 @media (max-width: 980px) { .monitor-chart-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .monitor-summary-grid { grid-template-columns: repeat(2, minmax(110px, 1fr)); } .monitor-summary-item { justify-items: start; } }
-@media (max-width: 640px) { .exam-monitor { padding: 16px 12px 28px; } .exam-info-panel { align-items: flex-start; flex-direction: column; padding: 20px 16px; } .monitor-summary-grid { width: 100%; gap: 16px; } .monitor-summary-item { justify-items: start; min-width: 0; } .monitor-summary-item strong { font-size: 25px; } .monitor-summary-item span { white-space: normal; } .monitor-panel { padding: 20px 16px 16px; } .monitor-panel h1 { font-size: 21px; } .question-detail-drawer { width: 100%; padding: 18px 14px; } }
+@media (max-width: 640px) { .exam-monitor { padding: 16px 12px 28px; } .exam-info-panel { align-items: flex-start; flex-direction: column; padding: 20px 16px; } .monitor-summary-grid { width: 100%; gap: 16px; } .monitor-summary-item { justify-items: start; min-width: 0; } .monitor-summary-item strong { font-size: 25px; } .monitor-summary-item span { white-space: normal; } .monitor-panel { padding: 20px 16px 16px; } .monitor-panel h1 { font-size: 21px; } .monitor-chart { width: 560px; max-width: none; } .chart-axis-title--question { display: none; } .question-detail-drawer { width: 100%; padding: 18px 14px; } }
 </style>

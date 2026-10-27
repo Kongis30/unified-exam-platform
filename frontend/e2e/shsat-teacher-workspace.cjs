@@ -197,7 +197,18 @@ async function main() {
     await teacher.evaluate(() => window.scrollTo(0, 0));
     const monitorMobileSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(monitorMobileSize.page <= monitorMobileSize.viewport, 'teacher monitor fits a 390px viewport');
+    const mobileChartScroll = await teacher.locator('.monitor-chart-scroll').first().evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      maxScrollLeft: element.scrollWidth - element.clientWidth,
+    }));
+    assert.ok(mobileChartScroll.maxScrollLeft > 0, 'mobile charts preserve a readable width inside their own horizontal scroller');
+    assert.equal(await teacher.locator('.chart-axis-title--question').first().evaluate(element => getComputedStyle(element).display),
+      'none', 'the mobile chart does not clip its centered horizontal axis title');
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-mobile-${stamp}.png` });
+    await teacher.locator('.monitor-chart-scroll').first().evaluate(element => { element.scrollLeft = element.scrollWidth; });
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-mobile-end-${stamp}.png` });
+    await teacher.locator('.monitor-chart-scroll').first().evaluate(element => { element.scrollLeft = 0; });
     await teacher.getByRole('button', { name: 'Open question 1 details' }).click();
     await questionDrawer.waitFor();
     await questionDrawer.locator('.monitor-question-detail').waitFor();
@@ -253,6 +264,7 @@ async function main() {
         'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
       monitorMobileSize,
+      mobileChartScroll,
       mobileDrawerSize,
       pageErrors: errors.length,
     }));
