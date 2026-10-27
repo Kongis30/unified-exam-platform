@@ -27,6 +27,7 @@ except ImportError:
 
 
 SOURCE_SYSTEM = "SHSAT_V2"
+ANSWER_JSON_FIELDS = {"answer_data", "correct_answer_data", "scoring_details"}
 ENTITY_KEYS = {
     "user": "user_id", "class": "class_id", "student": "student_id",
     "group": "paper_group_id", "paper": "paper_id", "part": "part_id",
@@ -58,6 +59,13 @@ def json_text(value: Any) -> str | None:
     if isinstance(value, (datetime, date)):
         value = value.isoformat()
     return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+
+
+def source_answer_metadata(answer: dict[str, Any]) -> dict[str, Any]:
+    """保留答案归档原值，仅将源表 JSON 列解析为结构化对象。"""
+    # 旧库的 selected_answer/correct_answer 是文本列，数字样式字符串也必须保持原样。
+    return {key: json_value(value) if key in ANSWER_JSON_FIELDS else value
+            for key, value in answer.items()}
 
 
 def fingerprint(row: dict[str, Any]) -> str:
@@ -820,7 +828,7 @@ class Migration:
                 (attempt_id,source_answer_id,source_question_id,target_paper_item_id,answer_json,source_metadata_json)
                 VALUES (%s,%s,%s,%s,CAST(%s AS JSON),CAST(%s AS JSON))""",
                 (target_attempt, answer["answer_id"], answer["question_id"], item_id, json_text(answer_json),
-                 json_text({key: json_value(value) for key, value in answer.items()})))
+                 json_text(source_answer_metadata(answer))))
             self.save_mapping("answer", answer["answer_id"], item_id or target_attempt, answer)
 
     def _import_wrong_answer_tasks(self) -> None:
