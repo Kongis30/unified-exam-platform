@@ -1584,17 +1584,35 @@ function buildExamPayload() {
   };
 }
 
-function isValidLocalDateTime(value) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) {
-    return false;
-  }
-
-  // datetime-local 不带时区；往返校验可识别夏令时跳时期间浏览器自动改写的不存在时间。
+function matchesLocalDateTime(date, value) {
   const [year, month, day] = value.slice(0, 10).split('-').map(Number);
   const [hour, minute] = value.slice(11, 16).split(':').map(Number);
   return date.getFullYear() === year && date.getMonth() + 1 === month && date.getDate() === day
     && date.getHours() === hour && date.getMinutes() === minute;
+}
+
+function isValidLocalDateTime(value) {
+  const date = new Date(value);
+  // datetime-local 不带时区；往返校验可识别夏令时跳时期间浏览器自动改写的不存在时间。
+  return Number.isFinite(date.getTime()) && matchesLocalDateTime(date, value);
+}
+
+function isAmbiguousLocalDateTime(value) {
+  const selected = new Date(value);
+  if (!isValidLocalDateTime(value)) {
+    return false;
+  }
+
+  // 回拨时同一个墙上时间对应两个瞬间；默认解析结果无法表达用户选的是哪一个。
+  for (let minutes = 15; minutes <= 180; minutes += 15) {
+    for (const direction of [-1, 1]) {
+      const alternative = new Date(selected.getTime() + direction * minutes * 60_000);
+      if (matchesLocalDateTime(alternative, value)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function validateExamPayload(payload) {
@@ -1604,6 +1622,9 @@ function validateExamPayload(payload) {
 
   if (!isValidLocalDateTime(payload.startTime) || !isValidLocalDateTime(payload.endTime)) {
     return 'The selected time does not exist in your local time zone because of a clock change. Choose another time.';
+  }
+  if (isAmbiguousLocalDateTime(payload.startTime) || isAmbiguousLocalDateTime(payload.endTime)) {
+    return 'The selected time occurs twice in your local time zone because of a clock change. Choose a time outside the repeated hour.';
   }
 
   const opensAt = new Date(payload.startTime).getTime();
@@ -4246,6 +4267,7 @@ onBeforeUnmount(() => {
                 </button>
               </header>
 
+              <p v-if="errors.examForm" class="error-text" role="alert">{{ errors.examForm }}</p>
               <div class="exam-release-form">
                 <section class="exam-release-section">
                   <div class="exam-release-section__header">
@@ -4426,8 +4448,6 @@ onBeforeUnmount(() => {
                   </div>
                 </section>
               </div>
-              <p v-if="errors.examForm" class="error-text">{{ errors.examForm }}</p>
-
               <footer class="modal-card__footer">
                 <AppButton
                   variant="secondary"

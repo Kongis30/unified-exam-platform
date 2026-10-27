@@ -65,6 +65,15 @@ async function main() {
     await page.screenshot({ path: `/tmp/shsat-exam-release-dst-validation-${stamp}.png` });
     assert.deepEqual((await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id),
       examsBeforeMissingLocalTime.map(item => item.id), 'a nonexistent local time does not create an exam');
+    await startTime.fill('2026-11-01T01:30');
+    await endTime.fill('2026-11-01T02:30');
+    const examsBeforeRepeatedLocalTime = await api(page, '/api/admin/exam-types/SHSAT/exams');
+    await modal.getByRole('button', { name: 'Create Release', exact: true }).click();
+    await modal.getByText('The selected time occurs twice in your local time zone because of a clock change. Choose a time outside the repeated hour.', { exact: true }).waitFor();
+    await modal.locator('.error-text').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/shsat-exam-release-dst-overlap-${stamp}.png` });
+    assert.deepEqual((await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id),
+      examsBeforeRepeatedLocalTime.map(item => item.id), 'an ambiguous local time does not create an exam');
     await endTime.fill(originalEndTime);
     await startTime.fill(originalStartTime);
 
@@ -237,6 +246,12 @@ async function main() {
     await mobilePage.screenshot({ path: `/tmp/shsat-exam-release-dst-validation-mobile-${stamp}.png` });
     assert.ok(!(await api(mobilePage, '/api/admin/exam-types/SHSAT/exams'))
       .some(item => item.title === `SHSAT DST mobile check ${stamp}`), 'the mobile form also rejects the nonexistent local time before creating a release');
+    await mobileModal.getByRole('textbox', { name: 'Start time' }).fill('2026-11-01T01:30');
+    await mobileModal.getByRole('textbox', { name: 'End time' }).fill('2026-11-01T02:30');
+    await mobileModal.getByRole('button', { name: 'Create Release', exact: true }).click();
+    await mobileModal.getByText('The selected time occurs twice in your local time zone because of a clock change. Choose a time outside the repeated hour.', { exact: true }).waitFor();
+    await mobileModal.locator('.error-text').scrollIntoViewIfNeeded();
+    await mobilePage.screenshot({ path: `/tmp/shsat-exam-release-dst-overlap-mobile-${stamp}.png` });
     await mobileContext.close();
 
     await startTime.fill('2027-03-14T01:30');
@@ -356,7 +371,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['defaults and required validation', 'end time and title/description/attempt field boundaries', 'duration validation in UI/API including negative and minimum duration', 'active class audience and required selection', 'nonexistent daylight-saving time rejected with a clear message', 'valid daylight-saving time stored as the correct instant', 'duplicate submissions create only one release', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
+      checks: ['defaults and required validation', 'end time and title/description/attempt field boundaries', 'duration validation in UI/API including negative and minimum duration', 'active class audience and required selection', 'nonexistent and repeated daylight-saving times rejected before creating a release', 'valid daylight-saving time stored as the correct instant', 'duplicate submissions create only one release', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
       className,
       mobileSize,
       pageErrors: errors.length,
