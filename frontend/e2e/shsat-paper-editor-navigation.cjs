@@ -25,6 +25,7 @@ async function main() {
   const paperTitle = `Editor Navigation ${stamp}`;
   const questionStem = `Editor persistence question ${stamp}`;
   let paperId;
+  let metadataPaperId;
   let tempUserId;
   let sourceExamId;
 
@@ -424,6 +425,51 @@ async function main() {
     assert.equal(importedSection.sectionCode, semanticSectionCode,
       'the imported question maps from its legacy section code to the semantic SHSAT label');
 
+    const metadataPaper = await api(page, '/api/admin/exam-types/SHSAT/papers', 'POST', {
+      paperCode: `EDITOR_METADATA_${stamp}`,
+      title: `Editor Metadata Preservation ${stamp}`,
+      description: 'Temporary paper metadata round-trip verification',
+      groupId: null,
+      defaultDurationSeconds: 1_200,
+    });
+    metadataPaperId = Number(metadataPaper.summary.id);
+    const metadataStem = `Preserve question metadata ${stamp}`;
+    const metadataExplanation = `Explanation must survive editor save ${stamp}`;
+    await api(page, `/api/admin/papers/${metadataPaperId}/structure`, 'PUT', {
+      materials: [],
+      sections: [{
+        sectionCode: 'ELA', sectionKind: 'PART', title: 'English Language Arts', sortOrder: 0,
+        instructions: null, settings: { partCode: 'ELA' }, children: [],
+        questions: [{
+          questionTypeCode: 'MULTIPLE_CHOICE', payloadSchemaVersion: 1, stem: metadataStem,
+          render: { options: [{ key: 'A', text: 'Option A' }, { key: 'B', text: 'Option B' }], questionConfig: {}, validationRules: {} },
+          answerKey: { answers: ['A'] }, grading: {}, explanation: metadataExplanation, categoryId: null,
+          sortOrder: 0, displayNumber: 1, maxPoints: 2.5, scoringSectionCode: 'UNSCORED',
+        }],
+      }],
+    });
+    const metadataEditorUrl = `${baseUrl}/exam-types/SHSAT/admin/papers/${metadataPaperId}/edit`;
+    await page.goto(metadataEditorUrl);
+    await page.getByRole('heading', { name: `Editor Metadata Preservation ${stamp}`, exact: true }).waitFor();
+    const metadataStemInput = page.locator('.stem-input');
+    await metadataStemInput.fill(`${metadataStem} edited`);
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    let metadataQuestion = readQuestions(await api(page, `/api/admin/papers/${metadataPaperId}`))[0];
+    assert.equal(metadataQuestion.explanation, metadataExplanation,
+      'saving an edited question preserves its explanation');
+    assert.equal(Number(metadataQuestion.maxPoints), 2.5,
+      'saving an edited question preserves its point value');
+    assert.equal(metadataQuestion.scoringSectionCode, 'UNSCORED',
+      'saving an edited question preserves its scoring-section override');
+    await page.screenshot({ path: `/tmp/shsat-paper-editor-metadata-preservation-${stamp}.png` });
+    await page.reload();
+    await page.getByRole('heading', { name: `Editor Metadata Preservation ${stamp}`, exact: true }).waitFor();
+    metadataQuestion = readQuestions(await api(page, `/api/admin/papers/${metadataPaperId}`))[0];
+    assert.equal(metadataQuestion.explanation, metadataExplanation, 'question explanation persists after editor reload');
+    assert.equal(Number(metadataQuestion.maxPoints), 2.5, 'question points persist after editor reload');
+    assert.equal(metadataQuestion.scoringSectionCode, 'UNSCORED', 'scoring override persists after editor reload');
+
     await page.getByText('All changes saved.', { exact: true }).waitFor({ state: 'hidden' });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator('.question-editor').scrollIntoViewIfNeeded();
@@ -478,15 +524,17 @@ async function main() {
         'primary and secondary type create/edit/delete and protect referenced types', 'official SHSAT labels are protected',
         'import source, performance filter, preview, cancel, and confirm',
         'preview shows saved question and Back returns to editor', 'per-part add and question navigation',
-        'question deletion cancel and confirm', '390px editor layout'],
+        'question deletion cancel and confirm', 'question explanation, points, and scoring override survive editor save/reload', '390px editor layout'],
       mobileSize,
       pageErrors: pageErrors.length,
       screenshots: ['clean', 'saved', 'save-conflict', 'preview', 'import', 'import-mobile', 'mobile-success-notice', 'mobile']
-        .map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`),
+        .map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`)
+        .concat(`/tmp/shsat-paper-editor-metadata-preservation-${stamp}.png`),
     }));
   } finally {
     if (sourceExamId) await api(page, `/api/admin/exams/${sourceExamId}`, 'DELETE').catch(() => {});
     if (tempUserId) await api(page, `/api/admin/users/${tempUserId}`, 'DELETE').catch(() => {});
+    if (metadataPaperId) await api(page, `/api/admin/papers/${metadataPaperId}`, 'DELETE').catch(() => {});
     if (paperId) await api(page, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
     await browser.close();
   }

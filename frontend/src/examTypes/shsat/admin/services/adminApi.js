@@ -134,6 +134,8 @@ function mapPaperDetail(detail) {
         questionNumber,
         questionType: item.questionTypeCode, stem: item.stem,
         scoringSectionCode: item.scoringSectionCode || part.sectionCode,
+        explanation: item.explanation ?? null,
+        totalScore: item.maxPoints ?? 1,
         shsatSkillTag: render.questionConfig?.shsatSkillTag || null,
         options: JSON.stringify(render.options || []),
         correctAnswerData: JSON.stringify(item.answerKey),
@@ -208,9 +210,10 @@ function mapShsatQuestion(question, sortOrder, sectionCode) {
     questionTypeCode: question.questionType || 'MULTIPLE_CHOICE',
     payloadSchemaVersion: Number(question.questionSchemaVersion || 1),
     stem: question.stem || '', render, answerKey,
-    grading: parsePayload(question.scoringRules, {}), explanation: question.explanation || null,
+    grading: parsePayload(question.scoringRules, {}), explanation: question.explanation ?? null,
     categoryId: null, sortOrder, displayNumber: Number(question.questionNumber || sortOrder + 1),
-    maxPoints: Number(question.totalScore || 1), scoringSectionCode: sectionCode || null,
+    maxPoints: question.totalScore == null ? 1 : Number(question.totalScore),
+    scoringSectionCode: question.scoringSectionCode || sectionCode || null,
   };
 }
 
