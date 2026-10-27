@@ -114,6 +114,7 @@ async function main() {
     assert.equal((await raw(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`)).status, 200,
       'teachers can load SHSAT monitoring analytics');
     await teacher.getByRole('heading', { name: 'Current Question Distribution' }).waitFor();
+    await teacher.getByText('No students are currently taking this exam.', { exact: true }).waitFor();
     await teacher.getByText('No response-time data has been recorded for this exam yet.').waitFor();
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-${stamp}.png` });
 
@@ -166,6 +167,7 @@ async function main() {
 
     await teacher.reload();
     await teacher.getByRole('heading', { name: 'Accuracy Heatmap' }).waitFor();
+    await teacher.getByText('No students are currently taking this exam.', { exact: true }).waitFor();
     const scoredTile = teacher.getByRole('button', { name: 'Open question 1 details' });
     await scoredTile.waitFor();
     assert.equal((await scoredTile.locator('span').innerText()).trim(), '100%', 'the heatmap displays the scored accuracy');

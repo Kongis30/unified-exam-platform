@@ -68,6 +68,9 @@ const liveCounts = computed(() => {
   return counts;
 });
 const hasCurrentDistribution = computed(() => liveCounts.value.some((count) => count > 0));
+const currentDistributionEmptyMessage = computed(() => Number(monitor.value?.summary?.inProgressStudents || 0) > 0
+  ? 'No live question positions are available. In-progress students may be away from the exam.'
+  : 'No students are currently taking this exam.');
 
 const averageTimes = computed(() => Array.from({ length: questionCount.value }, (_, index) => {
   const value = questionByNumber.value.get(index + 1)?.averageTimeSpent;
@@ -460,7 +463,7 @@ onBeforeUnmount(() => {
           <article class="monitor-panel">
             <h1>Current Question Distribution</h1>
             <div v-if="!hasCurrentDistribution" class="monitor-chart-empty">
-              No live question positions are available. In-progress students may be away from the exam.
+              {{ currentDistributionEmptyMessage }}
             </div>
             <div v-else class="monitor-chart-scroll">
               <svg class="monitor-chart" :viewBox="`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`" role="img" aria-label="Current question distribution">
