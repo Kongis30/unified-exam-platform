@@ -96,6 +96,10 @@ async function main() {
       'ELA-first results preserve ELA and Math answer ownership');
     assert.deepEqual(secondReport.questions.map(question => [question.partCode, question.correct]), [['ELA', false], ['MATH', true]],
       'Math-first attempt preserves section ownership and scores in canonical paper order');
+    assert.ok(Number(firstReport.questions.find(question => question.partCode === 'MATH')?.timeSpent) >= 1,
+      'time spent during the ELA-to-Math transition is included in the next section question report');
+    assert.ok(Number(secondReport.questions.find(question => question.partCode === 'ELA')?.timeSpent) >= 1,
+      'time spent during the Math-to-ELA transition is included in the next section question report');
     assert.equal(firstStudentReport.scoreVisible, true, 'students see the score after submitting this exam');
     assert.equal(firstStudentReport.answersVisible, false, 'answer details remain hidden before the exam closes');
     assert.equal(firstStudentReport.correctCount, null, 'correct counts remain hidden with answer details');
@@ -266,6 +270,7 @@ async function runAttempt(student, examId, firstSection, answers, username, pass
   }
   await student.getByRole('dialog').getByRole('button', { name: 'Submit Section', exact: true }).click();
   await student.waitForFunction(() => document.querySelector('.exam-transition-card__button'));
+  await student.waitForTimeout(1_200);
   await student.locator('.exam-transition-card__button').click();
   const secondCode = firstSection === 'ELA' ? 'MATH' : 'ELA';
   await student.locator('.question-number').waitFor();
