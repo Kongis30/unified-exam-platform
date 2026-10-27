@@ -88,6 +88,35 @@ async function main() {
     assert.ok(!(await api(page, '/api/admin/exam-types/SHSAT/exams'))
       .some(item => item.title === `SHSAT invalid time check ${stamp}`), 'rejected API creation leaves no exam record');
 
+    const boundaryPayload = {
+      title: `SHSAT boundary check ${stamp}`,
+      description: null,
+      opensAt: apiStart.toISOString(),
+      closesAt: new Date(apiStart.getTime() + 60 * 60 * 1000).toISOString(),
+      durationSeconds: 180 * 60,
+      attemptLimit: 1,
+      targetScope: 'ALL_STUDENTS',
+      autoSubmit: true,
+      allowReview: true,
+    };
+    const examsBeforeBoundaries = (await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id);
+    const boundaryCases = [
+      ['title over 200 characters', { title: 'T'.repeat(201) }],
+      ['description over 2,000 characters', { description: 'D'.repeat(2_001) }],
+      ['zero attempt duration', { durationSeconds: 0 }],
+      ['zero attempt limit', { attemptLimit: 0 }],
+    ];
+    for (const [label, override] of boundaryCases) {
+      const response = await apiRequest(page, `/api/admin/papers/${paper.id}/exams`, 'POST', {
+        ...boundaryPayload,
+        ...override,
+      });
+      assert.equal(response.status, 400, `the API rejects ${label}`);
+    }
+    const examsAfterBoundaries = (await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id);
+    assert.deepEqual(examsAfterBoundaries, examsBeforeBoundaries,
+      'invalid field boundaries do not persist any release');
+
     const activeClasses = (await api(page, '/api/admin/classes?examTypeCodes=SHSAT')).filter(item => item.status === 'ACTIVE');
     assert.ok(activeClasses.length, 'at least one active SHSAT class is available');
     await modal.getByLabel('Exam Description').fill('Temporary UI form verification');
@@ -132,7 +161,7 @@ async function main() {
     let createRequestCount = 0;
     const paperCheckGate = new Promise(resolve => { releasePaperCheck = resolve; });
     const paperCheckReached = new Promise(resolve => { resolvePaperCheck = resolve; });
-    await page.route(`**/api/admin/papers/${paper.id}`, async route => {
+    await page.route(`**/api/admin/papers/${paper.id}/structure-stats`, async route => {
       paperCheckCount += 1;
       resolvePaperCheck();
       await paperCheckGate;
@@ -143,7 +172,16 @@ async function main() {
       await route.continue();
     });
     await modal.evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-    await paperCheckReached;
+    try {
+      await withTimeout(paperCheckReached, 15_000,
+        'The release form did not start paper validation after submit.');
+    } catch (error) {
+      console.error('Release form state at submit timeout:', await modal.innerText());
+      console.error('Selected paper:', await modal.locator('.exam-paper-select').inputValue());
+      console.error('Title and duration:', await modal.getByLabel('Exam Title').inputValue(), await durationInput.inputValue());
+      await page.screenshot({ path: `/tmp/shsat-exam-release-submit-timeout-${stamp}.png` });
+      throw error;
+    }
     await modal.evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
     releasePaperCheck();
     const structureWarning = page.locator('.publish-confirm-modal');
@@ -165,7 +203,7 @@ async function main() {
     }
     assert.equal(paperCheckCount, 1, 'rapid duplicate form submissions perform one paper structure check');
     assert.equal(createRequestCount, 1, 'rapid duplicate form submissions create at most one release');
-    await page.unroute(`**/api/admin/papers/${paper.id}`);
+    await page.unroute(`**/api/admin/papers/${paper.id}/structure-stats`);
     await page.unroute(`**/api/admin/papers/${paper.id}/exams`);
     const created = (await api(page, '/api/admin/exam-types/SHSAT/exams')).filter(item => item.title === examTitle);
     assert.equal(created.length, 1, 'the form creates exactly one release');
@@ -206,7 +244,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['defaults and required validation', 'end time and duration validation in UI/API including negative and minimum duration', 'active class audience and required selection', 'duplicate submissions create only one release', 'local time and duration persist accurately', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
+      checks: ['defaults and required validation', 'end time and title/description/attempt field boundaries', 'duration validation in UI/API including negative and minimum duration', 'active class audience and required selection', 'duplicate submissions create only one release', 'local time and duration persist accurately', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
       className,
       mobileSize,
       pageErrors: errors.length,
@@ -266,6 +304,14 @@ async function apiDelete(page, path) {
     return { status: response.status, text: await response.text() };
   }, { path, token });
   if (result.status < 200 || result.status >= 300) throw new Error(`DELETE ${path}: ${result.status} ${result.text}`);
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 main().catch(error => { console.error(error.stack || error); process.exit(1); });
