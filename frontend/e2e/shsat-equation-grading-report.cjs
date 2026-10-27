@@ -201,6 +201,11 @@ async function main() {
       'another student cannot read this attempt by guessing its ID');
     assert.equal(await apiStatus(otherStudent, `/api/student/attempts/${attemptId}/report`), 404,
       'another student cannot read this report by guessing its ID');
+    await api(admin, `/api/admin/classes/${classId}/students`, 'POST', { studentUserId: otherUserId });
+    const otherAttempt = await api(otherStudent, `/api/student/exams/${examId}/attempts`, 'POST', { firstSection: 'ELA' });
+    const otherAttemptId = Number(otherAttempt.id || otherAttempt.attemptId);
+    await api(otherStudent, `/api/student/attempts/${otherAttemptId}/submit`, 'POST');
+    const otherResult = await api(admin, `/api/admin/reports/attempts/${otherAttemptId}/result`);
     const attempt = await api(student, `/api/student/attempts/${attemptId}`);
     for (const item of attempt.questions || attempt.items || []) {
       for (const answerKeyField of ['answerKey', 'correctAnswer', 'correctAnswerData', 'isCorrect']) {
@@ -388,6 +393,7 @@ async function main() {
       'the report uses time recorded while the student is answering');
     const classScores = await api(admin, `/api/admin/reports/exams/${examId}/classes/${classId}`);
     const studentScore = classScores.find(row => Number(row.studentId) === userId);
+    assert.equal(classScores.length, 2, 'class results include both students with completed exam attempts');
     assert.ok(studentScore, 'the class score report includes the student who completed the exam');
     assert.equal(studentScore.compositeScore, expectedScale.composite, 'class results use the same scaled composite as the attempt report');
     assert.equal(studentScore.elaScaledScore, expectedScale.ela);
@@ -395,23 +401,30 @@ async function main() {
     const classTrend = await api(admin, `/api/admin/classes/${classId}/score-trend?examTypeCodes=SHSAT`);
     const classTrendPoint = classTrend.find(row => Number(row.examId) === examId);
     assert.ok(classTrendPoint, 'the completed SHSAT exam appears in the class trend data');
-    assert.equal(Number(classTrendPoint.averageRawScore), 11,
-      'class trend raw score agrees with the completed attempt report');
-    assert.equal(Number(classTrendPoint.averageScaledScore), expectedScale.composite,
-      `class trend scaled score agrees with the completed attempt report: ${JSON.stringify(classTrendPoint)}`);
+    const expectedAverageRaw = (Number(result.totalScore) + Number(otherResult.totalScore)) / 2;
+    const expectedAverageScaled = (Number(result.compositeScore) + Number(otherResult.compositeScore)) / 2;
+    assert.equal(Number(classTrendPoint.studentCount), 2,
+      'the class trend counts the two students with completed attempts');
+    assert.ok(Math.abs(Number(classTrendPoint.averageRawScore) - expectedAverageRaw) < 0.01,
+      `class trend raw score is the average of both completed reports: ${JSON.stringify(classTrendPoint)}`);
+    assert.ok(Math.abs(Number(classTrendPoint.averageScaledScore) - expectedAverageScaled) < 0.01,
+      `class trend scaled score is the average of both completed reports: ${JSON.stringify(classTrendPoint)}`);
     await admin.goto(`${baseUrl}/exam-types/SHSAT/admin/classes/${classId}`);
     await admin.getByRole('heading', { name: `Equation ${suffix}`, exact: true }).waitFor();
     const classScoreChart = admin.locator('.class-score-chart');
     await classScoreChart.waitFor();
-    assert.equal(await classScoreChart.locator('.class-score-chart__value').textContent(), String(expectedScale.composite),
-      'class trend chart displays the report composite in scaled mode');
+    const formatChartScore = value => Number(value).toFixed(2).replace(/\.00$/, '');
+    assert.equal(await classScoreChart.locator('.class-score-chart__value').textContent(), formatChartScore(expectedAverageScaled),
+      'class trend chart displays the average report composite in scaled mode');
     await classScoreChart.locator('.class-score-chart__point').hover();
     const classScoreTooltip = admin.locator('.class-score-chart__tooltip');
     await classScoreTooltip.waitFor();
-    assert.match(await classScoreTooltip.innerText(), new RegExp(`${title}.*${expectedScale.composite}`, 's'));
+    assert.match(await classScoreTooltip.innerText(), new RegExp(`${title}.*${formatChartScore(expectedAverageScaled)}`, 's'));
+    assert.match(await classScoreTooltip.innerText(), /Completed students: 2/);
+    await admin.screenshot({ path: `/tmp/shsat-class-score-trend-tooltip-${stamp}.png` });
     await admin.locator('#class-score-metric').selectOption('raw');
-    assert.equal(await classScoreChart.locator('.class-score-chart__value').textContent(), '11',
-      'class trend chart switches to the raw score from the same report');
+    assert.equal(await classScoreChart.locator('.class-score-chart__value').textContent(), formatChartScore(expectedAverageRaw),
+      'class trend chart switches to the average raw score from both reports');
     await admin.screenshot({ path: `/tmp/shsat-class-score-trend-${stamp}.png` });
     await admin.setViewportSize({ width: 390, height: 844 });
     const classTrendMobile = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
@@ -811,6 +824,7 @@ async function main() {
         `/tmp/shsat-student-report-answers-visible-${stamp}.png`, `/tmp/shsat-student-report-answers-visible-mobile-${stamp}.png`,
         `/tmp/shsat-admin-report-${stamp}.png`, `/tmp/shsat-admin-report-mobile-${stamp}.png`,
         `/tmp/shsat-class-score-trend-${stamp}.png`, `/tmp/shsat-class-score-trend-mobile-${stamp}.png`,
+        `/tmp/shsat-class-score-trend-tooltip-${stamp}.png`,
         `/tmp/shsat-scaled-student-detail-${stamp}.png`, `/tmp/shsat-scaled-student-detail-mobile-${stamp}.png`],
       reportPdf: reportPdfPath,
       reportPdfBytes: reportPdf.byteLength,
@@ -823,6 +837,7 @@ async function main() {
     if (noReviewExamId) await api(admin, `/api/admin/exams/${noReviewExamId}`, 'DELETE').catch(() => {});
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (classId && userId) await api(admin, `/api/admin/classes/${classId}/students/${userId}`, 'DELETE').catch(() => {});
+    if (classId && otherUserId) await api(admin, `/api/admin/classes/${classId}/students/${otherUserId}`, 'DELETE').catch(() => {});
     if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});
     if (otherUserId) await api(admin, `/api/admin/users/${otherUserId}`, 'DELETE').catch(() => {});
