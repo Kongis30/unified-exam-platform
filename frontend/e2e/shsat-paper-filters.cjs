@@ -119,6 +119,18 @@ async function main() {
     await detailDialog.getByRole('heading', { name: solutionPaper.title, exact: true }).waitFor();
     await detailDialog.getByText(String(solutionCount), { exact: true }).waitFor();
     await page.screenshot({ path: '/tmp/shsat-paper-answer-pdf-count-20261027.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const mobileWidths = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      document: document.documentElement.scrollWidth,
+      dialog: document.querySelector('.modal-card--wide')?.getBoundingClientRect().width || 0,
+    }));
+    assert.equal(mobileWidths.viewport, 390, 'paper detail should be tested at the narrow viewport');
+    assert.ok(mobileWidths.document <= 390, 'paper detail must not cause horizontal page overflow on mobile');
+    assert.ok(mobileWidths.dialog > 0 && mobileWidths.dialog <= 390, 'paper detail dialog should fit the mobile viewport');
+    await page.screenshot({ path: '/tmp/shsat-paper-answer-pdf-count-mobile-20261027.png', fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
     await detailDialog.getByRole('button', { name: 'Close paper details dialog' }).click();
     await detailDialog.waitFor({ state: 'detached' });
 
