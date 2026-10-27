@@ -124,6 +124,8 @@ class ShsatQuestionGraderTest {
             json("{\"answers\":{\"b1\":\"A\"}}"), config, null));
         assertFalse(grader.grade("INLINE_CHOICE", json("{\"answers\":{\"b1\":\"A\"}}"),
             json("{\"answers\":{\"b1\":\"Z\"}}"), config, null));
+        assertTrue(grader.grade("INLINE_CHOICE_DROPDOWN", json("{\"answers\":{\"b1\":\"A\"}}"),
+            json("{\"answers\":{\"b1\":\"A\"}}"), config, null));
     }
 
     @Test
@@ -171,6 +173,8 @@ class ShsatQuestionGraderTest {
     void gradesTableGridSelectionsAndRejectsUnknownRows() throws Exception {
         JsonNode config = json("{\"questionConfig\":{\"rows\":[{\"id\":\"r1\"}],\"columns\":[{\"id\":\"c1\"}]}}");
         assertTrue(grader.grade("TABLE_GRID", json("{\"cells\":{\"r1.c1\":\"true\"}}"),
+            json("{\"selections\":{\"r1\":\"c1\"}}"), config, null));
+        assertTrue(grader.grade("CUSTOM_TABLE_GRID", json("{\"selections\":{\"r1\":\"c1\"}}"),
             json("{\"selections\":{\"r1\":\"c1\"}}"), config, null));
         assertFalse(grader.grade("TABLE_GRID", json("{\"selections\":{\"r1\":\"c1\"}}"),
             json("{\"selections\":{\"r2\":\"c1\"}}"), config, null));

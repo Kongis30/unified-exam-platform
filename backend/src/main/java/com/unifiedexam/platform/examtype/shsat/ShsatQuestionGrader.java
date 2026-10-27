@@ -33,11 +33,11 @@ final class ShsatQuestionGrader {
         if (type.contains("ESSAY") || type.contains("WRITING") || type.contains("UPLOAD")) return null;
 
         if (isSelection(type)) return selection(type, key, answer, render, config, grading);
-        if (type.equals("INLINE_CHOICE")) return inlineChoice(key, answer, config);
+        if (type.contains("INLINE_CHOICE")) return inlineChoice(key, answer, config);
         if (type.equals("DRAG_AND_DROP")) return dragAndDrop(key, answer, config);
         if (type.equals("HOT_TEXT")) return selectionSet(key, answer, config, true);
         if (type.equals("HOT_SPOT")) return selectionSet(key, answer, config, false);
-        if (type.equals("TABLE_GRID")) return tableGrid(key, answer, config);
+        if (type.contains("TABLE_GRID")) return tableGrid(key, answer, config);
         if (type.equals("GRAPH_QUESTION") || type.contains("POINT_GRAPH")) return graph(key, answer, config);
         if (type.equals("SOLUTION_SET")) return solutionSet(key, answer);
         if (type.contains("FILL") || type.contains("BLANK") || type.contains("SHORT")

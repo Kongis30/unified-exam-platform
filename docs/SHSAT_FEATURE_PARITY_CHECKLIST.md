@@ -481,7 +481,7 @@
 
 - [x] **选择题数量限制与独立版评分规则对齐（2026-10-27）**：对照独立版 `SelectionGradingStrategy`，发现统一版未执行 `requiredSelections` / `exactSelections` / `selectionCount` 和 `selectionLimit` / `maxSelections` / `maxSelected`，因此部分配置下会把超出或不足数量的集合判为正确。统一版现从题目配置及 `grading_json` 读取这些约束，并保留 FIXED/EXACT 题型的默认答案数量规则。新增回归覆盖题目配置的必选数、评分规则的最多选择数及固定选择题；`ShsatQuestionGraderTest` 和完整后端测试均通过（Java 17，22 个测试套件、110 项，失败/错误/跳过均为 0）。
 - [x] **拖放题无效结构拒绝与独立版对齐（2026-10-27）**：对照独立版 `DragAndDropGradingStrategy`，统一版曾在缺少目标/选项配置时宽松接受答案，且会把 placements 的反向/单值结构当作有效数据。现在要求有效配置边界；新格式 placements 必须是 target → choices 数组，旧格式 matches 仍兼容 item ↔ zone 的两种映射方向。新增缺配置、错误结构、反向 placements 与两种旧 matches 方向回归；完整后端测试通过（Java 17，22 个测试套件、111 项，失败/错误/跳过均为 0）。
-- [x] **历史选择答案字段与题型别名兼容（2026-10-27）**：再对照独立版 `GradingSupport` 发现统一版遗漏 `selectedAnswer`、`selectedIds`、`regions` 选择答案字段，以及 `MULTIPLE_SELECT`、`MULTIPLE_SELECTION`、`FIXED_MULTI_SELECT`、`MULTISELECT_FIXED`、`FILL_IN_THE_BLANK` 等题型别名；这会使部分旧格式答案无法评分或使旧类型未进入评分器。已补字段兼容和独立版同等的题型规范化，并加入字段/别名单测。完整后端测试通过（Java 17，22 个测试套件、112 项，失败/错误/跳过均为 0）。
+- [x] **历史选择答案字段与题型分派兼容（2026-10-27）**：再对照独立版 `GradingSupport` 与各题型策略发现统一版遗漏 `selectedAnswer`、`selectedIds`、`regions` 选择答案字段，以及 `MULTIPLE_SELECT`、`MULTIPLE_SELECTION`、`FIXED_MULTI_SELECT`、`MULTISELECT_FIXED`、`FILL_IN_THE_BLANK` 等题型别名；Inline Choice 和 Table Grid 策略也未沿用源版按类型代码包含标记的分派规则。这会使部分旧格式答案无法评分或旧类型未进入评分器。现补字段兼容、同等题型规范化及类型分派，并加入相应单测。完整后端测试通过（Java 17，22 个测试套件、112 项，失败/错误/跳过均为 0）。
 
 ## 9. 建议执行顺序与完成门槛
 
