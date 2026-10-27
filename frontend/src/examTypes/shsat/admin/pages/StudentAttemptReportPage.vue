@@ -2434,8 +2434,6 @@ onMounted(loadReport);
 
   .question-set-card {
     overflow: visible;
-    break-inside: avoid;
-    page-break-inside: avoid;
   }
 
   .question-section__header {
@@ -2459,17 +2457,20 @@ onMounted(loadReport);
   }
 
   .question-table tbody tr {
-    display: grid;
+    display: inline-grid;
+    width: 100%;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
     grid-template-areas:
       "question type status score"
       "your your your your"
       "correct correct correct correct";
     gap: 8px 12px;
+    box-sizing: border-box;
     border: 1px solid var(--color-border);
     border-radius: 8px;
     padding: 10px 12px;
     margin-bottom: 10px;
+    vertical-align: top;
     break-inside: avoid;
     page-break-inside: avoid;
   }
