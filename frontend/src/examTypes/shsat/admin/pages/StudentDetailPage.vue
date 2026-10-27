@@ -257,7 +257,7 @@ function formatShortDate(value) {
 }
 
 function formatScore(value) {
-  return value === null || value === undefined || value === '' ? '-' : Number(value).toString();
+  return value === null || value === undefined || value === '' || value === '-' ? '-' : Number(value).toString();
 }
 
 // 依据当前成绩跨度选取易读的纵轴刻度，避免单次记录时出现长小数标签。
@@ -491,7 +491,7 @@ function resizeTrendChart() {
   void renderTrendChart();
 }
 
-watch([attempts, trendScoreMode], async () => {
+watch([attempts, trendScoreMode, loading], async () => {
   await nextTick();
   await renderTrendChart();
 }, { deep: true });
@@ -677,7 +677,7 @@ onBeforeUnmount(() => {
                         <strong>{{ getScaledScore(attempt) === null ? 'Total unavailable' : formatScaledScore(attempt) }}</strong>
                         <span>{{ formatSectionBreakdown(attempt, 'SCALED') }}</span>
                       </div>
-                      <span v-else class="history-score-unavailable">Not available</span>
+                      <span v-else class="history-score-unavailable">—</span>
                     </td>
                     <td data-label="Submitted">
                       <span class="history-submitted">{{ formatDateTime(attempt.submittedAt) }}</span>

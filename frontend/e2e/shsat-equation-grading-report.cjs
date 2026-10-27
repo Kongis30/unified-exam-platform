@@ -164,7 +164,7 @@ async function main() {
     const release = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
       title, description: 'Temporary equation notation parity scoring test',
       opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
-      durationSeconds: 1_200, attemptLimit: 1, targetScope: 'SELECTED', autoSubmit: true, allowReview: true,
+      durationSeconds: 1_200, attemptLimit: 3, targetScope: 'SELECTED', autoSubmit: true, allowReview: true,
     });
     examId = Number(release.summary.id);
     await api(admin, `/api/admin/exams/${examId}/targets`, 'PUT', { classIds: [classId], studentUserIds: [] });
@@ -441,6 +441,13 @@ async function main() {
     await fs.writeFile(reportPdfPath, reportPdf);
     await student.emulateMedia({ media: 'screen' });
 
+    for (let attemptNumber = 2; attemptNumber <= 3; attemptNumber += 1) {
+      const retake = await api(student, `/api/student/exams/${examId}/attempts`, 'POST', { firstSection: 'ELA' });
+      const retakeId = Number(retake.id || retake.attemptId);
+      const submitted = await api(student, `/api/student/attempts/${retakeId}/submit`, 'POST');
+      assert.ok(['SUBMITTED', 'COMPLETED'].includes(submitted.status), `student detail sample retake ${attemptNumber} submits`);
+    }
+
     await api(admin, `/api/admin/exams/${examId}/close`, 'POST');
     const revealedStudentReport = await api(student, `/api/student/attempts/${attemptId}/report`);
     assert.equal(revealedStudentReport.answersVisible, true,
@@ -471,10 +478,10 @@ async function main() {
     await admin.goto(`${baseUrl}/exam-types/SHSAT/admin/classes/${classId}/students/${userId}?studentName=${encodeURIComponent(`Equation Student ${suffix}`)}&studentNumber=${encodeURIComponent(username)}&className=${encodeURIComponent(`Equation ${suffix}`)}`);
     await admin.getByRole('heading', { name: `Equation Student ${suffix}`, exact: true }).waitFor();
     const historyRow = admin.locator('.history-table tbody tr').filter({ hasText: title });
-    await historyRow.waitFor();
-    await historyRow.getByText('11 / 13', { exact: true }).waitFor();
-    await historyRow.getByText(`${expectedScale.composite} / 720`, { exact: true }).waitFor();
-    await historyRow.getByRole('button', { name: /View report/i }).click();
+    const originalScoredHistoryRow = historyRow.filter({ hasText: '11 / 13' });
+    await originalScoredHistoryRow.waitFor();
+    await originalScoredHistoryRow.getByText(`${expectedScale.composite} / 720`, { exact: true }).waitFor();
+    await originalScoredHistoryRow.getByRole('button', { name: /View report/i }).click();
     await admin.waitForURL(url => url.pathname === `/student/attempts/${attemptId}/report`);
     const reportPage = admin.locator('.attempt-report');
     await reportPage.getByRole('heading', { name: 'Knowledge and Skills', exact: true }).waitFor();
@@ -586,22 +593,132 @@ async function main() {
     await admin.screenshot({ path: `/tmp/shsat-admin-report-mobile-${stamp}.png` });
     await admin.getByRole('button', { name: 'Back to Student Detail', exact: true }).click();
     await admin.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/classes/${classId}/students/${userId}`);
+    await admin.setViewportSize({ width: 1440, height: 1000 });
     await admin.getByRole('button', { name: 'Scaled', exact: true }).click();
     await admin.locator('.score-chart canvas').waitFor();
     await admin.waitForTimeout(500);
     await admin.screenshot({ path: `/tmp/shsat-scaled-student-detail-${stamp}.png`, fullPage: true });
+
+    const reconciledHistory = await api(admin, `/api/admin/reports/students/${userId}/attempts`);
+    assert.equal(reconciledHistory.length, 3, 'student history API contains all three completed attempts');
+    const scoredRows = reconciledHistory.filter(row => row.compositeScore !== null && row.compositeScore !== undefined);
+    const expectedDisplayedScores = scoredRows.map(row => Number(row.compositeScore));
+    const expectedAverage = Math.round(expectedDisplayedScores.reduce((sum, score) => sum + score, 0) / expectedDisplayedScores.length);
+    const expectedHighest = Math.max(...expectedDisplayedScores);
+    const refreshHistoryResponse = admin.waitForResponse(response => response.url().endsWith(`/api/admin/reports/students/${userId}/attempts`));
+    await admin.getByRole('button', { name: 'Refresh history' }).click();
+    assert.equal((await refreshHistoryResponse).status(), 200, 'student detail refresh reloads the history API');
+    const historyRows = admin.locator('.history-table tbody tr');
+    await historyRows.nth(2).waitFor();
+    const summaryValues = await admin.locator('.summary-grid dd').allTextContents();
+    assert.deepEqual(summaryValues.map(value => value.trim()), ['3', '3', String(expectedAverage), String(expectedHighest)],
+      'attempt counts, average, and highest score reconcile with the completed-attempt API records');
+
+    const readScoreColumn = async (label) => historyRows.evaluateAll((rows, targetLabel) => rows.map(row => {
+      const cell = [...row.querySelectorAll('td')].find(item => item.dataset.label === targetLabel);
+      return cell?.querySelector('strong')?.textContent.trim() || '';
+    }), label);
+    const rawSort = admin.getByRole('button', { name: /Raw Score/ });
+    await rawSort.click();
+    const rawDescending = (await readScoreColumn('Raw score')).map(value => Number(value.split('/')[0].trim()));
+    assert.deepEqual(rawDescending, [...rawDescending].sort((left, right) => right - left),
+      'Raw Score sorts completed attempts from highest to lowest');
+    await rawSort.click();
+    const rawAscending = (await readScoreColumn('Raw score')).map(value => Number(value.split('/')[0].trim()));
+    assert.deepEqual(rawAscending, [...rawAscending].sort((left, right) => left - right),
+      'Raw Score toggles to lowest-to-highest order');
+    const scaledSort = admin.getByRole('button', { name: /Scaled Score/ });
+    await scaledSort.click();
+    const scaledDescending = (await readScoreColumn('Scaled score')).map(value => Number(value.split('/')[0].trim()));
+    assert.deepEqual(scaledDescending, [...scaledDescending].sort((left, right) => right - left),
+      'Scaled Score sorts completed attempts from highest to lowest');
+    await scaledSort.click();
+    const scaledAscending = (await readScoreColumn('Scaled score')).map(value => Number(value.split('/')[0].trim()));
+    assert.deepEqual(scaledAscending, [...scaledAscending].sort((left, right) => left - right),
+      'Scaled Score toggles to lowest-to-highest order');
+
+    const historyEndpoint = `**/api/admin/reports/students/${userId}/attempts`;
+    await admin.route(historyEndpoint, async route => {
+      const response = await route.fetch();
+      const records = await response.json();
+      records.push({
+        ...records[0], attemptId: 999_999_999, attemptNumber: 99, scoringMode: 'RAW_ONLY',
+        compositeScore: null, totalScaledScore: null, elaScaledScore: null, mathScaledScore: null,
+        section1ScaledScore: null, section2ScaledScore: null,
+        submittedAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      await route.fulfill({ response, json: records });
+    }, { times: 1 });
+    const rawOnlyRefresh = admin.waitForResponse(response => response.url().endsWith(`/api/admin/reports/students/${userId}/attempts`));
+    await admin.getByRole('button', { name: 'Refresh history' }).click();
+    assert.equal((await rawOnlyRefresh).status(), 200, 'the raw-only legacy sample loads with student history');
+    const rawOnlyRow = admin.locator('.history-table tbody tr').filter({ hasText: 'Attempt #99' });
+    await rawOnlyRow.waitFor();
+    assert.equal((await rawOnlyRow.locator('[data-label="Scaled score"]').innerText()).trim(), '—',
+      'a source result without a scoring table displays a dash instead of an invented scaled score');
+    await admin.unroute(historyEndpoint);
+
+    await admin.route(historyEndpoint, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([{
+        ...reconciledHistory[0], attemptId: 999_999_998, attemptNumber: 1, status: 'IN_PROGRESS',
+        scoringMode: 'RAW_ONLY', rawTotalScore: null, totalScore: null, compositeScore: null,
+        totalScaledScore: null, elaScaledScore: null, mathScaledScore: null,
+        section1ScaledScore: null, section2ScaledScore: null, submittedAt: null,
+      }]),
+    }), { times: 1 });
+    const inProgressHistory = admin.waitForResponse(response => response.url().endsWith(`/api/admin/reports/students/${userId}/attempts`));
+    await admin.getByRole('button', { name: 'Refresh history' }).click();
+    assert.equal((await inProgressHistory).status(), 200);
+    await admin.getByRole('heading', { name: 'Score Statistics', exact: true }).waitFor();
+    assert.deepEqual((await admin.locator('.summary-grid dd').allTextContents()).map(value => value.trim()), ['1', '0', '-', '-'],
+      'a student with no completed attempts sees dashes instead of NaN statistics');
+    await admin.unroute(historyEndpoint);
+    const restoreHistory = admin.waitForResponse(response => response.url().endsWith(`/api/admin/reports/students/${userId}/attempts`));
+    await admin.getByRole('button', { name: 'Refresh history' }).click();
+    assert.equal((await restoreHistory).status(), 200, 'history returns to persisted records after the no-score state check');
+    await admin.locator('.history-table tbody tr').nth(2).waitFor();
+
+    await admin.route(historyEndpoint, route => route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ message: 'Student history is temporarily unavailable.' }),
+    }), { times: 1 });
+    await admin.getByRole('button', { name: 'Refresh history' }).click();
+    await admin.getByRole('heading', { name: 'Unable to Load History', exact: true }).waitFor();
+    await admin.getByRole('button', { name: 'Retry', exact: true }).click();
+    await admin.getByRole('heading', { name: 'Score Statistics', exact: true }).waitFor();
+    await admin.locator('.history-table tbody tr').nth(2).waitFor();
+    await admin.unroute(historyEndpoint);
+    await admin.screenshot({ path: `/tmp/shsat-scaled-student-detail-${stamp}.png`, fullPage: true });
+
     await admin.setViewportSize({ width: 390, height: 844 });
+    await admin.waitForTimeout(500);
     const studentDetailMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(studentDetailMobileSize.page <= studentDetailMobileSize.viewport, 'the scaled student detail fits a 390px viewport');
+    await admin.locator('.score-chart').scrollIntoViewIfNeeded();
+    await admin.locator('.score-chart canvas').waitFor();
+    await admin.waitForTimeout(300);
+    const mobileChartMetrics = await admin.locator('.score-chart canvas').evaluate(canvas => {
+      const bounds = canvas.getBoundingClientRect();
+      return { width: canvas.width, height: canvas.height, visibleWidth: bounds.width, visibleHeight: bounds.height };
+    });
+    assert.ok(mobileChartMetrics.width > 0 && mobileChartMetrics.height > 0
+      && mobileChartMetrics.visibleWidth > 0 && mobileChartMetrics.visibleHeight > 0,
+    `the scaled trend chart remains rendered at mobile width: ${JSON.stringify(mobileChartMetrics)}`);
     const mobileHistoryWidth = await admin.locator('.history-table-wrap').evaluate(element => ({
       client: element.clientWidth,
       scroll: element.scrollWidth,
     }));
     assert.ok(mobileHistoryWidth.scroll <= mobileHistoryWidth.client + 1,
       'the score history uses a readable mobile layout without horizontal scrolling');
-    assert.ok(await historyRow.getByRole('button', { name: /View report/i }).isVisible(),
+    assert.ok(await originalScoredHistoryRow.getByRole('button', { name: /View report/i }).isVisible(),
       'the report action remains visible in the mobile score history');
+    await admin.evaluate(() => window.scrollTo(0, 0));
     await admin.screenshot({ path: `/tmp/shsat-scaled-student-detail-mobile-${stamp}.png`, fullPage: true });
+    await admin.getByRole('button', { name: 'Back to Class Detail', exact: true }).click();
+    await admin.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/classes/${classId}`);
 
     await student.setViewportSize({ width: 390, height: 844 });
     const mobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
@@ -623,7 +740,7 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS', scoringProfileCode, totalScore: result.totalScore, compositeScore: result.compositeScore,
       questionResults: result.questions.map(question => [question.partCode, question.correct]),
-      mobileSize, dragMobileSize, adminReportMobileSize, studentDetailMobileSize, pageErrors: pageErrors.length,
+      mobileSize, dragMobileSize, adminReportMobileSize, studentDetailMobileSize, mobileChartMetrics, pageErrors: pageErrors.length,
       screenshots: [`/tmp/shsat-equation-report-${stamp}.png`, `/tmp/shsat-equation-report-mobile-${stamp}.png`,
         `/tmp/shsat-drag-and-drop-report-mobile-${stamp}.png`,
         `/tmp/shsat-student-report-answers-visible-${stamp}.png`, `/tmp/shsat-student-report-answers-visible-mobile-${stamp}.png`,
