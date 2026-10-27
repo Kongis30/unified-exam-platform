@@ -14,7 +14,13 @@ async function main() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const pageErrors = [];
   const failedApiResponses = [];
+  const previewWriteRequests = [];
   page.on('pageerror', error => pageErrors.push(error.message));
+  page.on('request', request => {
+    if (request.url().includes('/api/student/attempts') && request.method() !== 'GET') {
+      previewWriteRequests.push(`${request.method()} ${request.url()}`);
+    }
+  });
   page.on('response', async response => {
     if (response.url().includes('/api/') && response.status() >= 400) {
       failedApiResponses.push({ status: response.status(), url: response.url(), body: await response.text().catch(() => '') });
@@ -257,6 +263,83 @@ async function main() {
     await page.getByRole('heading', { name: 'Question 1 · Multiple Choice', exact: true }).waitFor();
     await nextQuestion.click();
     await page.getByRole('heading', { name: 'Question 2 · Multiple Choice', exact: true }).waitFor();
+
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.getByText(questionStem, { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByText(mathStem, { exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-paper-preview-tools-desktop-${stamp}.png` });
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    await page.getByText(questionStem, { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Bookmark', exact: true }).click();
+    await page.getByRole('button', { name: 'Review', exact: true }).click();
+    const reviewPanel = page.locator('.review-panel');
+    const bookmarkFilter = reviewPanel.locator('.stat-item').filter({ hasText: 'Bookmarks' });
+    assert.equal((await bookmarkFilter.locator('.stat-number').innerText()).trim(), '1',
+      'preview review counts the bookmarked question');
+    await bookmarkFilter.click();
+    assert.equal(await reviewPanel.locator('.question-list button').count(), 1,
+      'the bookmark filter limits the preview question list');
+    await reviewPanel.getByRole('button', { name: /Question 1/ }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByText(mathStem, { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Bookmark', exact: true }).click();
+    await page.getByRole('button', { name: 'Review', exact: true }).click();
+    assert.equal((await reviewPanel.locator('.stat-item').filter({ hasText: 'Bookmarks' }).locator('.stat-number').innerText()).trim(), '2',
+      'bookmarks update across ELA and Math preview sections');
+    await page.getByRole('button', { name: 'Font Size', exact: true }).click();
+    await page.getByRole('button', { name: '1.3x', exact: true }).click();
+    assert.equal(await page.locator('.exam-question-shell').evaluate(element => element.style.getPropertyValue('--exam-font-scale')), '1.3',
+      'the font-size tool updates the preview question');
+    await page.getByRole('button', { name: 'Page Width', exact: true }).click();
+    await page.getByRole('button', { name: 'Extra Wide', exact: true }).click();
+    assert.ok((await page.locator('.student-exam').getAttribute('class')).includes('student-exam--ultra-wide'),
+      'the page-width tool applies the selected preview layout');
+    await page.getByRole('button', { name: 'Notepad', exact: true }).click();
+    const notesPanel = page.getByRole('dialog', { name: 'Notes' });
+    await notesPanel.waitFor();
+    await notesPanel.locator('textarea').fill('Preview-only note');
+    await notesPanel.getByRole('button', { name: 'Close Notes', exact: true }).click();
+    await page.getByRole('button', { name: 'Notepad', exact: true }).click();
+    assert.equal(await page.getByRole('dialog', { name: 'Notes' }).locator('textarea').inputValue(), 'Preview-only note',
+      'preview notes remain available after closing and reopening the notepad');
+    await page.getByRole('button', { name: 'Close Notes', exact: true }).click();
+    await page.getByRole('button', { name: 'Highlighter', exact: true }).click();
+    assert.ok((await page.getByRole('button', { name: 'Highlighter', exact: true }).getAttribute('class')).includes('active'),
+      'the highlighter tool can be enabled in preview mode');
+    await page.getByRole('button', { name: 'Line Reader', exact: true }).click();
+    await page.locator('.line-reader').waitFor();
+    await page.getByRole('button', { name: 'Line Reader', exact: true }).click();
+    await page.locator('.line-reader').waitFor({ state: 'detached' });
+    assert.deepEqual(previewWriteRequests, [],
+      `preview interactions do not write student attempts: ${previewWriteRequests.join(', ')}`);
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.getByText(questionStem, { exact: true }).waitFor();
+    const previewMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(previewMobileSize.page <= previewMobileSize.viewport, 'the paper preview fits a 390px viewport');
+    const mobileToolbar = page.locator('.exam-toolbar');
+    const mobileToolbarMetrics = await mobileToolbar.evaluate(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      maxScrollLeft: element.scrollWidth - element.clientWidth,
+    }));
+    assert.ok(mobileToolbarMetrics.maxScrollLeft > 0,
+      'the mobile preview toolbar exposes overflow through its own horizontal scroll');
+    await page.screenshot({ path: `/tmp/shsat-paper-preview-tools-mobile-${stamp}.png` });
+    await mobileToolbar.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+    const mobileBackBounds = await page.getByRole('button', { name: 'Back', exact: true }).boundingBox();
+    assert.ok(mobileBackBounds && mobileBackBounds.x >= 0 && mobileBackBounds.x + mobileBackBounds.width <= 390,
+      `the preview Back control is reachable at the end of the mobile toolbar: ${JSON.stringify(mobileBackBounds)}`);
+    await page.screenshot({ path: `/tmp/shsat-paper-preview-tools-mobile-end-${stamp}.png` });
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
+    await page.setViewportSize({ width: 1440, height: 1000 });
 
     await page.getByRole('button', { name: 'Delete Question', exact: true }).click();
     await page.getByRole('heading', { name: 'Delete Question?' }).waitFor();
@@ -523,9 +606,12 @@ async function main() {
         'Stay preserves edits', 'Leave Without Saving discards edits', 'saved question survives reload',
         'primary and secondary type create/edit/delete and protect referenced types', 'official SHSAT labels are protected',
         'import source, performance filter, preview, cancel, and confirm',
-        'preview shows saved question and Back returns to editor', 'per-part add and question navigation',
+        'preview review/bookmark/section navigation and toolbar tools', 'preview does not write student attempts',
+        'desktop/mobile preview and Back', 'per-part add and question navigation',
         'question deletion cancel and confirm', 'question explanation, points, and scoring override survive editor save/reload', '390px editor layout'],
       mobileSize,
+      previewMobileSize,
+      mobileToolbarMetrics,
       pageErrors: pageErrors.length,
       screenshots: ['clean', 'saved', 'save-conflict', 'preview', 'import', 'import-mobile', 'mobile-success-notice', 'mobile']
         .map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`)
