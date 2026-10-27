@@ -54,6 +54,11 @@ final class ShsatQuestionGrader {
         return false;
     }
 
+    boolean hasMeaningfulAnswer(String rawType, JsonNode answer) {
+        if (normalize(rawType).equals("SOLUTION_SET")) return solution(answer) != null;
+        return hasMeaningfulAnswer(answer);
+    }
+
     private boolean isSelection(String type) {
         return type.equals("MULTIPLE_CHOICE") || type.equals("SINGLE_CHOICE") || type.equals("CHOICE")
             || type.contains("MULTI_SELECT") || type.contains("MULTISELECT") || type.contains("MULTIPLE_RESPONSE")
@@ -284,22 +289,30 @@ final class ShsatQuestionGrader {
         }
     }
 
-    private boolean solutionSet(JsonNode key, JsonNode answer) {
-        JsonNode expected = first(key, "solution", "answer");
-        JsonNode submitted = first(answer, "solution", "answer");
-        if (expected == null) expected = key;
-        if (submitted == null) submitted = answer;
-        if (expected == null || submitted == null) return false;
-        String type = token(text(expected.path("type")));
-        if (type.isBlank() || !type.equals(token(text(submitted.path("type"))))) return false;
-        for (String field : List.of("direction", "endpointIncluded", "leftIncluded", "rightIncluded")) {
-            if (expected.has(field) && !normalizedField(expected.get(field)).equals(normalizedField(submitted.get(field)))) return false;
-        }
-        for (String field : List.of("endpoint", "left", "right")) {
-            if (expected.hasNonNull(field) && !sameDecimal(expected.get(field), submitted.get(field))) return false;
-        }
-        return true;
+    private Boolean solutionSet(JsonNode key, JsonNode answer) {
+        Solution expected = solution(key);
+        Solution submitted = solution(answer);
+        if (expected == null) return false;
+        if (submitted == null) return null;
+        return expected.equals(submitted);
     }
+
+    private Solution solution(JsonNode data) {
+        // 与独立版一致，只接受数值端点的标准射线；缺失或畸形答案按未作答处理。
+        JsonNode solution = first(data, "solution", "answer");
+        if (solution == null) solution = data;
+        if (solution == null || !solution.isObject()) return null;
+
+        String type = text(solution.path("type")).trim();
+        if (type.isBlank()) type = "ray";
+        JsonNode endpoint = solution.get("endpoint");
+        String direction = text(solution.path("direction")).trim();
+        if (!"ray".equals(type) || endpoint == null || !endpoint.isNumber()
+            || (!"left".equals(direction) && !"right".equals(direction))) return null;
+        return new Solution(endpoint.doubleValue(), solution.path("endpointIncluded").asBoolean(false), direction);
+    }
+
+    private record Solution(double endpoint, boolean endpointIncluded, String direction) { }
 
     private Map<String, String> answerMap(JsonNode data) {
         JsonNode node = first(data, "answers", "selectedAnswers", "selections", "values");
@@ -452,15 +465,6 @@ final class ShsatQuestionGrader {
         } catch (NumberFormatException | ArithmeticException exception) {
             return null;
         }
-    }
-
-    private boolean sameDecimal(JsonNode left, JsonNode right) {
-        try { return new BigDecimal(text(left)).compareTo(new BigDecimal(text(right))) == 0; }
-        catch (NumberFormatException exception) { return false; }
-    }
-
-    private String normalizedField(JsonNode value) {
-        return value == null ? "" : value.isBoolean() ? Boolean.toString(value.asBoolean()) : token(text(value));
     }
 
     private String text(JsonNode node) { return node == null || node.isNull() ? "" : node.asText(""); }

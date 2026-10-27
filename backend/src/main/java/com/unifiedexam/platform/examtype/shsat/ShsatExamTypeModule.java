@@ -42,6 +42,11 @@ public class ShsatExamTypeModule implements ExamTypeModule {
     }
 
     @Override
+    public boolean hasMeaningfulAnswer(String questionTypeCode, JsonNode answer) {
+        return questionGrader.hasMeaningfulAnswer(questionTypeCode, answer);
+    }
+
+    @Override
     public boolean supportsStudentAttempts() {
         return true;
     }

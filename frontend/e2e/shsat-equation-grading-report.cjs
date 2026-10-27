@@ -37,6 +37,7 @@ async function main() {
   let paperId;
   let examId;
   let noReviewExamId;
+  let malformedSolutionExamId;
 
   try {
     await login(admin, adminUsername, adminPassword);
@@ -389,6 +390,12 @@ async function main() {
       ['ELA', true], ['ELA', true], ['ELA', true], ['ELA', true],
       ['MATH', true], ['MATH', true], ['MATH', true], ['MATH', true], ['MATH', true], ['MATH', true], ['MATH', true], ['MATH', false], ['MATH', null],
     ]);
+    assert.deepEqual(result.questions.map(question => [question.questionType, question.correct]), [
+      ['MULTIPLE_CHOICE', true], ['MULTI_SELECT', true], ['MULTI_SELECT_FIXED', true], ['INLINE_CHOICE', true],
+      ['EQUATION_EDITOR', true], ['GRAPH_QUESTION', true], ['TABLE_GRID', true], ['DRAG_AND_DROP', true],
+      ['SOLUTION_SET', true], ['FILL_IN_BLANK', true], ['HOT_TEXT', true],
+      ['MULTIPLE_CHOICE', false], ['MULTIPLE_CHOICE', null],
+    ], 'the report preserves the expected correct/wrong/blank outcome for each exercised question type');
     assert.ok(result.questions.reduce((total, question) => total + Number(question.timeSpent || 0), 0) > 0,
       'the report uses time recorded while the student is answering');
     const classScores = await api(admin, `/api/admin/reports/exams/${examId}/classes/${classId}`);
@@ -813,6 +820,38 @@ async function main() {
       'the report with question review disabled fits a 390px viewport');
     await student.screenshot({ path: `/tmp/shsat-student-report-review-disabled-mobile-${stamp}.png` });
 
+    const malformedSolutionRelease = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
+      title: `${title} Malformed Solution`, description: 'Invalid solution answer boundary check',
+      opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      durationSeconds: 1_200, attemptLimit: 1, targetScope: 'SELECTED', autoSubmit: true,
+      allowReview: true, scoreVisibility: 'AFTER_SUBMIT', answerVisibility: 'AFTER_SUBMIT',
+    });
+    malformedSolutionExamId = Number(malformedSolutionRelease.summary.id);
+    await api(admin, `/api/admin/exams/${malformedSolutionExamId}/targets`, 'PUT', { classIds: [classId], studentUserIds: [] });
+    await api(admin, `/api/admin/exams/${malformedSolutionExamId}/publish`, 'POST');
+    const malformedSolutionAttempt = await api(student,
+      `/api/student/exams/${malformedSolutionExamId}/attempts`, 'POST', { firstSection: 'MATH' });
+    const malformedSolutionAttemptId = Number(malformedSolutionAttempt.id || malformedSolutionAttempt.attemptId);
+    await api(student, `/api/student/attempts/${malformedSolutionAttemptId}/answers/${solutionItem.paperItemId}`, 'PUT', {
+      answer: { solution: { type: 'ray', endpoint: '9', endpointIncluded: true, direction: 'right' } },
+      timeSpentSeconds: 0,
+    });
+    await api(student, `/api/student/attempts/${malformedSolutionAttemptId}/submit`, 'POST');
+    const malformedSolutionReport = await api(admin, `/api/admin/reports/attempts/${malformedSolutionAttemptId}/result`);
+    const malformedSolutionResult = malformedSolutionReport.questions.find(question => Number(question.questionNumber) === 62);
+    assert.equal(malformedSolutionResult.correct, null,
+      'a malformed solution-set endpoint is recorded as ungraded, matching the independent SHSAT grader');
+    assert.equal(malformedSolutionReport.wrongCount, 0,
+      'an invalid solution-set shape does not inflate wrong-answer totals');
+    assert.equal(malformedSolutionReport.unansweredCount, 12,
+      'the report counts only the single stored answer row as answered');
+    await api(admin, `/api/admin/exams/${malformedSolutionExamId}/close`, 'POST');
+    const malformedStudentReport = await api(student, `/api/student/attempts/${malformedSolutionAttemptId}/report`);
+    assert.equal(malformedStudentReport.scoreVisible, true,
+      'an invalid ungraded answer does not incorrectly hide the submitted score');
+    assert.equal(malformedStudentReport.questions.find(question => Number(question.questionNumber) === 62).correct, null,
+      'after exam close the student report still presents the malformed answer as unanswered');
+
     assert.deepEqual(pageErrors, [], 'the student exam and report have no browser errors');
 
     console.log(JSON.stringify({
@@ -834,6 +873,7 @@ async function main() {
         `/tmp/shsat-student-report-review-disabled-mobile-${stamp}.png`],
     }));
   } finally {
+    if (malformedSolutionExamId) await api(admin, `/api/admin/exams/${malformedSolutionExamId}`, 'DELETE').catch(() => {});
     if (noReviewExamId) await api(admin, `/api/admin/exams/${noReviewExamId}`, 'DELETE').catch(() => {});
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (classId && userId) await api(admin, `/api/admin/classes/${classId}/students/${userId}`, 'DELETE').catch(() => {});

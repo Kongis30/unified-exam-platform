@@ -389,19 +389,20 @@ public class StudentAttemptService {
         }
         String next = order.get(index + 1).asText();
         List<SectionAnswer> sectionAnswers = jdbcTemplate.query("""
-            SELECT pi.display_number, aa.answer_json
+            SELECT pi.display_number, q.question_type_code, aa.answer_json
             FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+            JOIN questions q ON q.id = pi.question_id
             JOIN paper_sections section ON section.id = pi.section_id
             LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
             WHERE ai.attempt_id = ? AND COALESCE(parent.section_code, section.section_code) = ?
             ORDER BY pi.display_number
-            """, (rs, rowNum) -> new SectionAnswer(rs.getInt("display_number"),
+            """, (rs, rowNum) -> new SectionAnswer(rs.getInt("display_number"), rs.getString("question_type_code"),
                 parseNullable(rs.getString("answer_json"))), attemptId, current);
         if (!attempt.practice()) {
             ExamTypeModule module = registeredModule(attempt.examTypeCode());
             List<Integer> unanswered = sectionAnswers.stream()
-                .filter(answer -> !module.hasMeaningfulAnswer(answer.answer()))
+                .filter(answer -> !module.hasMeaningfulAnswer(answer.questionTypeCode(), answer.answer()))
                 .map(SectionAnswer::questionNumber)
                 .toList();
             if (!unanswered.isEmpty()) {
@@ -583,7 +584,7 @@ public class StudentAttemptService {
         for (GradingRow item : items) {
             Boolean correct = module.grade(item.questionTypeCode(), item.answerKey(), item.answer(),
                 item.render(), item.grading());
-            if (correct == null) ungradedCount++;
+            if (correct == null && module.hasMeaningfulAnswer(item.questionTypeCode(), item.answer())) ungradedCount++;
             BigDecimal points = Boolean.TRUE.equals(correct) ? item.maxPoints() : BigDecimal.ZERO;
             total = total.add(points);
             maximum = maximum.add(item.maxPoints());
@@ -1058,5 +1059,5 @@ public class StudentAttemptService {
                               String startedAt, String expiresAt, String submittedAt,
                               List<AttemptQuestion> questions, AttemptResultView result, JsonNode progressState) { }
     public record AttemptResultView(BigDecimal totalPoints, BigDecimal maxPoints, String gradedAt) { }
-    private record SectionAnswer(int questionNumber, JsonNode answer) { }
+    private record SectionAnswer(int questionNumber, String questionTypeCode, JsonNode answer) { }
 }

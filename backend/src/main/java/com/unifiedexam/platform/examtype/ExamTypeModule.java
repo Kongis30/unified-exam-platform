@@ -23,6 +23,11 @@ public interface ExamTypeModule {
         return answer != null && !answer.isNull();
     }
 
+    /** 允许题型模块按答案结构判断作答完整度；默认沿用类型级通用判断。 */
+    default boolean hasMeaningfulAnswer(String questionTypeCode, JsonNode answer) {
+        return hasMeaningfulAnswer(answer);
+    }
+
     /** 只有已完成最小作答链路的类型才会进入学生可作答列表。 */
     default boolean supportsStudentAttempts() {
         return false;

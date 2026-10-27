@@ -116,9 +116,23 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
-    void gradesSolutionSetAndLeavesManualOrUnknownTypesUnscored() throws Exception {
-        assertTrue(grade("SOLUTION_SET", "{\"solution\":{\"type\":\"ray\",\"endpoint\":1,\"endpointIncluded\":true,\"direction\":\"right\"}}",
+    void distinguishesInvalidSolutionSetAnswersFromIncorrectValidAnswers() throws Exception {
+        String expected = "{\"solution\":{\"type\":\"ray\",\"endpoint\":1,\"endpointIncluded\":true,\"direction\":\"right\"}}";
+        assertTrue(grade("SOLUTION_SET", expected,
             "{\"solution\":{\"type\":\"ray\",\"endpoint\":1.0,\"endpointIncluded\":true,\"direction\":\"right\"}}"));
+        assertFalse(grade("SOLUTION_SET", expected,
+            "{\"solution\":{\"type\":\"ray\",\"endpoint\":2,\"endpointIncluded\":true,\"direction\":\"right\"}}"));
+        assertNull(grade("SOLUTION_SET", expected,
+            "{\"solution\":{\"type\":\"ray\",\"endpoint\":\"1\",\"endpointIncluded\":true,\"direction\":\"right\"}}"));
+        assertNull(grade("SOLUTION_SET", expected, "{}"));
+        assertFalse(grader.hasMeaningfulAnswer("SOLUTION_SET",
+            json("{\"solution\":{\"type\":\"ray\",\"endpoint\":\"1\",\"endpointIncluded\":true,\"direction\":\"right\"}}")));
+        assertTrue(grader.hasMeaningfulAnswer("SOLUTION_SET",
+            json("{\"solution\":{\"type\":\"ray\",\"endpoint\":1,\"endpointIncluded\":true,\"direction\":\"right\"}}")));
+    }
+
+    @Test
+    void leavesManualOrUnknownTypesUnscored() throws Exception {
         assertNull(grade("ESSAY", "{\"answer\":\"sample\"}", "{\"value\":\"student response\"}"));
         assertNull(grade("CUSTOM_STRUCTURED", "{\"answers\":[\"A\"]}", "{\"answers\":[\"A\"]}"));
     }
