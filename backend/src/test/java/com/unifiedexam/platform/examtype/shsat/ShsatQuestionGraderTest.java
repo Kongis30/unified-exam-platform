@@ -43,6 +43,18 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void rejectsSelectionAnswersThatAreNotConfiguredOptions() throws Exception {
+        JsonNode render = json("{\"options\":[{\"key\":\"A\"},{\"key\":\"B\"}]}");
+        assertFalse(grader.grade("MULTIPLE_CHOICE", json("{\"answers\":[\"Z\"]}"),
+            json("{\"answers\":[\"Z\"]}"), render, null));
+        assertFalse(grader.grade("MULTIPLE_CHOICE", json("{\"answers\":[\"A\"]}"),
+            json("{\"answers\":[\"Z\"]}"), render, null));
+        assertTrue(grader.grade("MULTIPLE_CHOICE", json("{\"answers\":[\"A\"]}"),
+            json("{\"answers\":[\"a\"]}"), render, null));
+        assertTrue(grade("MULTIPLE_CHOICE", "{\"answers\":[\"A\"]}", "{\"answers\":[\"A\"]}"));
+    }
+
+    @Test
     void gradesTextAndMathEquivalentFractions() throws Exception {
         assertTrue(grade("MATH_FILL_IN_BLANK", "{\"acceptedAnswers\":[\"\\\\frac{1}{2}\",\"0.25\"]}", "{\"value\":\"0.5\"}"));
     }

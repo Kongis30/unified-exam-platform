@@ -28,7 +28,7 @@ final class ShsatQuestionGrader {
             ? render.path("questionConfig") : render;
         if (type.contains("ESSAY") || type.contains("WRITING") || type.contains("UPLOAD")) return null;
 
-        if (isSelection(type)) return selection(key, answer);
+        if (isSelection(type)) return selection(key, answer, render);
         if (type.equals("INLINE_CHOICE")) return inlineChoice(key, answer, config);
         if (type.equals("DRAG_AND_DROP")) return dragAndDrop(key, answer, config);
         if (type.equals("HOT_TEXT")) return selectionSet(key, answer, config, true);
@@ -66,14 +66,39 @@ final class ShsatQuestionGrader {
             || type.contains("MULTIPLE_ANSWER") || type.contains("CHECKBOX");
     }
 
-    private Boolean selection(JsonNode key, JsonNode answer) {
+    private Boolean selection(JsonNode key, JsonNode answer, JsonNode render) {
         JsonNode expected = first(key, "correct", "answers", "selectedAnswers", "answer", "value");
         if (expected == null && key != null && !key.isObject()) expected = key;
         JsonNode actual = first(answer, "value", "answers", "selectedAnswers", "answer");
         if (actual == null && answer != null && !answer.isObject()) actual = answer;
+        Set<String> validOptions = optionKeys(render == null ? null : render.path("options"));
+        Set<String> expectedTokens = tokens(expected);
+        Set<String> actualTokens = tokens(actual);
         return expected != null && actual != null && !empty(actual)
             && duplicateTokenCount(expected) == 0 && duplicateTokenCount(actual) == 0
-            && tokens(expected).equals(tokens(actual));
+            && (validOptions.isEmpty() || (validOptions.containsAll(expectedTokens) && validOptions.containsAll(actualTokens)))
+            && expectedTokens.equals(actualTokens);
+    }
+
+    /** 选择题答案键和提交值都必须引用试题实际配置的选项；旧题没有选项配置时保留兼容行为。 */
+    private Set<String> optionKeys(JsonNode options) {
+        Set<String> keys = new LinkedHashSet<>();
+        if (options == null || options.isNull()) return keys;
+        if (options.isArray()) {
+            for (JsonNode option : options) {
+                String value = option.isObject()
+                    ? text(first(option, "key", "id", "value"))
+                    : text(option);
+                String normalized = token(value);
+                if (!normalized.isBlank()) keys.add(normalized);
+            }
+        } else if (options.isObject()) {
+            options.fieldNames().forEachRemaining(name -> {
+                String normalized = token(name);
+                if (!normalized.isBlank()) keys.add(normalized);
+            });
+        }
+        return keys;
     }
 
     private boolean textAnswer(String type, JsonNode key, JsonNode answer, JsonNode config) {
