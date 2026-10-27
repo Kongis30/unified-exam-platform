@@ -20,6 +20,7 @@ import java.util.List;
 @Service
 public class ExamReleaseService {
 
+    private static final int SHSAT_DESCRIPTION_MAX_LENGTH = 500;
     private static final String TARGET_SUMMARY_PROJECTION = """
         CASE WHEN e.target_scope = 'ALL_STUDENTS' THEN 'All students'
              ELSE COALESCE(NULLIF(CONCAT_WS(' · ',
@@ -75,7 +76,9 @@ public class ExamReleaseService {
     @Transactional
     public ExamDetail create(long paperId, ExamRequest request, String actorUsername) {
         ensurePaperExists(paperId);
-        requireActiveType(typeCode(paperId));
+        String examTypeCode = typeCode(paperId);
+        requireActiveType(examTypeCode);
+        validateDescriptionLength(examTypeCode, request.description());
         validateWindow(request.opensAt(), request.closesAt());
         String targetScope = normalizeTargetScope(request.targetScope());
         Long actorId = jdbcTemplate.query("SELECT id FROM users WHERE username = ? AND status = 'ACTIVE'",
@@ -110,6 +113,8 @@ public class ExamReleaseService {
     @Transactional
     public ExamDetail update(long examId, ExamRequest request) {
         requireDraft(examId);
+        long targetPaperId = paperId(examId);
+        validateDescriptionLength(typeCode(targetPaperId), request.description());
         validateWindow(request.opensAt(), request.closesAt());
         String targetScope = normalizeTargetScope(request.targetScope());
         jdbcTemplate.update("""
@@ -118,7 +123,7 @@ public class ExamReleaseService {
                 auto_submit = COALESCE(?, auto_submit) WHERE id = ? AND status = 'DRAFT'
             """, request.title(), request.description(), targetScope,
             Timestamp.from(request.opensAt().toInstant()), Timestamp.from(request.closesAt().toInstant()),
-            resolveDuration(paperId(examId), request.durationSeconds()), request.attemptLimit(),
+            resolveDuration(targetPaperId, request.durationSeconds()), request.attemptLimit(),
             request.allowReview(), request.autoSubmit(), examId);
         if ("ALL_STUDENTS".equals(targetScope)) {
             jdbcTemplate.update("DELETE FROM exam_target_classes WHERE exam_id = ?", examId);
@@ -423,6 +428,13 @@ public class ExamReleaseService {
 
     private void validateWindow(OffsetDateTime opensAt, OffsetDateTime closesAt) {
         if (!closesAt.isAfter(opensAt)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The closing time must be after the opening time.");
+    }
+
+    private void validateDescriptionLength(String examTypeCode, String description) {
+        if ("SHSAT".equals(examTypeCode) && description != null && description.length() > SHSAT_DESCRIPTION_MAX_LENGTH) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "The exam description must be no more than 500 characters.");
+        }
     }
 
     private ResponseStatusException notFound() {

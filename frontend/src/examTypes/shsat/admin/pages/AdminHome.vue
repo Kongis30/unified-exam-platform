@@ -4257,7 +4257,7 @@ onBeforeUnmount(() => {
                     </label>
                     <label class="form-field form-field--wide">
                       <span class="form-label">Exam Description</span>
-                      <textarea v-model="examForm.examDescription" class="form-input" rows="2" placeholder="Optional note shown in admin context"></textarea>
+                      <textarea v-model="examForm.examDescription" class="form-input" rows="2" maxlength="500" placeholder="Optional note shown in admin context"></textarea>
                     </label>
                   </div>
                   <p v-if="selectedPaper" class="form-hint">

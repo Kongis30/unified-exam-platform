@@ -102,6 +102,7 @@ async function main() {
     const examsBeforeBoundaries = (await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id);
     const boundaryCases = [
       ['title over 200 characters', { title: 'T'.repeat(201) }],
+      ['SHSAT description over 500 characters', { description: 'D'.repeat(501) }],
       ['description over 2,000 characters', { description: 'D'.repeat(2_001) }],
       ['zero attempt duration', { durationSeconds: 0 }],
       ['zero attempt limit', { attemptLimit: 0 }],
@@ -119,7 +120,12 @@ async function main() {
 
     const activeClasses = (await api(page, '/api/admin/classes?examTypeCodes=SHSAT')).filter(item => item.status === 'ACTIVE');
     assert.ok(activeClasses.length, 'at least one active SHSAT class is available');
-    await modal.getByLabel('Exam Description').fill('Temporary UI form verification');
+    const descriptionInput = modal.getByLabel('Exam Description');
+    assert.equal(await descriptionInput.getAttribute('maxlength'), '500',
+      'the SHSAT description field matches the independent system 500-character limit');
+    await descriptionInput.fill('D'.repeat(500));
+    assert.equal((await descriptionInput.inputValue()).length, 500,
+      'a 500-character SHSAT description remains valid in the form');
     await modal.getByRole('radio', { name: /Specific classes/ }).check();
     const offeredClassIds = await modal.locator('.exam-class-option input[type="checkbox"]').evaluateAll(inputs => inputs.map(input => Number(input.value)));
     assert.deepEqual(offeredClassIds.sort((a, b) => a - b), activeClasses.map(item => Number(item.id)).sort((a, b) => a - b),
@@ -211,6 +217,25 @@ async function main() {
     const details = await api(page, `/api/admin/exams/${examId}`);
     assert.equal(details.summary.title, examTitle);
     assert.equal(details.summary.status, 'DRAFT');
+    assert.equal(details.summary.description.length, 500,
+      'the maximum-length SHSAT description persists successfully');
+    const oversizedDescriptionUpdate = await apiRequest(page, `/api/admin/exams/${examId}`, 'PATCH', {
+      title: details.summary.title,
+      description: 'D'.repeat(501),
+      opensAt: details.summary.opensAt,
+      closesAt: details.summary.closesAt,
+      durationSeconds: details.summary.durationSeconds,
+      attemptLimit: details.summary.attemptLimit,
+      targetScope: details.summary.targetScope,
+      autoSubmit: details.summary.autoSubmit,
+      allowReview: details.summary.allowReview,
+    });
+    assert.equal(oversizedDescriptionUpdate.status, 400,
+      'the SHSAT edit endpoint rejects descriptions above 500 characters');
+    assert.match(oversizedDescriptionUpdate.text, /no more than 500 characters/,
+      'the backend returns a clear English description-length error');
+    assert.equal((await api(page, `/api/admin/exams/${examId}`)).summary.description.length, 500,
+      'a rejected SHSAT edit leaves the saved description unchanged');
     const expectedStartInstant = await page.evaluate(value => new Date(value).toISOString(), originalStartTime);
     const expectedEndInstant = await page.evaluate(value => new Date(value).toISOString(), originalEndTime);
     assert.equal(Date.parse(details.summary.opensAt), Date.parse(expectedStartInstant),
@@ -251,7 +276,9 @@ async function main() {
     }));
   } finally {
     const matchingExams = await api(page, '/api/admin/exam-types/SHSAT/exams').catch(() => []);
-    for (const exam of matchingExams.filter(item => item.title === examTitle)) {
+    for (const exam of matchingExams.filter(item => item.title === examTitle
+      || item.title === `SHSAT boundary check ${stamp}`
+      || item.title === `SHSAT invalid time check ${stamp}`)) {
       await apiDelete(page, `/api/admin/exams/${exam.id}`).catch(() => {});
     }
     await context.close();
