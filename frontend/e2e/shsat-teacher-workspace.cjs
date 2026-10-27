@@ -30,6 +30,7 @@ async function main() {
   let studentId;
   let classId;
   let examId;
+  let emptyEndedExamId;
 
   try {
     await login(admin, adminUsername, adminPassword);
@@ -347,6 +348,47 @@ async function main() {
     assert.ok(endedMonitorSize.page <= endedMonitorSize.viewport, 'ended monitor fits a 390px viewport');
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-ended-mobile-${stamp}.png` });
 
+    const readyPapers = await api(admin, '/api/admin/exam-types/SHSAT/papers');
+    const emptyStatePaper = readyPapers.find(item => item.status === 'READY');
+    assert.ok(emptyStatePaper, 'a ready SHSAT paper is available for the empty ended-state check');
+    const emptyEndedExam = await api(admin, `/api/admin/papers/${emptyStatePaper.id}/exams`, 'POST', {
+      title: `SHSAT Empty Ended Monitor ${String(stamp).slice(-6)}`,
+      description: 'Temporary monitor empty-state verification',
+      opensAt: new Date(Date.now() - 60_000).toISOString(),
+      closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      durationSeconds: 10_800,
+      attemptLimit: 1,
+      targetScope: 'SELECTED',
+      autoSubmit: true,
+      allowReview: true,
+    });
+    emptyEndedExamId = Number(emptyEndedExam.summary.id);
+    await api(admin, `/api/admin/exams/${emptyEndedExamId}/targets`, 'PUT', {
+      classIds: [classId], studentUserIds: [],
+    });
+    await api(admin, `/api/admin/exams/${emptyEndedExamId}/publish`, 'POST');
+    const closedEmptyExam = await api(admin, `/api/admin/exams/${emptyEndedExamId}/close`, 'POST');
+    assert.equal(closedEmptyExam.summary?.status, 'CLOSED', 'an unanswered exam can be closed');
+    const emptyEndedLive = await api(teacher, `/api/admin/reports/exams/${emptyEndedExamId}/monitor/live`);
+    assert.equal(Number(emptyEndedLive.summary?.completedStudents), 0,
+      'an ended exam without submissions has no completed students');
+    assert.equal(Number(emptyEndedLive.summary?.inProgressStudents), 0,
+      'an ended exam without attempts has no in-progress students');
+    const emptyEndedAnalytics = await api(teacher, `/api/admin/reports/exams/${emptyEndedExamId}/monitor/analytics`);
+    assert.ok(emptyEndedAnalytics.questionAnalytics.every(item => item.accuracy == null),
+      'an ended exam without answers does not invent question accuracy');
+    await teacher.goto(`${baseUrl}/exam-types/SHSAT/admin/exams/${emptyEndedExamId}/monitor`);
+    await teacher.getByRole('heading', { name: 'Accuracy Heatmap' }).waitFor();
+    await teacher.getByText('No students are currently taking this exam.', { exact: true }).waitFor();
+    await teacher.getByText('No response-time data has been recorded for this exam yet.').waitFor();
+    assert.ok(await teacher.getByText('No answers yet', { exact: true }).count() > 0,
+      'the heatmap marks questions without answers');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-ended-empty-${stamp}.png` });
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    const emptyEndedSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(emptyEndedSize.page <= emptyEndedSize.viewport, 'the unanswered ended monitor fits a 390px viewport');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-ended-empty-mobile-${stamp}.png` });
+
     await teacher.goto(`${baseUrl}/exam-types/SHSAT/admin`);
     await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).waitFor();
     await teacher.setViewportSize({ width: 390, height: 844 });
@@ -366,6 +408,7 @@ async function main() {
         'monitor analytics and return path',
         'heatmap question details drawer and backdrop close', 'desktop/mobile monitor image preview and close controls',
         'unavailable source image gets a readable fallback',
+        'unanswered ended exam shows accurate chart empty states',
         'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
       monitorMobileSize,
@@ -373,10 +416,12 @@ async function main() {
       mobileDrawerSize,
       accuracyMobileSize,
       endedMonitorSize,
+      emptyEndedSize,
       pageErrors: errors.length,
     }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
+    if (emptyEndedExamId) await api(admin, `/api/admin/exams/${emptyEndedExamId}`, 'DELETE').catch(() => {});
     if (studentId) await api(admin, `/api/admin/users/${studentId}`, 'DELETE').catch(() => {});
     if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (teacherId) await api(admin, `/api/admin/users/${teacherId}`, 'DELETE').catch(() => {});
