@@ -694,13 +694,63 @@ async function main() {
     await fixedMultiSelectEditor.scrollIntoViewIfNeeded();
     await fixedMultiSelectEditor.screenshot({ path: `/tmp/shsat-question-type-editor-multi-select-fixed-${stamp}.png` });
     await page.setViewportSize({ width: 390, height: 844 });
+    const fixedMultiSelectMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(fixedMultiSelectMobileSize.page <= fixedMultiSelectMobileSize.viewport,
+      `the fixed multi-select editor fits a 390px viewport: ${JSON.stringify(fixedMultiSelectMobileSize)}`);
+    await fixedMultiSelectEditor.evaluate(element => element.scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: `/tmp/shsat-question-type-editor-multi-select-fixed-mobile-${stamp}.png` });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+
+    const fillBlankStem = `Enter four in words or digits ${suffix}.`;
+    await elaSection.getByRole('button', { name: 'Add Question', exact: true }).click();
+    await page.locator('.meta-field--type select').selectOption('FILL_IN_BLANK');
+    await page.locator('.stem-input').fill(fillBlankStem);
+    const fillBlankEditor = page.locator('.fill-blank-answer-editor');
+    const acceptedAnswerRows = fillBlankEditor.locator('.fill-blank-answer-editor__row');
+    await acceptedAnswerRows.first().locator('input').fill('4');
+    await fillBlankEditor.getByRole('button', { name: 'Add Answer', exact: true }).click();
+    assert.equal(await acceptedAnswerRows.count(), 2, 'Add Answer adds another accepted response');
+    await acceptedAnswerRows.nth(1).locator('input').fill('four');
+    await fillBlankEditor.getByRole('button', { name: 'Add Answer', exact: true }).click();
+    await acceptedAnswerRows.nth(2).locator('input').fill('4');
+    await acceptedAnswerRows.nth(2).getByText('Duplicate answers must be removed before saving.', { exact: true }).waitFor();
+    await acceptedAnswerRows.nth(2).getByRole('button', { name: 'Remove', exact: true }).click();
+    assert.equal(await acceptedAnswerRows.count(), 2, 'Remove deletes the duplicate answer row');
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    questions = readQuestions(await api(page, `/api/admin/papers/${paperId}`));
+    const fillBlankQuestion = questions.find(question => question.stem === fillBlankStem);
+    assert.ok(fillBlankQuestion, 'the fill-in-the-blank question is persisted');
+    assert.deepEqual(fillBlankQuestion.answerKey.answers, ['4', 'four'],
+      'all accepted responses are saved without the removed duplicate');
+
+    await page.reload();
+    await page.locator('.question-item').filter({ hasText: fillBlankStem }).click();
+    assert.deepEqual(await acceptedAnswerRows.locator('input').evaluateAll(inputs => inputs.map(input => input.value)), ['4', 'four'],
+      'accepted responses are restored after reloading the editor');
+    await fillBlankEditor.screenshot({ path: `/tmp/shsat-question-type-editor-fill-blank-${stamp}.png` });
+    const fillBlankQuestionNumber = Number(fillBlankQuestion.displayNumber);
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.goto(`${baseUrl}/exam-types/SHSAT/admin/papers/${paperId}/preview?questionNumber=${fillBlankQuestionNumber}`);
+    await page.locator('.fill-blank-input').waitFor();
+    await page.getByText(fillBlankStem, { exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-question-type-preview-fill-blank-${stamp}.png` });
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(editorUrl);
+    await page.locator('.question-item').filter({ hasText: fillBlankStem }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
     const choiceEditorMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(choiceEditorMobileSize.page <= choiceEditorMobileSize.viewport,
-      `multi-select editors fit a 390px viewport: ${JSON.stringify(choiceEditorMobileSize)}`);
+      `question type editors fit a 390px viewport: ${JSON.stringify(choiceEditorMobileSize)}`);
+    const acceptedAnswerInputWidth = await acceptedAnswerRows.first().locator('input').evaluate(input => input.getBoundingClientRect().width);
+    assert.ok(acceptedAnswerInputWidth >= 150,
+      `accepted-answer inputs remain wide enough to review on mobile: ${acceptedAnswerInputWidth}px`);
     assert.equal(await page.locator('.question-navigation .delete-question-button').evaluate(button => getComputedStyle(button).whiteSpace), 'nowrap',
       'the mobile Delete Question action stays on one line');
-    await fixedMultiSelectEditor.evaluate(element => element.scrollIntoView({ block: 'center' }));
-    await page.screenshot({ path: `/tmp/shsat-question-type-editor-multi-select-mobile-${stamp}.png` });
+    await fillBlankEditor.evaluate(element => element.scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: `/tmp/shsat-question-type-editor-fill-blank-mobile-${stamp}.png` });
 
     assert.deepEqual(pageErrors, [], 'question type editing and preview have no browser errors');
     console.log(JSON.stringify({
@@ -756,9 +806,12 @@ async function main() {
         `/tmp/shsat-question-type-preview-table-mobile-${stamp}.png`,
         `/tmp/shsat-question-type-editor-metadata-${stamp}.png`,
         `/tmp/shsat-question-type-editor-multi-select-${stamp}.png`,
+        `/tmp/shsat-question-type-editor-fill-blank-${stamp}.png`,
+        `/tmp/shsat-question-type-editor-fill-blank-mobile-${stamp}.png`,
+        `/tmp/shsat-question-type-editor-multi-select-fixed-mobile-${stamp}.png`,
+        `/tmp/shsat-question-type-preview-fill-blank-${stamp}.png`,
         `/tmp/shsat-question-type-preview-multi-select-${stamp}.png`,
         `/tmp/shsat-question-type-editor-multi-select-fixed-${stamp}.png`,
-        `/tmp/shsat-question-type-editor-multi-select-mobile-${stamp}.png`,
       ],
     }));
   } finally {

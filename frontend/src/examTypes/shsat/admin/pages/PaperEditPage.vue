@@ -6825,6 +6825,19 @@ select.form-input {
     width: 100%;
     white-space: nowrap;
   }
+  .fill-blank-answer-editor__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .fill-blank-answer-editor__label {
+    grid-column: 1 / -1;
+    padding-top: 0;
+  }
+  .fill-blank-answer-editor__row .form-input {
+    min-width: 0;
+  }
+  .fill-blank-answer-editor__row .field-warning {
+    grid-column: 1 / -1;
+  }
   .import-questions-header { padding: 16px; }
   .import-source-toolbar { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 10px; }
   .import-questions-filters { padding: 0 16px 12px; }
