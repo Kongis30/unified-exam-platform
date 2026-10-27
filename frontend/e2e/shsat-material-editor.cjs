@@ -215,6 +215,29 @@ async function main() {
       'a new material draft does not change the original shared material');
     assert.equal(questions[1].render.material.title, `Independent Passage ${suffix}`);
 
+    const questionTree = page.locator('.subject-group').filter({ has: page.getByRole('heading', { name: 'English Language Arts', exact: true }) });
+    const dropEffect = await page.evaluate(({ sourceStem, targetStem }) => {
+      const questions = [...document.querySelectorAll('.question-item')];
+      const source = questions.find(item => item.textContent.includes(sourceStem));
+      const target = questions.find(item => item.textContent.includes(targetStem));
+      const bounds = target.getBoundingClientRect();
+      const dataTransfer = new DataTransfer();
+      source.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }));
+      target.dispatchEvent(new DragEvent('dragover', {
+        bubbles: true, cancelable: true, dataTransfer, clientY: bounds.top + 1,
+      }));
+      const effect = dataTransfer.dropEffect;
+      target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
+      source.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer }));
+      return effect;
+    }, { sourceStem: secondStem, targetStem: firstStem });
+    assert.equal(dropEffect, 'none', 'the browser rejects dragging a question into a different material set');
+    await page.getByText('Keep passage sets together.', { exact: true }).waitFor();
+    assert.deepEqual((await questionTree.locator('.question-item').allInnerTexts())
+      .map(text => Number(text.match(/\bQ(\d+)\b/)?.[1])), [1, 2, 3],
+    'questions cannot be dragged into a different material set');
+    await page.getByRole('button', { name: 'Close notification', exact: true }).click();
+
     await secondEditor.getByRole('button', { name: 'Clear', exact: true }).click();
     assert.equal(await secondEditor.locator('.material-type select').inputValue(), 'none',
       'Clear unlinks material from the selected question');
@@ -344,7 +367,7 @@ async function main() {
     assert.deepEqual(pageErrors, [], 'material editing, persistence, and preview have no browser errors');
     console.log(JSON.stringify({
       result: 'PASS',
-      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'passage set grouping and question insertion', 'new independent copy', 'clear one link'],
+      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'passage set grouping, question insertion, and drag boundary', 'new independent copy', 'clear one link'],
       uploadFailureMobileSize,
       mobileSize,
       pageErrors: pageErrors.length,
