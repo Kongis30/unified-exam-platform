@@ -243,7 +243,9 @@ async function main() {
 
     const mathematics = page.locator('.subject-group').filter({ has: page.getByRole('heading', { name: 'Mathematics', exact: true }) });
     await mathematics.getByRole('button', { name: 'Add Question', exact: true }).click();
-    const mathStem = `Mathematics persistence question ${stamp}`;
+    const mathStemText = `Mathematics persistence question ${stamp}`;
+    const missingQuestionImageUrl = `/uploads/paper-materials/missing-question-${stamp}.png`;
+    const mathStem = `${mathStemText}\n[[STEM_IMAGE:${missingQuestionImageUrl}]]`;
     await page.locator('.stem-input').fill(mathStem);
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
     await page.getByText('All changes saved.', { exact: true }).waitFor({ timeout: 5_000 }).catch(async () => {
@@ -317,6 +319,7 @@ async function main() {
       sortOrder: materialWrites.length,
     });
     await page.route(`**/uploads/paper-materials/missing-preview-${stamp}.png`, route => route.fulfill({ status: 404, body: '' }));
+    await page.route(`**${missingQuestionImageUrl}`, route => route.fulfill({ status: 404, body: '' }));
     await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', {
       sections: savedSections, materials: materialWrites,
     });
@@ -334,8 +337,9 @@ async function main() {
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
     await page.getByText(questionStem, { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
-    await page.getByText(mathStem, { exact: true }).waitFor();
+    await page.getByText(mathStemText, { exact: false }).first().waitFor();
     await page.getByText('Question image is unavailable.', { exact: true }).waitFor();
+    await page.getByText('Image unavailable: Stem image', { exact: true }).waitFor();
     await page.screenshot({ path: `/tmp/shsat-paper-preview-missing-image-${stamp}.png` });
     await page.screenshot({ path: `/tmp/shsat-paper-preview-tools-desktop-${stamp}.png` });
     await page.getByRole('button', { name: 'Previous', exact: true }).click();
@@ -351,7 +355,7 @@ async function main() {
       'the bookmark filter limits the preview question list');
     await reviewPanel.getByRole('button', { name: /Question 1/ }).click();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
-    await page.getByText(mathStem, { exact: true }).waitFor();
+    await page.getByText(mathStemText, { exact: false }).first().waitFor();
     await page.getByRole('button', { name: 'Bookmark', exact: true }).click();
     await page.getByRole('button', { name: 'Review', exact: true }).click();
     assert.equal((await reviewPanel.locator('.stat-item').filter({ hasText: 'Bookmarks' }).locator('.stat-number').innerText()).trim(), '2',
