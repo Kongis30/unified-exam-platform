@@ -58,7 +58,8 @@ public class ShsatAdminReportService {
                     WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_max_score,
                    sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
+                       + COALESCE(r.ungraded_count, 0) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    TIMESTAMPDIFF(SECOND, a.started_at, COALESCE(a.submitted_at, CURRENT_TIMESTAMP(6))) AS time_used
@@ -117,7 +118,8 @@ public class ShsatAdminReportService {
                    e.title AS exam_title, p.id AS paper_id, p.title AS paper_name,
                    r.total_points, r.max_points, r.is_estimated,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
+                       + COALESCE(r.ungraded_count, 0) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    (SELECT raw_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_score,
@@ -151,7 +153,8 @@ public class ShsatAdminReportService {
                    (SELECT rb.scaled_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_max_score,
                    sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
+                       + COALESCE(r.ungraded_count, 0) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    (SELECT COUNT(*) FROM shsat_self_practice_cleared_questions cleared
@@ -214,7 +217,8 @@ public class ShsatAdminReportService {
                    u.real_name, r.total_points, r.max_points, r.is_estimated, r.scoring_profile_id,
                    sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
+                       + COALESCE(r.ungraded_count, 0) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(shsat_state.flow_json, '$.focusViolationCount')) AS UNSIGNED), 0)

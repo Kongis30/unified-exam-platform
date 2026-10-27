@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -57,6 +58,9 @@ class ShsatAdminReportServiceTest {
         assertEquals(100L, result.get("questionCount"));
         assertEquals(100L, result.get("answeredCount"));
         assertEquals(List.of(), result.get("questions"));
+        verify(jdbc).query(argThat(sql -> sql.contains("aa.is_correct IS NOT NULL")
+                && sql.contains("COALESCE(r.ungraded_count, 0) AS answered_count")),
+            any(ResultSetExtractor.class), any(Object[].class));
     }
 
     @Test

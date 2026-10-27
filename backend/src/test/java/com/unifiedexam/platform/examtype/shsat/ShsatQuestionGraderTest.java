@@ -19,6 +19,19 @@ class ShsatQuestionGraderTest {
         assertFalse(grader.hasMeaningfulAnswer(json("{\"answers\":[\"\",null]}")));
         assertTrue(grader.hasMeaningfulAnswer(json("{\"answers\":[\"A\"]}")));
         assertTrue(grader.hasMeaningfulAnswer(json("{\"answers\":[false]}")));
+        assertNull(grader.grade("MULTIPLE_CHOICE", json("{\"answers\":[\"A\"]}"), json("{}"), null, null));
+        assertNull(grader.grade("INLINE_CHOICE", json("{\"answers\":{\"b1\":\"A\"}}"),
+            json("{\"answers\":[]}"), null, null));
+        assertNull(grader.grade("DRAG_AND_DROP", json("{\"placements\":{\"odd\":[\"one\"]}}"),
+            json("{\"placements\":{\"odd\":[]}}"), null, null));
+        assertNull(grader.grade("HOT_TEXT", json("{\"selectedSegmentIds\":[\"s1\"]}"),
+            json("{\"selectedSegmentIds\":[]}"), null, null));
+        assertNull(grader.grade("HOT_SPOT", json("{\"selectedRegionIds\":[\"r1\"]}"),
+            json("{\"selectedRegionIds\":[]}"), null, null));
+        assertNull(grader.grade("TABLE_GRID", json("{\"answers\":{\"r1\":[\"c1\"]}}"),
+            json("{\"answers\":{}}"), null, null));
+        assertNull(grader.grade("GRAPH_QUESTION", json("{\"points\":[{\"x\":2,\"y\":3}]}"),
+            json("{\"points\":[]}"), null, null));
     }
 
     @Test

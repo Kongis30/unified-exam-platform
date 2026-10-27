@@ -15,7 +15,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** 按新版 SHSAT 题型结构评分；返回 null 表示需人工评分或题型尚未支持。 */
+/** 按新版 SHSAT 题型结构评分；未作答、需人工评分或题型尚未支持时返回 null。 */
 @Component
 final class ShsatQuestionGrader {
 
@@ -23,6 +23,7 @@ final class ShsatQuestionGrader {
 
     Boolean grade(String rawType, JsonNode key, JsonNode answer, JsonNode render, JsonNode grading) {
         String type = normalize(rawType);
+        if (!hasMeaningfulAnswer(type, answer)) return null;
         JsonNode config = render != null && render.path("questionConfig").isObject()
             ? render.path("questionConfig") : render;
         if (type.contains("ESSAY") || type.contains("WRITING") || type.contains("UPLOAD")) return null;

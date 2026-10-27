@@ -832,6 +832,10 @@ async function main() {
     const malformedSolutionAttempt = await api(student,
       `/api/student/exams/${malformedSolutionExamId}/attempts`, 'POST', { firstSection: 'MATH' });
     const malformedSolutionAttemptId = Number(malformedSolutionAttempt.id || malformedSolutionAttempt.attemptId);
+    const emptyDragItem = (attempt.items || attempt.questions || []).find(item => item.questionTypeCode === 'DRAG_AND_DROP');
+    await api(student, `/api/student/attempts/${malformedSolutionAttemptId}/answers/${emptyDragItem.paperItemId}`, 'PUT', {
+      answer: { placements: { odd: [] } }, timeSpentSeconds: 0,
+    });
     await api(student, `/api/student/attempts/${malformedSolutionAttemptId}/answers/${solutionItem.paperItemId}`, 'PUT', {
       answer: { solution: { type: 'ray', endpoint: '9', endpointIncluded: true, direction: 'right' } },
       timeSpentSeconds: 0,
@@ -841,16 +845,20 @@ async function main() {
     const malformedSolutionResult = malformedSolutionReport.questions.find(question => Number(question.questionNumber) === 62);
     assert.equal(malformedSolutionResult.correct, null,
       'a malformed solution-set endpoint is recorded as ungraded, matching the independent SHSAT grader');
+    assert.equal(malformedSolutionReport.unansweredCount, 13,
+      'invalid solution-set and empty drag-and-drop answers are both classified as unanswered');
+    assert.equal(malformedSolutionReport.questions.find(question => Number(question.questionNumber) === 61).correct, null,
+      'an empty drag-and-drop structure is classified as unanswered instead of wrong');
     assert.equal(malformedSolutionReport.wrongCount, 0,
-      'an invalid solution-set shape does not inflate wrong-answer totals');
-    assert.equal(malformedSolutionReport.unansweredCount, 12,
-      'the report counts only the single stored answer row as answered');
+      'invalid solution-set and empty structured submissions do not inflate wrong-answer totals');
     await api(admin, `/api/admin/exams/${malformedSolutionExamId}/close`, 'POST');
     const malformedStudentReport = await api(student, `/api/student/attempts/${malformedSolutionAttemptId}/report`);
     assert.equal(malformedStudentReport.scoreVisible, true,
       'an invalid ungraded answer does not incorrectly hide the submitted score');
     assert.equal(malformedStudentReport.questions.find(question => Number(question.questionNumber) === 62).correct, null,
       'after exam close the student report still presents the malformed answer as unanswered');
+    assert.equal(malformedStudentReport.questions.find(question => Number(question.questionNumber) === 61).correct, null,
+      'after exam close the student report still presents the empty drag-and-drop response as unanswered');
 
     assert.deepEqual(pageErrors, [], 'the student exam and report have no browser errors');
 
