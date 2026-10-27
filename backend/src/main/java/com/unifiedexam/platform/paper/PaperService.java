@@ -159,11 +159,12 @@ public class PaperService {
     /** 从同类型已发布考试复制题目，按 section_code 对齐目标试卷结构。 */
     @Transactional
     public List<QuestionView> importQuestions(long targetPaperId, ImportQuestionsRequest request) {
-        requireEditable(targetPaperId, typeCode(targetPaperId));
+        String examTypeCode = typeCode(targetPaperId);
+        requireEditable(targetPaperId, examTypeCode);
         long sourcePaperId = jdbcTemplate.query("""
             SELECT e.paper_id FROM exams e WHERE e.id = ? AND e.status = 'PUBLISHED'
                 AND (SELECT exam_type_code FROM papers WHERE id = e.paper_id) = ?
-            """, rs -> rs.next() ? rs.getLong(1) : 0L, request.sourceExamId(), typeCode(targetPaperId));
+            """, rs -> rs.next() ? rs.getLong(1) : 0L, request.sourceExamId(), examTypeCode);
         if (sourcePaperId == 0L) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Source exam not found.");
         if (sourcePaperId == targetPaperId) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Create a new paper version before importing questions from the same paper.");
@@ -175,6 +176,8 @@ public class PaperService {
         List<SectionView> sourceSections = loadSections(sourcePaperId, null);
         Map<Long, String> sourceSectionCodes = new HashMap<>();
         collectQuestionSectionCodes(sourceSections, null, sourceSectionCodes);
+        Map<Long, Long> sourceSectionIds = new HashMap<>();
+        collectQuestionSectionIds(sourceSections, sourceSectionIds);
         Map<Integer, QuestionView> sourceByNumber = new HashMap<>();
         flatten(sourceSections).forEach(question -> {
             int number = question.displayNumber() == null ? question.sortOrder() : question.displayNumber();
@@ -189,12 +192,21 @@ public class PaperService {
         int nextDisplayNumber = flatten(loadSections(targetPaperId, null)).stream()
             .map(QuestionView::displayNumber).filter(java.util.Objects::nonNull).mapToInt(Integer::intValue).max().orElse(0) + 1;
         List<Long> insertedIds = new ArrayList<>();
+        Map<MaterialCopyKey, Long> copiedMaterials = new HashMap<>();
         for (int index = 0; index < selected.size(); index++) {
             QuestionView source = selected.get(index);
             Long sectionId = targetSections.get(sourceSectionCodes.get(source.paperItemId()));
             if (sectionId == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "The target paper is missing a matching section.");
+            JsonNode render = source.render();
+            if ("SHSAT".equals(examTypeCode)) {
+                Long sourceSectionId = sourceSectionIds.get(source.paperItemId());
+                if (sourceSectionId == null) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "The source question section is unavailable.");
+                }
+                render = copyImportedShsatMaterial(sourcePaperId, sourceSectionId, sectionId, render, copiedMaterials);
+            }
             Integer sortOrder = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM paper_items WHERE section_id = ?", Integer.class, sectionId);
-            long importedId = insertQuestion(sectionId, new QuestionRequest(source.questionTypeCode(), source.stem(), source.render(),
+            long importedId = insertQuestion(sectionId, new QuestionRequest(source.questionTypeCode(), source.stem(), render,
                 source.answerKey(), source.grading(), source.explanation(), source.categoryId(), sortOrder,
                 nextDisplayNumber + index, source.maxPoints(), source.scoringSectionCode(), source.payloadSchemaVersion()));
             insertedIds.add(importedId);
@@ -237,6 +249,83 @@ public class PaperService {
             section.questions().forEach(question -> sectionCodes.put(question.paperItemId(), code));
             collectQuestionSectionCodes(section.children(), section, sectionCodes);
         }
+    }
+
+    private void collectQuestionSectionIds(List<SectionView> sections, Map<Long, Long> sectionIds) {
+        for (SectionView section : sections) {
+            for (QuestionView question : section.questions()) {
+                sectionIds.put(question.paperItemId(), section.id());
+            }
+            collectQuestionSectionIds(section.children(), sectionIds);
+        }
+    }
+
+    /** SHSAT 摘题要复制材料到目标题所在分段，避免新试卷依赖源试卷的材料记录。 */
+    private JsonNode copyImportedShsatMaterial(long sourcePaperId, long sourceSectionId, long targetSectionId,
+                                                JsonNode render, Map<MaterialCopyKey, Long> copiedMaterials) {
+        if (render == null || !render.isObject()) return render;
+        JsonNode materialIdNode = render.get("materialId");
+        if (materialIdNode == null || !materialIdNode.canConvertToLong()) return render;
+
+        long sourceMaterialId = materialIdNode.asLong();
+        MaterialCopyKey key = new MaterialCopyKey(sourceMaterialId, targetSectionId);
+        Long targetMaterialId = copiedMaterials.get(key);
+        if (targetMaterialId == null) {
+            ShsatMaterialRow material = findShsatMaterial(sourcePaperId, sourceSectionId, sourceMaterialId);
+            if (material == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "A selected question's material is unavailable.");
+            }
+            Integer sortOrder = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM shsat_section_materials WHERE section_id = ?",
+                Integer.class, targetSectionId);
+            GeneratedKeyHolder keyHolder = new GeneratedKeyHolder();
+            jdbcTemplate.update(connection -> {
+                PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO shsat_section_materials
+                        (section_id, material_type, category, title, content, asset_key, sort_order)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, Statement.RETURN_GENERATED_KEYS);
+                statement.setLong(1, targetSectionId);
+                statement.setString(2, material.materialType());
+                statement.setString(3, material.category());
+                statement.setString(4, material.title());
+                statement.setString(5, material.content());
+                statement.setString(6, material.assetKey());
+                statement.setInt(7, sortOrder);
+                return statement;
+            }, keyHolder);
+            targetMaterialId = keyHolder.getKey().longValue();
+            copiedMaterials.put(key, targetMaterialId);
+        }
+
+        ObjectNode remappedRender = ((ObjectNode) render).deepCopy();
+        remappedRender.put("materialId", targetMaterialId);
+        remappedRender.remove("materialRef");
+        return remappedRender;
+    }
+
+    /** 按试题读取时的作用域优先级，从分段材料或旧整卷材料表中定位原材料。 */
+    private ShsatMaterialRow findShsatMaterial(long paperId, long sourceSectionId, long materialId) {
+        List<ShsatMaterialRow> sectionMaterials = jdbcTemplate.query("""
+            SELECT material.material_type, material.category, material.title, material.content, material.asset_key
+            FROM shsat_section_materials material
+            JOIN paper_sections section ON section.id = material.section_id
+            WHERE section.paper_id = ? AND material.id = ?
+              AND (section.id = ? OR section.id = (
+                  SELECT parent_section_id FROM paper_sections WHERE id = ?))
+            ORDER BY CASE WHEN section.id = ? THEN 0 ELSE 1 END
+            LIMIT 1
+            """, (rs, rowNum) -> new ShsatMaterialRow(rs.getString("material_type"), rs.getString("category"),
+            rs.getString("title"), rs.getString("content"), rs.getString("asset_key")),
+            paperId, materialId, sourceSectionId, sourceSectionId, sourceSectionId);
+        if (!sectionMaterials.isEmpty()) return sectionMaterials.get(0);
+
+        return jdbcTemplate.query("""
+            SELECT material_type, category, title, content, asset_key
+            FROM shsat_paper_materials WHERE paper_id = ? AND id = ?
+            """, rs -> rs.next() ? new ShsatMaterialRow(rs.getString("material_type"), rs.getString("category"),
+            rs.getString("title"), rs.getString("content"), rs.getString("asset_key")) : null,
+            paperId, materialId);
     }
 
     private String sectionCode(SectionView section, SectionView parent) {
@@ -1094,6 +1183,8 @@ public class PaperService {
     private record SectionRow(long id, String sectionCode, String sectionKind, String title, int sortOrder,
                               String instructions, JsonNode settings) { }
     private record MaterialQuestionRow(long questionId, JsonNode render) { }
+    private record MaterialCopyKey(long sourceMaterialId, long targetSectionId) { }
+    private record ShsatMaterialRow(String materialType, String category, String title, String content, String assetKey) { }
     private record GroupReferenceKey(String examTypeCode, long groupId) { }
     private record WorkspaceGroupRow(String examTypeCode, String name) { }
 }

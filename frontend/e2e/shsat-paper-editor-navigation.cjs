@@ -598,10 +598,13 @@ async function main() {
     const sourceAnalytics = await api(page, `/api/admin/reports/exams/${sourceExamId}/monitor/analytics`);
     const analyticsRows = sourceAnalytics.questionAnalytics || [];
     assert.ok(analyticsRows.length > 0, 'a published SHSAT exam exposes questions for import');
-    const noAnswerQuestion = analyticsRows.find(row => row.accuracy === null || row.accuracy === undefined) || analyticsRows[0];
-    const sourceQuestionNumber = Number(noAnswerQuestion.questionNumber);
-    const sourceQuestion = sourceQuestions.find(question => Number(question.displayNumber) === sourceQuestionNumber);
-    assert.ok(sourceQuestion, 'question analytics map to a question on the source paper');
+    const sourceQuestion = sourceQuestions.find(question => question.render?.materialId
+      && question.questionTypeCode === 'MULTIPLE_CHOICE');
+    assert.ok(sourceQuestion, 'the published source paper has a multiple-choice question with shared material');
+    const sourceQuestionNumber = Number(sourceQuestion.displayNumber);
+    const sourceAnalyticsRow = analyticsRows.find(row => Number(row.questionNumber) === sourceQuestionNumber);
+    assert.ok(sourceAnalyticsRow, 'question analytics map to the material-backed source question');
+    assert.equal(sourceAnalyticsRow.accuracy, null, 'an exam without attempts marks the material question as unanswered');
 
     await page.locator('.notice').waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: 'Import from Exam', exact: true }).click();
@@ -681,7 +684,16 @@ async function main() {
     assert.ok(importedQuestion, 'the imported source question retains its original stem');
     assert.equal(importedQuestion.questionTypeCode, sourceQuestion.questionTypeCode,
       'the imported question retains its original type');
-    assert.deepEqual(importedQuestion.render, sourceQuestion.render, 'the imported question retains its display data');
+    assert.notEqual(importedQuestion.render.materialId, sourceQuestion.render.materialId,
+      'the imported question references an independent copy of its source material');
+    assert.deepEqual(importedQuestion.render, {
+      ...sourceQuestion.render,
+      materialId: importedQuestion.render.materialId,
+    }, 'the imported question retains its display data while remapping the material link');
+    assert.deepEqual(importedQuestion.render.material, sourceQuestion.render.material,
+      'the copied material preserves its type, content, title, and image reference');
+    assert.ok(importedPaper.materials.some(material => String(material.id) === String(importedQuestion.render.materialId)),
+      'the copied material belongs to the target paper structure');
     assert.deepEqual(importedQuestion.answerKey, sourceQuestion.answerKey, 'the imported question retains its answer key');
     const sourceSection = findQuestionSection(sourcePaper.sections, sourceQuestion.paperItemId);
     const importedSection = findQuestionSection(importedPaper.sections, importedQuestion.paperItemId);
@@ -695,6 +707,31 @@ async function main() {
     const semanticSectionCode = `${sourcePartCode}_${sourceSubTypeCode}`;
     assert.equal(importedSection.sectionCode, semanticSectionCode,
       'the imported question maps from its legacy section code to the semantic SHSAT label');
+
+    await page.reload();
+    await page.locator(`.question-item[data-question-id="${importedQuestion.questionId}"]`).click();
+    assert.equal(await page.locator('.material-editor .material-type select').inputValue(),
+      String(sourceQuestion.render.material.type).toLowerCase(),
+      'the imported material type remains attached after reloading the editor');
+    assert.equal(await page.locator('.material-editor .material-topline select').inputValue(),
+      String(importedQuestion.render.materialId), 'the material selector uses the target paper material ID');
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.locator('.material-section').waitFor();
+    await page.getByText(sourceQuestion.render.material.title, { exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-paper-import-material-preview-${stamp}.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const importedMaterialPreviewSize = await page.evaluate(() => ({
+      pageWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    assert.ok(importedMaterialPreviewSize.pageWidth <= importedMaterialPreviewSize.viewportWidth,
+      `imported material preview fits 390px: ${JSON.stringify(importedMaterialPreviewSize)}`);
+    await page.screenshot({ path: `/tmp/shsat-paper-import-material-preview-mobile-${stamp}.png` });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
 
     const metadataPaper = await api(page, '/api/admin/exam-types/SHSAT/papers', 'POST', {
       paperCode: `EDITOR_METADATA_${stamp}`,
@@ -795,6 +832,8 @@ async function main() {
         'source question provenance survives a normal editor save',
         'primary and secondary type create/edit/delete and protect referenced types', 'official SHSAT labels are protected',
         'import source, performance filter, preview, cancel, and confirm',
+        'SHSAT import copies shared material and remaps its ID in the target paper',
+        'imported material survives editor reload and appears in paper preview',
         'preview review/bookmark/section navigation and toolbar tools', 'preview does not write student attempts',
         'desktop/mobile preview and Back', 'per-part add and question navigation',
         'question deletion cancel and confirm', 'question explanation, points, and scoring override survive editor save/reload', '390px editor layout'],
@@ -804,7 +843,9 @@ async function main() {
       pageErrors: pageErrors.length,
       screenshots: ['clean', 'saved', 'save-conflict', 'preview', 'import', 'import-mobile', 'mobile-success-notice', 'mobile']
         .map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`)
-        .concat(`/tmp/shsat-paper-editor-metadata-preservation-${stamp}.png`),
+        .concat(`/tmp/shsat-paper-editor-metadata-preservation-${stamp}.png`,
+          `/tmp/shsat-paper-import-material-preview-${stamp}.png`,
+          `/tmp/shsat-paper-import-material-preview-mobile-${stamp}.png`),
     }));
   } finally {
     if (sourceExamId) await api(page, `/api/admin/exams/${sourceExamId}`, 'DELETE').catch(() => {});
