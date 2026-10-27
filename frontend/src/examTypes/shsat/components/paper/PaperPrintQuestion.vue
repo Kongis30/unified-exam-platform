@@ -11,7 +11,7 @@ import { normalizeInlineChoiceConfig, parseInlineTextParts } from '@shsat/questi
 import { normalizeSolutionSetConfig } from '@shsat/questionTypes/solutionSet/helpers';
 import SolutionSetNumberLine from '@shsat/questionTypes/solutionSet/SolutionSetNumberLine.vue';
 import { normalizeTableGridItems, normalizeTableGridMode, TABLE_GRID_TEXT_MODE } from '@shsat/questionTypes/tableGrid/helpers';
-import { normalizeDragAndDropConfig } from '@shsat/questionTypes/dragAndDrop/helpers';
+import { INLINE_GAP_MATCH_MODE, normalizeDragAndDropConfig } from '@shsat/questionTypes/dragAndDrop/helpers';
 import { isMultiSelectType, normalizeQuestionType, parseJsonObject, parseOptions } from '@shsat/questionTypes/utils';
 
 const props = defineProps({
@@ -43,6 +43,12 @@ const hotTextConfig = computed(() => normalizeHotTextConfig(config.value));
 const hotSpotConfig = computed(() => normalizeHotSpotConfig(config.value));
 const hotSpotImageUrl = computed(() => imageUrlForQuestion(props.question, hotSpotConfig.value));
 
+// 长目标句先完整呈现，再把作答线放到下一行；短公式继续与作答线并排。
+function isLongTargetLabel(label) {
+  const text = String(label || '').trim();
+  return text.length > 26 || text.split(/\s+/).length > 4;
+}
+
 </script>
 
 <template>
@@ -61,31 +67,56 @@ const hotSpotImageUrl = computed(() => imageUrlForQuestion(props.question, hotSp
     </div>
 
     <template v-else-if="questionType === 'INLINE_CHOICE'">
-      <p class="print-question__instruction">Choose the best answer for each blank.</p>
       <p class="print-question__inline-text">
         <template v-for="(part, index) in inlineParts" :key="`${part.type}-${part.id || index}`">
           <span v-if="part.type === 'text'"><FormulaText :content="part.text" /></span>
-          <span v-else class="print-question__inline-blank">{{ inlineConfig.blanks.find((blank) => blank.id === part.id)?.label || 'Answer' }}</span>
+          <span v-else class="print-question__inline-blank" aria-label="Answer blank"></span>
         </template>
       </p>
-      <div v-for="(blank, index) in inlineConfig.blanks" :key="blank.id" class="print-question__subchoices">
-        <strong>{{ blank.label || `Blank ${index + 1}` }}</strong>
-        <span v-for="option in blank.options" :key="option.key"><b>{{ option.key }}.</b> <FormulaText :content="option.text" /></span>
+      <div class="print-question__inline-choice-groups">
+        <section v-for="(blank, index) in inlineConfig.blanks" :key="blank.id" class="print-question__inline-choice-group">
+          <strong class="print-question__inline-choice-label">{{ blank.label || `Blank ${index + 1}` }}</strong>
+          <div class="print-question__inline-choice-options">
+            <div v-for="option in blank.options" :key="option.key" class="print-question__inline-choice-option">
+              <b>{{ option.key }}.</b>
+              <FormulaText :content="option.text" />
+            </div>
+          </div>
+        </section>
       </div>
     </template>
 
     <template v-else-if="questionType === 'DRAG_AND_DROP'">
-      <p class="print-question__instruction">Use the answer choices to complete each target.</p>
+      <p v-if="dragConfig.mode !== INLINE_GAP_MATCH_MODE" class="print-question__instruction">Use the answer choices to complete each target.</p>
       <div class="print-question__answer-bank">
-        <span v-for="(choice, index) in dragConfig.choices" :key="choice.id"><b>{{ String.fromCharCode(65 + index) }}.</b> <FormulaText :content="choice.text" /></span>
+        <span v-for="(choice, index) in dragConfig.choices" :key="choice.id" class="print-question__answer-choice">
+          <b>{{ String.fromCharCode(65 + index) }}.</b> <FormulaText :content="choice.text" />
+        </span>
       </div>
-      <div class="print-question__targets">
-        <div v-for="target in dragConfig.targets" :key="target.id"><strong>{{ target.label }}</strong><span></span></div>
+      <p v-if="dragConfig.mode === INLINE_GAP_MATCH_MODE" class="print-question__drag-inline">
+        <template v-for="(part, index) in dragConfig.contentParts" :key="`${part.type}-${part.id || index}`">
+          <span v-if="part.type === 'text'" class="print-question__drag-text"><FormulaText :content="part.text" /></span>
+          <span v-else class="print-question__drag-gap" aria-label="Answer space"></span>
+        </template>
+      </p>
+      <div v-else class="print-question__targets">
+        <div
+          v-for="target in dragConfig.targets"
+          :key="target.id"
+          class="print-question__target"
+          :class="{ 'print-question__target--long': isLongTargetLabel(target.label) }"
+        >
+          <strong>{{ target.label }}</strong><span></span>
+        </div>
       </div>
     </template>
 
     <div v-else-if="questionType === 'TABLE_GRID'" class="print-question__table-wrap">
       <table class="print-question__table">
+        <colgroup>
+          <col class="print-question__table-label-column">
+          <col v-for="column in tableColumns" :key="column.id" class="print-question__table-answer-column">
+        </colgroup>
         <thead><tr><th></th><th v-for="column in tableColumns" :key="column.id">{{ column.label }}</th></tr></thead>
         <tbody>
           <tr v-for="row in tableRows" :key="row.id">
@@ -132,31 +163,41 @@ const hotSpotImageUrl = computed(() => imageUrlForQuestion(props.question, hotSp
 
 <style>
 .print-question {
-  margin: 0 0 22px;
-  padding: 0 0 18px;
-  border-bottom: 1px solid #aab1b9;
-  font-size: 11.5pt;
-  line-height: 1.48;
+  margin: 0 0 14px;
+  padding: 0;
+  font-size: 10.5pt;
+  line-height: 1.3;
   break-inside: avoid-page;
   page-break-inside: avoid;
 }
 .print-question__stem { display: flex; align-items: baseline; gap: 7px; white-space: pre-wrap; }
 .print-question__number { flex: 0 0 auto; }
-.print-question__choices { display: grid; gap: 4px; margin: 12px 0 0 18px; }
-.print-question__choice { display: grid; grid-template-columns: 18px 23px minmax(0, 1fr); align-items: baseline; gap: 5px; }
-.print-question__marker { width: 9px; height: 9px; align-self: center; border: 1px solid #303840; border-radius: 50%; }
+.print-question__choices { display: grid; gap: 2px; margin: 7px 0 0 14px; }
+.print-question__choice { display: grid; grid-template-columns: 18px 23px minmax(0, 1fr); align-items: start; gap: 5px; }
+.print-question__marker { width: 9px; height: 9px; margin-top: .42em; border: 1px solid #303840; border-radius: 50%; }
 .print-question__marker--checkbox, .print-question__table-marker { border-radius: 0; }
 .print-question__table-marker { display: inline-block; width: 9px; height: 9px; border: 1px solid #303840; }
-.print-question__instruction { margin: 10px 0; font-style: italic; }
-.print-question__answer-bank { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0; padding: 10px; border: 1px solid #7d858d; }
-.print-question__targets { display: grid; gap: 10px; }
-.print-question__targets > div { display: grid; grid-template-columns: minmax(1in, 2in) 1fr; align-items: end; gap: 14px; }
-.print-question__targets span { min-height: 24px; border-bottom: 1px solid #525960; }
-.print-question__subchoices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 16px; margin: 8px 0; }
+.print-question__instruction { margin: 7px 0; font-style: italic; }
+.print-question__answer-bank { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0; padding: 6px 8px; border: 1px solid #7d858d; break-inside: avoid-page; page-break-inside: avoid; }
+.print-question__answer-choice { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; max-width: 100%; white-space: normal; }
+.print-question__drag-inline { margin: 7px 0 3px; line-height: 1.8; white-space: pre-wrap; }
+.print-question__drag-text { white-space: pre-wrap; }
+.print-question__drag-gap { display: inline-block; width: .85in; height: 1em; margin: 0 3px; border-bottom: 1px solid #525960; vertical-align: baseline; }
+.print-question__targets { display: grid; gap: 7px; margin-top: 7px; }
+.print-question__targets > div { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(1.1in, 1fr); align-items: end; gap: 10px; break-inside: avoid-page; page-break-inside: avoid; }
+.print-question__targets > .print-question__target--long { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+.print-question__targets span { min-height: 20px; border-bottom: 1px solid #525960; }
 .print-question__inline-text { white-space: pre-wrap; }
-.print-question__inline-blank { display: inline-block; min-width: 1.15in; margin: 0 3px; border-bottom: 1px solid #303840; text-align: center; }
-.print-question__table { width: 100%; margin-top: 12px; border-collapse: collapse; text-align: center; }
-.print-question__table th, .print-question__table td { border: 1px solid #555; padding: 8px 6px; }
+.print-question__inline-blank { display: inline-block; min-width: 1in; height: 1em; margin: 0 3px; border-bottom: 1px solid #303840; vertical-align: baseline; }
+.print-question__inline-choice-groups { margin-top: 6px; }
+.print-question__inline-choice-group { margin: 5px 0; break-inside: avoid-page; page-break-inside: avoid; }
+.print-question__inline-choice-label { display: block; margin-bottom: 3px; }
+.print-question__inline-choice-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 16px; }
+.print-question__inline-choice-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 4px; min-width: 0; }
+.print-question__table { width: 100%; margin-top: 12px; border-collapse: collapse; table-layout: fixed; text-align: center; }
+.print-question__table-label-column { width: 44%; }
+.print-question__table-answer-column { width: auto; }
+.print-question__table th, .print-question__table td { border: 1px solid #555; padding: 5px 7px; overflow-wrap: anywhere; }
 .print-question__table th:first-child { text-align: left; }
 .print-question__graph { margin-top: 12px; break-inside: avoid; }
 .print-question__graph > p, .print-question__number-line > p, .print-question__hotspot > p, .print-question__hot-text > p:first-child { margin: 0 0 8px; font-style: italic; }
@@ -171,8 +212,12 @@ const hotSpotImageUrl = computed(() => imageUrlForQuestion(props.question, hotSp
 .print-question__response-lines--short { max-width: 2.2in; }
 .print-question .mixed-content__image { max-width: 70%; border: 0; border-radius: 0; box-shadow: none; }
 .print-question .mixed-content__image-block { cursor: default; }
+.print-question .mixed-content__block-math,
+.print-question .formula-text__block-math { margin: 5px auto; }
 @media print {
   .print-question { break-inside: avoid-page; page-break-inside: avoid; }
+  .print-question__table thead { display: table-header-group; }
+  .print-question__table tr { break-inside: avoid; page-break-inside: avoid; }
   .print-question__graph svg, .print-question__number-line svg { print-color-adjust: exact; }
 }
 </style>
