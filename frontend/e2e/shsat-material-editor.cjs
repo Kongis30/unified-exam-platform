@@ -171,6 +171,37 @@ async function main() {
     assert.equal(questions[0].render.material.content, questions[1].render.material.content,
       'both linked questions reference identical material content');
 
+    const passageSet = page.locator('.passage-set').filter({ hasText: `Shared Passage Edited ${suffix}` });
+    assert.equal(await passageSet.count(), 1, 'adjacent questions that share a passage appear as one passage set');
+    assert.match(await passageSet.locator('.passage-set__header small').innerText(), /Q1-Q2 · 2 questions/,
+      'the passage set reports its question range and size');
+    await passageSet.getByRole('button', { name: 'Add Question', exact: true }).click();
+    const groupedQuestionStem = `Additional passage question ${suffix}.`;
+    await page.locator('.stem-input').fill(groupedQuestionStem);
+    await savePaperChanges(page, paperId);
+    stored = await api(page, `/api/admin/papers/${paperId}`);
+    questions = readQuestions(stored);
+    assert.equal(questions.length, 3, 'Add Question in a passage set inserts exactly one question');
+    assert.deepEqual(questions.map(question => question.stem), [firstStem, secondStem, groupedQuestionStem],
+      'the new question is inserted after the existing passage questions');
+    assert.ok(questions.every(question => question.render.material.title === `Shared Passage Edited ${suffix}`),
+      'the inserted question retains the same passage content');
+    assert.deepEqual(questions.map(question => question.displayNumber), [1, 2, 3],
+      'passage question numbering remains contiguous after insertion');
+    assert.deepEqual((await page.locator('.passage-set .question-item--nested').allInnerTexts())
+      .map(text => Number(text.match(/\bQ(\d+)\b/)?.[1])), [1, 2, 3],
+    'the editor preserves paper-wide question order after reloading grouped subtype data');
+    const updatedPassageSet = page.locator('.passage-set').filter({ hasText: `Shared Passage Edited ${suffix}` });
+    assert.match(await updatedPassageSet
+      .locator('.passage-set__header small').innerText(), /Q1-Q3 · 3 questions/,
+    'the passage set range updates after adding a grouped question');
+    await updatedPassageSet.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/shsat-material-passage-set-${stamp}.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: `/tmp/shsat-material-passage-set-mobile-${stamp}.png` });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.locator('.passage-set .question-item--nested').filter({ hasText: secondStem }).click();
+
     await page.locator('.material-editor').getByRole('button', { name: 'New', exact: true }).click();
     assert.equal(await page.locator('.stem-input').inputValue(), secondStem, 'the independent draft is created from the second question');
     assert.equal(await secondEditor.locator('.material-form-grid input').nth(0).inputValue(), '',
@@ -313,13 +344,15 @@ async function main() {
     assert.deepEqual(pageErrors, [], 'material editing, persistence, and preview have no browser errors');
     console.log(JSON.stringify({
       result: 'PASS',
-      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'new independent copy', 'clear one link'],
+      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'passage set grouping and question insertion', 'new independent copy', 'clear one link'],
       uploadFailureMobileSize,
       mobileSize,
       pageErrors: pageErrors.length,
       screenshots: [
         `/tmp/shsat-material-screenshot-modal-${stamp}.png`,
         `/tmp/shsat-material-editor-saved-${stamp}.png`,
+        `/tmp/shsat-material-passage-set-${stamp}.png`,
+        `/tmp/shsat-material-passage-set-mobile-${stamp}.png`,
         `/tmp/shsat-material-upload-failure-${stamp}.png`,
         `/tmp/shsat-material-upload-failure-mobile-${stamp}.png`,
         `/tmp/shsat-material-image-editor-${stamp}.png`,

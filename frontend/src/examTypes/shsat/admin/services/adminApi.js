@@ -94,6 +94,8 @@ function mapPaperDetail(detail) {
     const groups = [{ ...part, subTypeId: null }, ...part.children.map((child) => ({ ...child, subTypeId: String(child.id) }))];
     return groups.flatMap((section) => section.questions.map((item) => {
       const render = parseJson(item.render);
+      const questionNumber = Number(item.displayNumber || nextQuestionNumber);
+      nextQuestionNumber = Math.max(nextQuestionNumber, questionNumber + 1);
       const material = render.material || null;
       let materialId = null;
       if (material) {
@@ -115,7 +117,7 @@ function mapPaperDetail(detail) {
         questionId: item.questionId, paperItemId: item.paperItemId, paperId: detail.summary.id,
         questionSchemaVersion: item.payloadSchemaVersion || 1,
         partId: String(part.id), subTypeId: section.subTypeId, materialId,
-        questionNumber: item.displayNumber || nextQuestionNumber,
+        questionNumber,
         questionType: item.questionTypeCode, stem: item.stem,
         scoringSectionCode: item.scoringSectionCode || part.sectionCode,
         shsatSkillTag: render.questionConfig?.shsatSkillTag || null,
@@ -124,24 +126,27 @@ function mapPaperDetail(detail) {
         questionConfig: JSON.stringify(render.questionConfig || {}),
         validationRules: JSON.stringify(render.validationRules || {}),
         scoringRules: JSON.stringify(item.grading || {}), difficulty: render.difficulty || null,
-        displayOrder: item.sortOrder + 1,
+        // Paper item sortOrder is local to its subtype; displayNumber carries the
+        // paper-wide order needed by the editor when flattening those subtypes.
+        displayOrder: questionNumber,
         materialType: material?.type === 'IMAGE' ? 'image' : material ? 'text' : 'none',
         materialTitle: material?.title || '', materialCategory: material?.category || 'Reading Passage',
         materialContent: material?.content || '', imageUrl: material?.assetUrl || '',
       };
-    }).map((question) => { nextQuestionNumber = Math.max(nextQuestionNumber, Number(question.questionNumber) + 1); return question; }));
+    }));
   });
   if (unassignedSection) {
     questions.push(...unassignedSection.questions.map((item) => {
       const render = parseJson(item.render);
+      const questionNumber = Number(item.displayNumber || nextQuestionNumber++);
       return {
         questionId: item.questionId, paperItemId: item.paperItemId, paperId: detail.summary.id,
         partId: null, subTypeId: null, materialId: null,
-        questionNumber: item.displayNumber || nextQuestionNumber++, questionType: item.questionTypeCode,
+        questionNumber, questionType: item.questionTypeCode,
         stem: item.stem, options: JSON.stringify(render.options || []),
         correctAnswerData: JSON.stringify(item.answerKey), questionConfig: JSON.stringify(render.questionConfig || {}),
         validationRules: JSON.stringify(render.validationRules || {}), scoringRules: JSON.stringify(item.grading || {}),
-        difficulty: render.difficulty || null, displayOrder: item.sortOrder + 1,
+        difficulty: render.difficulty || null, displayOrder: questionNumber,
         materialType: 'none', materialTitle: '', materialCategory: 'Reading Passage', materialContent: '', imageUrl: '',
       };
     }));
