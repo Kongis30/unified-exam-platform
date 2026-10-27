@@ -618,6 +618,7 @@ async function main() {
       `the table-grid editor fits a 390px viewport: ${JSON.stringify(tableEditorMobileSize)}`);
     await tableEditor.evaluate(element => element.scrollIntoView({ block: 'center' }));
     await tableEditor.screenshot({ path: `/tmp/shsat-question-type-editor-table-mobile-${stamp}.png` });
+    await page.screenshot({ path: `/tmp/shsat-question-type-editor-table-mobile-viewport-${stamp}.png` });
 
     await page.setViewportSize({ width: 1440, height: 1000 });
     const tableHeading = page.getByRole('heading', { name: /Question \d+ · Table Grid/ });
@@ -750,6 +751,7 @@ async function main() {
         `/tmp/shsat-question-type-preview-graph-mobile-${stamp}.png`,
         `/tmp/shsat-question-type-editor-table-${stamp}.png`,
         `/tmp/shsat-question-type-editor-table-mobile-${stamp}.png`,
+        `/tmp/shsat-question-type-editor-table-mobile-viewport-${stamp}.png`,
         `/tmp/shsat-question-type-preview-table-${stamp}.png`,
         `/tmp/shsat-question-type-preview-table-mobile-${stamp}.png`,
         `/tmp/shsat-question-type-editor-metadata-${stamp}.png`,

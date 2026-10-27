@@ -88,7 +88,20 @@ function mapPaperDetail(detail) {
     questionCount: section.settings?.questionCount || section.questions.length,
     displayOrder: section.sortOrder + 1,
   })));
-  const materials = [];
+  const materials = (detail.materials || []).map((item) => {
+    const part = parts.find((entry) => entry.partCode === item.partCode);
+    const subType = item.subTypeCode && part
+      ? subTypes.find((entry) => entry.subTypeCode === item.subTypeCode && String(entry.partId) === String(part.partId))
+      : null;
+    return {
+      materialId: String(item.id), paperId: detail.summary.id,
+      partId: part ? String(part.partId) : null,
+      subTypeId: subType ? String(subType.subTypeId) : null,
+      materialType: item.materialType || 'TEXT', materialCategory: item.category || null,
+      materialTitle: item.title || null, materialContent: item.content || null,
+      assetUrl: item.assetUrl || null, displayOrder: Number(item.sortOrder || 0),
+    };
+  });
   let nextQuestionNumber = 1;
   const questions = paperSections.flatMap((part) => {
     const groups = [{ ...part, subTypeId: null }, ...part.children.map((child) => ({ ...child, subTypeId: String(child.id) }))];
@@ -97,13 +110,14 @@ function mapPaperDetail(detail) {
       const questionNumber = Number(item.displayNumber || nextQuestionNumber);
       nextQuestionNumber = Math.max(nextQuestionNumber, questionNumber + 1);
       const material = render.material || null;
-      let materialId = null;
+      let materialId = render.materialId == null ? null : String(render.materialId);
       if (material) {
         const key = `${material.type || 'TEXT'}:${material.title || ''}:${material.content || material.assetUrl || ''}`;
-        let saved = materials.find((entry) => entry.key === key);
+        let saved = materials.find((entry) => entry.materialId === materialId)
+          || materials.find((entry) => entry.key === key);
         if (!saved) {
           saved = {
-            key, materialId: `material-${materials.length + 1}`, paperId: detail.summary.id,
+            key, materialId: materialId || `material-${materials.length + 1}`, paperId: detail.summary.id,
             partId: String(part.id), subTypeId: section.subTypeId,
             materialType: material.type || 'TEXT', materialCategory: material.category || null,
             materialTitle: material.title || null, materialContent: material.content || null,
@@ -177,6 +191,11 @@ function mapShsatQuestion(question, sortOrder, sectionCode) {
     difficulty: question.difficulty || null,
   };
   if (question.materialType && question.materialType !== 'none') {
+    if (question.materialId && /^\d+$/.test(String(question.materialId))) {
+      render.materialId = Number(question.materialId);
+    } else if (question.materialId) {
+      render.materialRef = String(question.materialId);
+    }
     render.material = {
       type: question.materialType === 'image' ? 'IMAGE' : 'TEXT',
       title: question.materialTitle || null,
@@ -220,6 +239,24 @@ function toSectionRequest(part, subTypes, questions, partOrder) {
     questions: looseQuestions.sort((a, b) => Number(a.displayOrder || a.questionNumber || 0) - Number(b.displayOrder || b.questionNumber || 0)
       ).map((question, order) => mapShsatQuestion(question, order, code)),
     children,
+  };
+}
+
+function toMaterialRequest(material, parts, subTypes, index) {
+  const part = parts.find((item) => String(item.partId) === String(material.partId));
+  const subType = subTypes.find((item) => String(item.subTypeId) === String(material.subTypeId));
+  if (!part) return null;
+  return {
+    materialId: /^\d+$/.test(String(material.materialId || '')) ? String(material.materialId) : null,
+    clientRef: String(material.materialId || `material-${index + 1}`),
+    partCode: part.partCode,
+    subTypeCode: subType?.subTypeCode || null,
+    materialType: material.materialType || 'TEXT',
+    category: material.materialCategory || null,
+    title: material.materialTitle || null,
+    content: material.materialType === 'IMAGE' ? null : material.materialContent || null,
+    assetUrl: material.assetUrl || null,
+    sortOrder: Number(material.displayOrder || index),
   };
 }
 
@@ -279,8 +316,11 @@ export const adminApi = {
         questions: unassignedQuestions.map((question, index) => mapShsatQuestion(question, index, null)),
       });
     }
+    const materials = (structure.materials || [])
+      .map((material, index) => toMaterialRequest(material, structure.parts, structure.subTypes, index))
+      .filter(Boolean);
     return apiRequest(`/api/admin/papers/${paperId}/structure`, {
-      method: 'PUT', body: JSON.stringify({ sections }),
+      method: 'PUT', body: JSON.stringify({ sections, materials }),
     }).then(mapPaperDetail);
   },
 

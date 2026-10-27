@@ -21,6 +21,7 @@ async function main() {
   const firstStem = `Read the passage ${suffix}.`;
   const secondStem = `Use the same passage ${suffix}.`;
   let paperId;
+  let versionId;
 
   try {
     await login(page);
@@ -135,7 +136,7 @@ async function main() {
     assert.match(questions[0].render.material.content, /\$x\^2\$/);
 
     await page.reload();
-    await page.getByRole('heading', { name: 'Question 1 · Multiple Choice', exact: true }).waitFor();
+    await page.getByRole('heading', { name: /Question \d+ · Multiple Choice/ }).waitFor();
     assert.equal(await editor.locator('.material-type select').inputValue(), 'text');
     assert.equal(await editor.locator('.material-form-grid input').nth(0).inputValue(), `Shared Passage ${suffix}`);
     assert.match(await structuredEditor.locator('textarea').nth(1).inputValue(), /\[\[MATERIAL_IMAGE:/,
@@ -348,6 +349,34 @@ async function main() {
     questions = readQuestions(stored);
     assert.equal(questions[1].render.material, undefined, 'Clear also unlinks an uploaded image material');
 
+    for (const stem of [firstStem, groupedQuestionStem]) {
+      await page.locator('.question-item').filter({ hasText: stem }).click();
+      const passageEditor = page.locator('.material-editor');
+      await passageEditor.getByRole('button', { name: 'Clear', exact: true }).click();
+      await savePaperChanges(page, paperId);
+    }
+    stored = await api(page, `/api/admin/papers/${paperId}`);
+    questions = readQuestions(stored);
+    assert.ok(stored.materials.some(material => material.title === `Shared Passage Edited ${suffix}`),
+      'a passage remains in the material library after every question is unlinked');
+    assert.ok(questions.every(question => question.render.material === undefined),
+      'clearing the final passage reference removes it from the questions');
+
+    await page.reload();
+    await page.getByRole('heading', { name: /Question \d+ · Multiple Choice/ }).waitFor();
+    await page.locator('.question-item').filter({ hasText: firstStem }).click();
+    const restoredMaterialEditor = page.locator('.material-editor');
+    await restoredMaterialEditor.locator('.material-type select').selectOption('text');
+    const restoredMaterialSelect = restoredMaterialEditor.locator('.material-topline select');
+    const preservedMaterialOption = await restoredMaterialSelect.locator('option').evaluateAll((options, title) => (
+      options.find(option => option.textContent.includes(title))?.value || ''
+    ), `Shared Passage Edited ${suffix}`);
+    assert.ok(preservedMaterialOption, 'an unlinked passage remains available after a page reload');
+    await restoredMaterialSelect.selectOption(preservedMaterialOption);
+    assert.equal(await restoredMaterialEditor.locator('.material-form-grid input').nth(0).inputValue(),
+      `Shared Passage Edited ${suffix}`, 'the unlinked material can be reattached with its saved content');
+    await savePaperChanges(page, paperId);
+
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
     await page.getByText(firstStem, { exact: true }).waitFor();
@@ -364,10 +393,19 @@ async function main() {
     assert.ok(mobileSize.page <= mobileSize.viewport, `the material preview fits a 390px viewport: ${JSON.stringify(mobileSize)}`);
     await page.screenshot({ path: `/tmp/shsat-material-preview-mobile-${stamp}.png` });
 
+    const version = await api(page, `/api/admin/papers/${paperId}/versions`, 'POST');
+    versionId = Number(version.summary.id);
+    assert.ok(version.materials.some(material => material.title === `Shared Passage Edited ${suffix}`),
+      'creating a paper version copies its independent material library');
+    assert.ok(readQuestions(version).some(question => question.render.material?.title === `Shared Passage Edited ${suffix}`),
+      'the copied question points to its copied material record');
+    await api(page, `/api/admin/papers/${versionId}`, 'DELETE');
+    versionId = undefined;
+
     assert.deepEqual(pageErrors, [], 'material editing, persistence, and preview have no browser errors');
     console.log(JSON.stringify({
       result: 'PASS',
-      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'passage set grouping, question insertion, and drag boundary', 'new independent copy', 'clear one link'],
+      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'passage set grouping, question insertion, and drag boundary', 'new independent copy', 'clear one link', 'retain and reuse material after all question links are cleared', 'copy independent materials when creating a paper version'],
       uploadFailureMobileSize,
       mobileSize,
       pageErrors: pageErrors.length,
@@ -384,6 +422,7 @@ async function main() {
       ],
     }));
   } finally {
+    if (versionId) await api(page, `/api/admin/papers/${versionId}`, 'DELETE').catch(() => {});
     if (paperId) await api(page, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
     await browser.close();
   }

@@ -2015,6 +2015,7 @@ async function saveChanges() {
       const saved = unwrapResponse(await adminApi.savePaperStructure(paperId.value, {
         parts: parts.value,
         subTypes: subTypes.value,
+        materials: materials.value,
         questions: sortedQuestions.value,
       }));
       paper.value = saved;
@@ -2434,7 +2435,7 @@ function updateMaterialDraft(question = currentQuestion.value) {
       });
 
     materials.value = materials.value.map((material) => sameId(material.materialId, question.materialId)
-      ? materialUpdate
+      ? { ...material, ...materialUpdate, partId: material.partId, subTypeId: material.subTypeId, displayOrder: material.displayOrder }
       : material);
   } else {
     question.material = materialUpdate;

@@ -114,7 +114,8 @@ public class PaperService {
             WHERE p.id = ?
             """, String.class, paperId);
         List<SectionView> sections = loadSections(paperId, null);
-        return new PaperDetail(summary, description, groupId, scoringProfileCode, sections);
+        List<MaterialView> materials = "SHSAT".equals(summary.examTypeCode()) ? loadShsatMaterials(paperId) : List.of();
+        return new PaperDetail(summary, description, groupId, scoringProfileCode, sections, materials);
     }
 
     @Transactional
@@ -276,8 +277,13 @@ public class PaperService {
     /** 用新结构覆盖草稿结构；问题答案键只通过管理员接口返回。 */
     @Transactional
     public PaperDetail saveStructure(long paperId, SaveStructureRequest request) {
-        requireEditable(paperId, typeCode(paperId));
+        String examTypeCode = typeCode(paperId);
+        requireEditable(paperId, examTypeCode);
         validateSectionOrders(request.sections());
+        List<MaterialWriteRequest> materials = "SHSAT".equals(examTypeCode)
+            ? request.materials() == null ? loadShsatMaterials(paperId).stream().map(MaterialWriteRequest::from).toList()
+                : request.materials()
+            : List.of();
         List<Long> oldQuestionIds = jdbcTemplate.query("""
             SELECT DISTINCT pi.question_id FROM paper_items pi
             JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?
@@ -294,7 +300,115 @@ public class PaperService {
         for (SectionRequest section : request.sections()) {
             insertSection(paperId, null, section);
         }
+        if ("SHSAT".equals(examTypeCode)) {
+            Map<String, Long> oldMaterialIds = saveShsatMaterials(paperId, materials);
+            remapShsatQuestionMaterials(paperId, oldMaterialIds);
+        }
         return get(paperId);
+    }
+
+    private List<MaterialView> loadShsatMaterials(long paperId) {
+        return jdbcTemplate.query("""
+            SELECT material.id, part.settings_json AS part_settings, part.section_code AS part_code,
+                   section.section_kind,
+                   CASE WHEN section.section_kind = 'SUBTYPE' THEN COALESCE(
+                       JSON_UNQUOTE(JSON_EXTRACT(section.settings_json, '$.subTypeCode')),
+                       SUBSTRING(section.section_code, LENGTH(part.section_code) + 2)) END AS subtype_code,
+                   material.material_type, material.category, material.title, material.content,
+                   material.asset_key, material.sort_order
+            FROM shsat_section_materials material
+            JOIN paper_sections section ON section.id = material.section_id
+            LEFT JOIN paper_sections part ON part.id = CASE
+                WHEN section.section_kind = 'PART' THEN section.id ELSE section.parent_section_id END
+            WHERE section.paper_id = ? AND section.section_kind IN ('PART', 'SUBTYPE')
+            ORDER BY part.sort_order, section.sort_order, material.sort_order, material.id
+            """, (rs, rowNum) -> {
+                String partCode = settingText(readJson(rs.getString("part_settings")), "partCode", rs.getString("part_code"));
+                String subtypeCode = rs.getString("subtype_code");
+                return new MaterialView(rs.getLong("id"), partCode, subtypeCode,
+                    rs.getString("material_type"), rs.getString("category"), rs.getString("title"),
+                    rs.getString("content"), shsatMaterialAssetUrl(rs.getString("asset_key")), rs.getInt("sort_order"));
+            }, paperId);
+    }
+
+    /** 同步保留的材料库，并在结构整体重建后恢复题目到材料记录的关联。 */
+    private Map<String, Long> saveShsatMaterials(long paperId, List<MaterialWriteRequest> materials) {
+        Map<String, Long> sectionIds = jdbcTemplate.query("""
+            SELECT section_code, id FROM paper_sections WHERE paper_id = ?
+            """, rs -> {
+                Map<String, Long> result = new HashMap<>();
+                while (rs.next()) result.put(rs.getString("section_code"), rs.getLong("id"));
+                return result;
+            }, paperId);
+        Map<String, Long> materialIds = new HashMap<>();
+        for (MaterialWriteRequest material : materials) {
+            String sectionCode = material.subTypeCode() == null || material.subTypeCode().isBlank()
+                ? material.partCode() : material.partCode() + "_" + material.subTypeCode();
+            Long sectionId = sectionIds.get(sectionCode);
+            if (sectionId == null) continue;
+            GeneratedKeyHolder keyHolder = new GeneratedKeyHolder();
+            jdbcTemplate.update(connection -> {
+                PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO shsat_section_materials
+                        (section_id, material_type, category, title, content, asset_key, sort_order)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, Statement.RETURN_GENERATED_KEYS);
+                statement.setLong(1, sectionId);
+                statement.setString(2, material.materialType() == null ? "TEXT" : material.materialType());
+                statement.setString(3, material.category());
+                statement.setString(4, material.title());
+                statement.setString(5, material.content());
+                statement.setString(6, shsatMaterialAssetKey(material.assetUrl()));
+                statement.setInt(7, material.sortOrder());
+                return statement;
+            }, keyHolder);
+            long newId = keyHolder.getKey().longValue();
+            if (material.materialId() != null && !material.materialId().isBlank()) {
+                materialIds.put(material.materialId(), newId);
+            }
+            if (material.clientRef() != null && !material.clientRef().isBlank()) {
+                materialIds.put(material.clientRef(), newId);
+            }
+        }
+        return materialIds;
+    }
+
+    private void remapShsatQuestionMaterials(long paperId, Map<String, Long> materialIds) {
+        Set<Long> paperMaterialIds = new HashSet<>(jdbcTemplate.queryForList(
+            "SELECT id FROM shsat_paper_materials WHERE paper_id = ?", Long.class, paperId));
+        List<MaterialQuestionRow> questions = jdbcTemplate.query("""
+            SELECT q.id, q.render_json FROM questions q
+            JOIN paper_items pi ON pi.question_id = q.id
+            JOIN paper_sections section ON section.id = pi.section_id
+            WHERE section.paper_id = ?
+            """, (rs, rowNum) -> new MaterialQuestionRow(rs.getLong("id"), readJson(rs.getString("render_json"))), paperId);
+        for (MaterialQuestionRow question : questions) {
+            if (question.render() == null || !question.render().isObject()) continue;
+            ObjectNode render = ((ObjectNode) question.render()).deepCopy();
+            String materialId = render.path("materialId").asText(null);
+            String materialRef = render.path("materialRef").asText(null);
+            if (materialId == null && materialRef == null) continue;
+            Long mappedId = materialIds.get(materialId);
+            if (mappedId == null) mappedId = materialIds.get(materialRef);
+            if (mappedId != null) {
+                render.put("materialId", mappedId);
+            } else if (!isShsatPaperMaterial(paperMaterialIds, materialId)) {
+                render.remove("materialId");
+            }
+            render.remove("materialRef");
+            jdbcTemplate.update("UPDATE questions SET render_json = CAST(? AS JSON) WHERE id = ?", json(render), question.questionId());
+        }
+    }
+
+    private boolean isShsatPaperMaterial(Set<Long> paperMaterialIds, String materialId) {
+        if (materialId == null || !materialId.matches("\\d+")) return false;
+        return paperMaterialIds.contains(Long.parseLong(materialId));
+    }
+
+    private String shsatMaterialAssetKey(String assetUrl) {
+        if (assetUrl == null || assetUrl.isBlank()) return null;
+        String prefix = "/uploads/paper-materials/";
+        return assetUrl.startsWith(prefix) ? assetUrl.substring(prefix.length()) : assetUrl;
     }
 
     /** 创建下一版本并复制完整结构；SAT/PSAT 继承源状态，SHSAT 保留草稿流程。 */
@@ -307,7 +421,8 @@ public class PaperService {
         long newPaperId = insertPaper(source.summary().examTypeCode(), source.groupId(), code, nextVersion,
             source.summary().title(), source.description(), source.summary().defaultDurationSeconds(),
             sourcePaperId, userId(actorUsername));
-        saveStructure(newPaperId, new SaveStructureRequest(source.sections().stream().map(this::toRequest).toList()));
+        saveStructure(newPaperId, new SaveStructureRequest(source.sections().stream().map(this::toRequest).toList(),
+            source.materials().stream().map(MaterialWriteRequest::from).toList()));
         if (isSatWorkspaceType(source.summary().examTypeCode())) {
             copySatPaperExtensions(sourcePaperId, newPaperId);
             if (!"DRAFT".equals(source.summary().status())) {
@@ -914,7 +1029,23 @@ public class PaperService {
     public record WorkspaceGroupOrder(@NotNull List<@NotNull @Valid WorkspaceGroupReference> groups) { }
     public record WorkspaceGroupReference(@NotBlank @Size(max = 32) String examTypeCode,
                                           @Positive long groupId) { }
-    public record SaveStructureRequest(@NotNull @Valid List<SectionRequest> sections) { }
+    public record SaveStructureRequest(@NotNull @Valid List<SectionRequest> sections,
+                                       @Valid List<MaterialWriteRequest> materials) {
+        public SaveStructureRequest(List<SectionRequest> sections) { this(sections, null); }
+    }
+    public record MaterialWriteRequest(String materialId, String clientRef,
+                                       @NotBlank @Size(max = 60) String partCode,
+                                       @Size(max = 60) String subTypeCode,
+                                       @NotBlank @Size(max = 20) String materialType,
+                                       @Size(max = 100) String category,
+                                       @Size(max = 200) String title,
+                                       String content, @Size(max = 500) String assetUrl,
+                                       @PositiveOrZero int sortOrder) {
+        private static MaterialWriteRequest from(MaterialView material) {
+            return new MaterialWriteRequest(String.valueOf(material.id()), null, material.partCode(), material.subTypeCode(),
+                material.materialType(), material.category(), material.title(), material.content(), material.assetUrl(), material.sortOrder());
+        }
+    }
     public record ImportQuestionsRequest(@NotNull Long sourceExamId,
             @NotNull @Size(min = 1, max = 100) List<@NotNull @Positive Integer> questionNumbers) { }
     public record SectionRequest(@NotBlank @Size(max = 60) String sectionCode,
@@ -942,7 +1073,9 @@ public class PaperService {
                                String status, Integer defaultDurationSeconds, int sectionCount, int questionCount,
                                BigDecimal totalScore, String createdAt, String updatedAt) { }
     public record PaperDetail(PaperSummary summary, String description, Long groupId, String scoringProfileCode,
-                              List<SectionView> sections) { }
+                              List<SectionView> sections, List<MaterialView> materials) { }
+    public record MaterialView(long id, String partCode, String subTypeCode, String materialType,
+                               String category, String title, String content, String assetUrl, int sortOrder) { }
     public record SectionView(long id, String sectionCode, String sectionKind, String title, int sortOrder,
                               String instructions, JsonNode settings, List<QuestionView> questions,
                               List<SectionView> children) { }
@@ -957,6 +1090,7 @@ public class PaperService {
                                     long materialCount, long solutionCount) { }
     private record SectionRow(long id, String sectionCode, String sectionKind, String title, int sortOrder,
                               String instructions, JsonNode settings) { }
+    private record MaterialQuestionRow(long questionId, JsonNode render) { }
     private record GroupReferenceKey(String examTypeCode, long groupId) { }
     private record WorkspaceGroupRow(String examTypeCode, String name) { }
 }
