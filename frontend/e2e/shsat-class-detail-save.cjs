@@ -17,6 +17,8 @@ async function main() {
   const stamp = Date.now();
   let classId;
   let studentId;
+  let otherClassId;
+  const candidateStudentIds = [];
 
   try {
     await login(page);
@@ -119,6 +121,68 @@ async function main() {
     const usersAfterRemoval = await api(page, '/api/admin/users');
     assert.ok(usersAfterRemoval.some(item => Number(item.id) === studentId), 'removing a student preserves the unified account');
 
+    const otherClass = await api(page, '/api/admin/classes?examTypeCodes=SHSAT', 'POST', {
+      name: `SHSAT Other Class ${stamp}`, description: 'Temporary enrollment reference class', active: true,
+    });
+    otherClassId = Number(otherClass.classId || otherClass.id);
+    const candidates = await Promise.all([
+      api(page, '/api/admin/users', 'POST', {
+        username: `shsat_add_candidate_${stamp}`, password: `AddCandidate${stamp}!`,
+        realName: `Add Candidate ${stamp}`, roleCode: 'STUDENT', email: `add_candidate_${stamp}@example.test`, phone: null,
+      }),
+      api(page, '/api/admin/users', 'POST', {
+        username: `shsat_add_unassigned_${stamp}`, password: `AddUnassigned${stamp}!`,
+        realName: `Add Unassigned ${stamp}`, roleCode: 'STUDENT', email: `add_unassigned_${stamp}@example.test`, phone: null,
+      }),
+    ]);
+    candidateStudentIds.push(...candidates.map(candidate => Number(candidate.id)));
+    await api(page, `/api/admin/classes/${otherClassId}/students`, 'POST', { studentUserId: candidateStudentIds[0] });
+
+    await page.getByRole('button', { name: 'Add Students', exact: true }).click();
+    const addDialog = page.getByRole('dialog', { name: 'Add Students' });
+    const candidateRow = addDialog.locator('.add-students-table tbody tr').filter({ hasText: `Add Candidate ${stamp}` });
+    const unassignedRow = addDialog.locator('.add-students-table tbody tr').filter({ hasText: `Add Unassigned ${stamp}` });
+    await candidateRow.waitFor();
+    await unassignedRow.waitFor();
+    assert.match(await candidateRow.locator('td').nth(3).innerText(), new RegExp(`SHSAT Other Class ${stamp}`),
+      'the picker lists the candidate student’s current class membership');
+    assert.equal((await unassignedRow.locator('td').nth(3).innerText()).trim(), 'No classes yet',
+      'the picker clearly identifies an unassigned student');
+    await addDialog.getByLabel('Search students').fill(`Add Candidate ${stamp}`);
+    assert.equal(await addDialog.locator('.add-students-table tbody tr').count(), 1,
+      'student search narrows the roster to matching accounts');
+    await addDialog.getByLabel('Search students').fill('');
+    await candidateRow.locator('input[type="checkbox"]').check();
+    await addDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    const rosterAfterCancelResponse = await api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`);
+    assert.equal((rosterAfterCancelResponse.items || rosterAfterCancelResponse)
+      .some(item => Number(item.studentId || item.id) === candidateStudentIds[0]), false,
+    'canceling the picker does not enroll the selected student');
+
+    await page.getByRole('button', { name: 'Add Students', exact: true }).click();
+    const reopenedDialog = page.getByRole('dialog', { name: 'Add Students' });
+    const candidateRows = reopenedDialog.locator('.add-students-table tbody tr');
+    await candidateRows.filter({ hasText: `Add Candidate ${stamp}` }).locator('input[type="checkbox"]').check();
+    await candidateRows.filter({ hasText: `Add Unassigned ${stamp}` }).locator('input[type="checkbox"]').check();
+    await reopenedDialog.screenshot({ path: `/tmp/shsat-class-add-students-selected-${stamp}.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const addDialogMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(addDialogMobileSize.page <= addDialogMobileSize.viewport, 'the multi-select picker fits a 390px viewport');
+    assert.equal(await reopenedDialog.locator('.add-students-selected').evaluate(element => getComputedStyle(element).whiteSpace), 'nowrap',
+      'the mobile selected-count label stays on one line');
+    assert.equal(await reopenedDialog.getByRole('button', { name: 'Add 2 Students', exact: true }).evaluate(button => getComputedStyle(button).whiteSpace), 'nowrap',
+      'the mobile batch-add action stays on one line');
+    await reopenedDialog.screenshot({ path: `/tmp/shsat-class-add-students-mobile-${stamp}.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await reopenedDialog.getByRole('button', { name: 'Add 2 Students', exact: true }).click();
+    await reopenedDialog.waitFor({ state: 'detached' });
+    const classRosterResponse = await api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`);
+    const classRoster = classRosterResponse.items || classRosterResponse;
+    assert.deepEqual(candidateStudentIds.map(id => classRoster.some(item => Number(item.studentId || item.id) === id)),
+      [true, true], 'both selected accounts are added to the class');
+    await page.getByRole('row', { name: new RegExp(`Add Candidate ${stamp}`) }).waitFor();
+    await page.getByRole('row', { name: new RegExp(`Add Unassigned ${stamp}`) }).waitFor();
+
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin/classes/${classId}`);
     await page.getByRole('heading', { name: `SHSAT Detail Save ${stamp} Updated`, exact: true }).waitFor();
     assert.deepEqual(pageErrors, []);
@@ -129,10 +193,16 @@ async function main() {
     const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(dimensions.page <= dimensions.viewport, 'class detail remains within a 390px viewport');
     await page.screenshot({ path: `/tmp/shsat-class-detail-mobile-${stamp}.png` });
-    console.log(JSON.stringify({ result: 'PASS', classId, studentId, checks: ['required class name validation', 'saved notification visible outside modal', 'class edit persistence', 'detail load error and Retry', 'student View and return route', 'student roster edit and persistence', 'remove cancellation and confirmation', 'remove preserves unified account', '390px layout'], dimensions, pageErrors: pageErrors.length }));
+    console.log(JSON.stringify({ result: 'PASS', classId, studentId, candidateStudentIds, checks: ['required class name validation', 'saved notification visible outside modal', 'class edit persistence', 'detail load error and Retry', 'student View and return route', 'student roster edit and persistence', 'remove cancellation and confirmation', 'remove preserves unified account', 'student picker shows memberships and supports search', 'cancel selection has no effect', 'batch-add selected students persists', '390px layout'], dimensions, addDialogMobileSize, pageErrors: pageErrors.length }));
   } finally {
     if (classId && studentId) await api(page, `/api/admin/classes/${classId}/students/${studentId}`, 'DELETE').catch(() => {});
+    for (const candidateId of candidateStudentIds) {
+      if (classId) await api(page, `/api/admin/classes/${classId}/students/${candidateId}`, 'DELETE').catch(() => {});
+      if (otherClassId) await api(page, `/api/admin/classes/${otherClassId}/students/${candidateId}`, 'DELETE').catch(() => {});
+      await api(page, `/api/admin/users/${candidateId}`, 'DELETE').catch(() => {});
+    }
     if (studentId) await api(page, `/api/admin/users/${studentId}`, 'DELETE').catch(() => {});
+    if (otherClassId) await api(page, `/api/admin/classes/${otherClassId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (classId) await api(page, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     await browser.close();
   }

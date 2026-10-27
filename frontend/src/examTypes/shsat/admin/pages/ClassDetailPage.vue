@@ -1839,6 +1839,24 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+@media (max-width: 640px) {
+  .add-students-modal .modal-card__footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .add-students-modal .add-students-selected {
+    grid-column: 1 / -1;
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  .add-students-modal .modal-card__footer > :last-child {
+    white-space: nowrap;
+  }
+}
+
 .student-table td {
   padding-top: 10px;
   padding-bottom: 10px;
