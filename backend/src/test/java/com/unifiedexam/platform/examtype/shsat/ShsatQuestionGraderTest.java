@@ -126,6 +126,17 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void rejectsDragAndDropWithoutConfiguredBoundsOrWithInvalidPlacementShape() throws Exception {
+        JsonNode key = json("{\"placements\":{\"target\":[\"choice\"]}}");
+        JsonNode config = json("{\"questionConfig\":{\"targets\":[{\"id\":\"target\"}],\"choices\":[{\"id\":\"choice\"}]}}");
+        assertFalse(grader.grade("DRAG_AND_DROP", key, key, null, null));
+        assertFalse(grader.grade("DRAG_AND_DROP", key, json("{\"placements\":{\"target\":\"choice\"}}"), config, null));
+        assertFalse(grader.grade("DRAG_AND_DROP", key, json("{\"placements\":{\"choice\":[\"target\"]}}"), config, null));
+        assertTrue(grader.grade("DRAG_AND_DROP", json("{\"matches\":{\"target\":\"choice\"}}"),
+            json("{\"matches\":{\"choice\":\"target\"}}"), config, null));
+    }
+
+    @Test
     void gradesHotTextAndHotSpotSelectionsAgainstConfiguredIds() throws Exception {
         assertTrue(grader.grade("HOT_TEXT", json("{\"selectedSegmentIds\":[\"s1\"]}"),
             json("{\"selectedIds\":[\"S1\"]}"),

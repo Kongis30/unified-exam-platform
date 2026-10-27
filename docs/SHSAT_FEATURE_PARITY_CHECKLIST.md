@@ -480,6 +480,7 @@
 - [x] **Paper Detail 接口相关页面回归（2026-10-27）**：修复详情响应后依次复跑 `paper-create`、`paper-editor-navigation`、`materials`、`paper-export`。覆盖纸卷创建/编辑/删除影响预览、题目编辑保存和预览、材料库写入/复制、Student/Answer Key 导出与返回；四项均通过，临时数据由各脚本清理，`pageErrors=0`。导出桌面/390px 截图 `/tmp/shsat-paper-export-desktop-1793106203941.png`、`/tmp/shsat-paper-export-mobile-1793106203941.png` 已目视检查；手机纸张在独立横向滚动区中展示，根页面没有被 Letter 页面撑宽。PDF 非空和各模式内容断言通过。
 
 - [x] **选择题数量限制与独立版评分规则对齐（2026-10-27）**：对照独立版 `SelectionGradingStrategy`，发现统一版未执行 `requiredSelections` / `exactSelections` / `selectionCount` 和 `selectionLimit` / `maxSelections` / `maxSelected`，因此部分配置下会把超出或不足数量的集合判为正确。统一版现从题目配置及 `grading_json` 读取这些约束，并保留 FIXED/EXACT 题型的默认答案数量规则。新增回归覆盖题目配置的必选数、评分规则的最多选择数及固定选择题；`ShsatQuestionGraderTest` 和完整后端测试均通过（Java 17，22 个测试套件、110 项，失败/错误/跳过均为 0）。
+- [x] **拖放题无效结构拒绝与独立版对齐（2026-10-27）**：对照独立版 `DragAndDropGradingStrategy`，统一版曾在缺少目标/选项配置时宽松接受答案，且会把 placements 的反向/单值结构当作有效数据。现在要求有效配置边界；新格式 placements 必须是 target → choices 数组，旧格式 matches 仍兼容 item ↔ zone 的两种映射方向。新增缺配置、错误结构、反向 placements 与两种旧 matches 方向回归；完整后端测试通过（Java 17，22 个测试套件、111 项，失败/错误/跳过均为 0）。
 
 ## 9. 建议执行顺序与完成门槛
 

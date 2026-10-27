@@ -184,13 +184,16 @@ final class ShsatQuestionGrader {
     private boolean dragAndDrop(JsonNode key, JsonNode answer, JsonNode config) {
         Set<String> targetIds = ids(array(config, "targets", "zones", "dropZones"));
         Set<String> choiceIds = ids(array(config, "choices", "items", "dragItems"));
+        if (targetIds.isEmpty() || choiceIds.isEmpty()) return false;
         Map<String, Set<String>> expected = placements(key, targetIds, choiceIds);
         Map<String, Set<String>> submitted = placements(answer, targetIds, choiceIds);
         return !expected.isEmpty() && expected.equals(submitted);
     }
 
     private Map<String, Set<String>> placements(JsonNode data, Set<String> targets, Set<String> choices) {
-        JsonNode node = first(data, "placements", "groups", "targetPlacements", "matches", "answers", "selections");
+        JsonNode node = first(data, "placements", "groups", "targetPlacements");
+        boolean groupedPlacements = node != null && node.isObject();
+        if (!groupedPlacements) node = first(data, "matches", "answers", "selections");
         if (node == null || !node.isObject()) return Map.of();
         Map<String, Set<String>> result = new LinkedHashMap<>();
         Set<String> used = new LinkedHashSet<>();
@@ -199,19 +202,20 @@ final class ShsatQuestionGrader {
             Map.Entry<String, JsonNode> entry = fields.next();
             String left = token(entry.getKey());
             JsonNode rawValues = entry.getValue();
+            if (groupedPlacements && !rawValues.isArray()) return Map.of();
             List<String> values = new ArrayList<>();
             if (rawValues.isArray()) rawValues.forEach(value -> values.add(token(text(value))));
             else values.add(token(text(rawValues)));
             for (String value : values) {
                 String target = left;
                 String choice = value;
-                if ((!targets.isEmpty() && !targets.contains(left) || !choices.isEmpty() && !choices.contains(value))
+                if (!groupedPlacements && (!targets.contains(left) || !choices.contains(value))
                     && targets.contains(value) && choices.contains(left)) {
                     target = value;
                     choice = left;
                 }
-                if (target.isBlank() || choice.isBlank() || (!targets.isEmpty() && !targets.contains(target))
-                    || (!choices.isEmpty() && !choices.contains(choice)) || !used.add(choice)) return Map.of();
+                if (target.isBlank() || choice.isBlank() || !targets.contains(target)
+                    || !choices.contains(choice) || !used.add(choice)) return Map.of();
                 result.computeIfAbsent(target, ignored -> new LinkedHashSet<>()).add(choice);
             }
         }
