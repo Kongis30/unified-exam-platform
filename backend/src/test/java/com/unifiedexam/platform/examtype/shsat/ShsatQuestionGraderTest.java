@@ -94,6 +94,15 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void validatesLegacyInlineChoiceDropdownConfigurationAliases() throws Exception {
+        JsonNode config = json("{\"questionConfig\":{\"dropdowns\":[{\"id\":\"b1\",\"options\":[{\"key\":\"A\"}]}]}}");
+        assertTrue(grader.grade("INLINE_CHOICE", json("{\"answers\":{\"b1\":\"A\"}}"),
+            json("{\"answers\":{\"b1\":\"A\"}}"), config, null));
+        assertFalse(grader.grade("INLINE_CHOICE", json("{\"answers\":{\"b1\":\"A\"}}"),
+            json("{\"answers\":{\"b1\":\"Z\"}}"), config, null));
+    }
+
+    @Test
     void gradesDragAndDropPlacementsWithoutDependingOnOrder() throws Exception {
         assertTrue(grader.grade("DRAG_AND_DROP", json("{\"placements\":{\"odd\":[\"one\",\"three\"],\"even\":[\"two\"]}}"),
             json("{\"placements\":{\"even\":[\"two\"],\"odd\":[\"three\",\"one\"]}}"),

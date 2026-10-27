@@ -123,14 +123,14 @@ final class ShsatQuestionGrader {
         Map<String, String> expected = answerMap(key);
         Map<String, String> submitted = answerMap(answer);
         if (expected.isEmpty() || !expected.equals(submitted)) return false;
-        Set<String> blankIds = ids(array(config, "blanks", "inlineChoices"));
+        Set<String> blankIds = ids(array(config, "blanks", "dropdowns", "choices", "inlineChoices"));
         if (blankIds.isEmpty()) {
             Matcher matcher = Pattern.compile("\\{\\{\\s*blank:([A-Za-z0-9_-]+)\\s*}}")
                 .matcher(config == null ? "" : text(config.path("inlineText")));
             while (matcher.find()) blankIds.add(token(matcher.group(1)));
         }
         if (!blankIds.isEmpty() && !blankIds.equals(expected.keySet())) return false;
-        JsonNode blanks = array(config, "blanks", "inlineChoices");
+        JsonNode blanks = array(config, "blanks", "dropdowns", "choices", "inlineChoices");
         for (JsonNode blank : blanks) {
             String blankId = token(text(first(blank, "id", "blankId", "key")));
             if (!submitted.containsKey(blankId)) continue;
