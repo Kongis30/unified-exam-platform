@@ -106,6 +106,14 @@ async function main() {
       ['description over 2,000 characters', { description: 'D'.repeat(2_001) }],
       ['zero attempt duration', { durationSeconds: 0 }],
       ['zero attempt limit', { attemptLimit: 0 }],
+      ['duration over the supported integer range', { durationSeconds: 2_147_483_648 }],
+      ['attempt limit over the supported integer range', { attemptLimit: 2_147_483_648 }],
+      ['opening time before the database range', {
+        opensAt: '0999-12-31T23:59:00Z', closesAt: '1000-01-01T00:00:00Z',
+      }],
+      ['closing time after the database range', {
+        opensAt: '9999-12-31T23:59:00Z', closesAt: '+10000-01-01T00:00:00Z',
+      }],
     ];
     for (const [label, override] of boundaryCases) {
       const response = await apiRequest(page, `/api/admin/papers/${paper.id}/exams`, 'POST', {
@@ -117,6 +125,32 @@ async function main() {
     const examsAfterBoundaries = (await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id);
     assert.deepEqual(examsAfterBoundaries, examsBeforeBoundaries,
       'invalid field boundaries do not persist any release');
+
+    const supportedLimitCases = [
+      ['Minimum Date', {
+        opensAt: '1000-01-01T00:00:00Z', closesAt: '1000-01-01T00:01:00Z',
+        durationSeconds: 60, attemptLimit: 1,
+      }],
+      ['Maximum Date', {
+        opensAt: '9999-12-31T22:00:00Z', closesAt: '9999-12-31T23:00:00Z',
+        durationSeconds: 60, attemptLimit: 1,
+      }],
+      ['Maximum Numeric Values', {
+        durationSeconds: 2_147_483_647, attemptLimit: 2_147_483_647,
+      }],
+    ];
+    for (const [label, override] of supportedLimitCases) {
+      const title = `SHSAT boundary check ${stamp} ${label}`;
+      const response = await apiRequest(page, `/api/admin/papers/${paper.id}/exams`, 'POST', {
+        ...boundaryPayload, title, ...override,
+      });
+      assert.equal(response.status, 200, `${label} is within the supported database and numeric ranges`);
+      const detail = JSON.parse(response.text);
+      assert.equal(detail.summary.title, title);
+      if (override.durationSeconds) assert.equal(detail.summary.durationSeconds, override.durationSeconds);
+      if (override.attemptLimit) assert.equal(detail.summary.attemptLimit, override.attemptLimit);
+      await apiDelete(page, `/api/admin/exams/${detail.summary.id}`);
+    }
 
     const activeClasses = (await api(page, '/api/admin/classes?examTypeCodes=SHSAT')).filter(item => item.status === 'ACTIVE');
     assert.ok(activeClasses.length, 'at least one active SHSAT class is available');
@@ -277,7 +311,7 @@ async function main() {
   } finally {
     const matchingExams = await api(page, '/api/admin/exam-types/SHSAT/exams').catch(() => []);
     for (const exam of matchingExams.filter(item => item.title === examTitle
-      || item.title === `SHSAT boundary check ${stamp}`
+      || item.title.startsWith(`SHSAT boundary check ${stamp} `)
       || item.title === `SHSAT invalid time check ${stamp}`)) {
       await apiDelete(page, `/api/admin/exams/${exam.id}`).catch(() => {});
     }

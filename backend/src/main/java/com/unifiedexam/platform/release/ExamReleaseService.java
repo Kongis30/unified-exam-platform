@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -21,6 +22,8 @@ import java.util.List;
 public class ExamReleaseService {
 
     private static final int SHSAT_DESCRIPTION_MAX_LENGTH = 500;
+    private static final Instant MIN_DATABASE_INSTANT = Instant.parse("1000-01-01T00:00:00Z");
+    private static final Instant MAX_DATABASE_INSTANT = Instant.parse("9999-12-31T23:59:59.999999Z");
     private static final String TARGET_SUMMARY_PROJECTION = """
         CASE WHEN e.target_scope = 'ALL_STUDENTS' THEN 'All students'
              ELSE COALESCE(NULLIF(CONCAT_WS(' · ',
@@ -428,6 +431,10 @@ public class ExamReleaseService {
 
     private void validateWindow(OffsetDateTime opensAt, OffsetDateTime closesAt) {
         if (!closesAt.isAfter(opensAt)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The closing time must be after the opening time.");
+        if (opensAt.toInstant().isBefore(MIN_DATABASE_INSTANT) || closesAt.toInstant().isAfter(MAX_DATABASE_INSTANT)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "The exam window must fall between January 1, 1000 and December 31, 9999 UTC.");
+        }
     }
 
     private void validateDescriptionLength(String examTypeCode, String description) {

@@ -86,6 +86,36 @@ class ExamReleaseServiceTest {
     }
 
     @Test
+    void examWindowOutsideDatabaseDateRangeIsRejectedAsBadRequest() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamTypeRegistry registry = mock(ExamTypeRegistry.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, registry);
+        when(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM papers WHERE id = ?)", Boolean.class, 12L))
+            .thenReturn(true);
+        when(jdbc.query(eq("SELECT exam_type_code FROM papers WHERE id = ?"), any(ResultSetExtractor.class), eq(12L)))
+            .thenReturn("SHSAT");
+        when(registry.listAvailableTypes()).thenReturn(List.of(
+            new ExamTypeDefinition("SHSAT", "SHSAT", "", 1, "SHSAT", "SHSAT")));
+        when(jdbc.queryForObject("SELECT is_active FROM exam_types WHERE code = ?", Boolean.class, "SHSAT"))
+            .thenReturn(true);
+
+        var beforeDatabaseRange = new ExamReleaseService.ExamRequest("Early exam", null,
+            java.time.OffsetDateTime.parse("0999-12-31T23:59:00Z"),
+            java.time.OffsetDateTime.parse("1000-01-01T00:00:00Z"), 60, 1, "ALL_STUDENTS", true, true);
+        var afterDatabaseRange = new ExamReleaseService.ExamRequest("Late exam", null,
+            java.time.OffsetDateTime.parse("9999-12-31T23:59:00Z"),
+            java.time.OffsetDateTime.parse("+10000-01-01T00:00:00Z"), 60, 1, "ALL_STUDENTS", true, true);
+
+        for (var request : List.of(beforeDatabaseRange, afterDatabaseRange)) {
+            ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> service.create(12L, request, "admin"));
+            assertEquals(400, error.getStatusCode().value());
+            assertEquals("The exam window must fall between January 1, 1000 and December 31, 9999 UTC.", error.getReason());
+        }
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+    }
+
+    @Test
     void shsatScoreReportIsVisibleAfterSubmissionByDefault() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ExamTypeRegistry registry = mock(ExamTypeRegistry.class);
