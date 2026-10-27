@@ -36,6 +36,7 @@ async function main() {
   let classId;
   let paperId;
   let examId;
+  let noReviewExamId;
 
   try {
     await login(admin, adminUsername, adminPassword);
@@ -201,6 +202,12 @@ async function main() {
     assert.equal(await apiStatus(otherStudent, `/api/student/attempts/${attemptId}/report`), 404,
       'another student cannot read this report by guessing its ID');
     const attempt = await api(student, `/api/student/attempts/${attemptId}`);
+    for (const item of attempt.questions || attempt.items || []) {
+      for (const answerKeyField of ['answerKey', 'correctAnswer', 'correctAnswerData', 'isCorrect']) {
+        assert.equal(Object.hasOwn(item, answerKeyField), false,
+          `the active attempt does not expose ${answerKeyField} for question ${item.displayNumber}`);
+      }
+    }
     assert.deepEqual([...new Set((attempt.items || attempt.questions || []).map(item => item.questionTypeCode))].sort(), [
       'DRAG_AND_DROP', 'EQUATION_EDITOR', 'FILL_IN_BLANK', 'GRAPH_QUESTION', 'HOT_TEXT',
       'INLINE_CHOICE', 'MULTIPLE_CHOICE', 'MULTI_SELECT', 'MULTI_SELECT_FIXED',
@@ -421,6 +428,9 @@ async function main() {
     assert.equal(studentReport.submittedAt, result.submittedAt,
       'student and administrator report entries agree on the submitted time');
     assert.equal(studentReport.scoreVisible, true, 'SHSAT scores are visible after submission by default, as in the independent system');
+    assert.equal(studentReport.reviewAllowed, true, 'the report records that answer review is enabled for this release');
+    assert.equal(studentReport.reviewAvailableAfterClose, true,
+      'the report identifies that answer review is waiting for the exam close time');
     assert.equal(studentReport.compositeScore, expectedScale.composite, 'the student report exposes the same scaled composite');
     assert.equal(studentReport.answersVisible, false, 'correct answers remain hidden until the release closes');
     assert.equal(studentReport.questions.length, 13, 'allowed review retains correct, wrong, and unanswered question details');
@@ -751,6 +761,45 @@ async function main() {
     await student.screenshot({ path: `/tmp/shsat-equation-report-mobile-${stamp}.png` });
     await student.getByRole('button', { name: 'Back to Dashboard', exact: true }).click();
     await student.waitForURL(url => url.pathname === '/student/systems/SHSAT');
+
+    const noReviewRelease = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
+      title: `${title} No Review`, description: 'Answer review disabled policy check',
+      opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      durationSeconds: 1_200, attemptLimit: 1, targetScope: 'SELECTED', autoSubmit: true,
+      allowReview: false, scoreVisibility: 'AFTER_SUBMIT', answerVisibility: 'AFTER_SUBMIT',
+    });
+    noReviewExamId = Number(noReviewRelease.summary.id);
+    await api(admin, `/api/admin/exams/${noReviewExamId}/targets`, 'PUT', { classIds: [classId], studentUserIds: [] });
+    await api(admin, `/api/admin/exams/${noReviewExamId}/publish`, 'POST');
+    const noReviewAttempt = await api(student, `/api/student/exams/${noReviewExamId}/attempts`, 'POST', { firstSection: 'ELA' });
+    const noReviewAttemptId = Number(noReviewAttempt.id || noReviewAttempt.attemptId);
+    const noReviewSubmitted = await api(student, `/api/student/attempts/${noReviewAttemptId}/submit`, 'POST');
+    assert.ok(['SUBMITTED', 'COMPLETED'].includes(noReviewSubmitted.status),
+      'a release with answer review disabled still allows the student to submit');
+    const restrictedReport = await api(student, `/api/student/attempts/${noReviewAttemptId}/report`);
+    assert.equal(restrictedReport.scoreVisible, true, 'score visibility remains independent from answer review');
+    assert.equal(restrictedReport.answersVisible, false, 'allowReview false keeps answer details hidden after submission');
+    assert.equal(restrictedReport.reviewAllowed, false, 'the report exposes the disabled answer-review setting');
+    assert.equal(restrictedReport.reviewAvailableAfterClose, false,
+      'a permanently disabled review is not presented as waiting for the exam close time');
+    assert.deepEqual(restrictedReport.questions, [], 'allowReview false omits question content from the report');
+    assert.equal(await apiStatus(student, `/api/student/attempts/${noReviewAttemptId}/wrong-answer-question-numbers`), 403,
+      'wrong-answer review remains unavailable when answer review is disabled');
+    await student.setViewportSize({ width: 1440, height: 900 });
+    await student.goto(`${baseUrl}/student/attempts/${noReviewAttemptId}/report`);
+    await student.getByText('Result Summary', { exact: true }).waitFor();
+    await student.locator('.knowledge-card').getByText(
+      'Question review is disabled for this exam, so answer details and skill-level results are unavailable.', { exact: true },
+    ).waitFor();
+    assert.equal(await student.locator('.question-table tbody tr').count(), 0,
+      'the student report UI does not render question rows when answer review is disabled');
+    await student.screenshot({ path: `/tmp/shsat-student-report-review-disabled-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const restrictedReportMobile = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(restrictedReportMobile.page <= restrictedReportMobile.viewport,
+      'the report with question review disabled fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-student-report-review-disabled-mobile-${stamp}.png` });
+
     assert.deepEqual(pageErrors, [], 'the student exam and report have no browser errors');
 
     console.log(JSON.stringify({
@@ -765,8 +814,13 @@ async function main() {
         `/tmp/shsat-scaled-student-detail-${stamp}.png`, `/tmp/shsat-scaled-student-detail-mobile-${stamp}.png`],
       reportPdf: reportPdfPath,
       reportPdfBytes: reportPdf.byteLength,
+      restrictedReport: { scoreVisible: restrictedReport.scoreVisible, answersVisible: restrictedReport.answersVisible,
+        questionCount: restrictedReport.questions.length }, restrictedReportMobile,
+      restrictedReportScreenshots: [`/tmp/shsat-student-report-review-disabled-${stamp}.png`,
+        `/tmp/shsat-student-report-review-disabled-mobile-${stamp}.png`],
     }));
   } finally {
+    if (noReviewExamId) await api(admin, `/api/admin/exams/${noReviewExamId}`, 'DELETE').catch(() => {});
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (classId && userId) await api(admin, `/api/admin/classes/${classId}/students/${userId}`, 'DELETE').catch(() => {});
     if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});

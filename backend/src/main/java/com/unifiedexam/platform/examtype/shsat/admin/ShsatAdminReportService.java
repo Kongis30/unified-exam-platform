@@ -290,6 +290,9 @@ public class ShsatAdminReportService {
         Map<String, Object> report = attemptResult(attemptId);
         report.put("scoreVisible", scoreVisible);
         report.put("answersVisible", answersVisible);
+        report.put("reviewAllowed", access.allowReview());
+        report.put("reviewAvailableAfterClose", access.allowReview()
+            && "AFTER_CLOSE".equals(access.answerVisibility()) && !access.examClosed());
         report.put("reportVisible", true);
         StudentReportSanitizer.apply(report, scoreVisible, answersVisible, access.allowReview());
         return report;

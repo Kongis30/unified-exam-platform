@@ -1229,7 +1229,11 @@ onMounted(loadReport);
               Knowledge breakdown is hidden because score visibility is disabled for this attempt.
             </div>
             <div v-else-if="!useAdminReportApi && !report.answersVisible" class="analysis-empty">
-              Skill-level results will be available after the exam closes.
+              {{ report.reviewAllowed === false
+                ? 'Question review is disabled for this exam, so answer details and skill-level results are unavailable.'
+                : report.reviewAvailableAfterClose
+                  ? 'Skill-level results will be available after the exam closes.'
+                  : 'Answer details and skill-level results are unavailable under this exam\'s review settings.' }}
             </div>
             <div v-else-if="!knowledgeBreakdown.hasTaggedQuestions" class="analysis-empty">
               No tagged questions were found for this attempt yet.
