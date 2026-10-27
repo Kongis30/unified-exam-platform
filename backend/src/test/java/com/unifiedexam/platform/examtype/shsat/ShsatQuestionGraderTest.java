@@ -125,6 +125,17 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void rejectsDuplicateTableSelectionsAndFallsBackToLegacyCellsWhenNewShapeIsEmpty() throws Exception {
+        JsonNode config = json("{\"questionConfig\":{\"rows\":[{\"id\":\"r1\"}],\"columns\":[{\"id\":\"c1\"}]}}");
+        assertFalse(grader.grade("TABLE_GRID", json("{\"answers\":{\"r1\":[\"c1\"]}}"),
+            json("{\"answers\":{\"r1\":[\"c1\",\"c1\"]}}"), config, null));
+        assertFalse(grader.grade("TABLE_GRID", json("{\"answers\":{\"r1\":[\"c1\",\"c1\"]}}"),
+            json("{\"answers\":{\"r1\":[\"c1\"]}}"), config, null));
+        assertTrue(grader.grade("TABLE_GRID", json("{\"cells\":{\"r1.c1\":\"true\"}}"),
+            json("{\"answers\":{},\"cells\":{\"r1.c1\":\"true\"}}"), config, null));
+    }
+
+    @Test
     void gradesGraphCoordinatesExactlyRejectsDuplicatePointsAndHonorsBounds() throws Exception {
         assertTrue(grade("GRAPH_QUESTION", "{\"points\":[{\"x\":2,\"y\":3}]}",
             "{\"points\":[{\"x\":2.0,\"y\":3.0}]}"));

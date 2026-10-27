@@ -211,7 +211,8 @@ final class ShsatQuestionGrader {
             .contains(token(text(first(config, "selectionMode", "mode")).toLowerCase(Locale.ROOT)));
         Map<String, Set<String>> expected = tableRows(key, textMode);
         Map<String, Set<String>> submitted = tableRows(answer, textMode);
-        if (expected.isEmpty() || !expected.equals(submitted)) return false;
+        if (expected.isEmpty() || !expected.equals(submitted)
+            || duplicateTableSelections(key) > 0 || duplicateTableSelections(answer) > 0) return false;
         Set<String> rowIds = ids(array(config, "rows", "tableRows"));
         Set<String> colIds = ids(array(config, "columns", "tableColumns"));
         for (Map.Entry<String, Set<String>> row : expected.entrySet()) {
@@ -225,8 +226,12 @@ final class ShsatQuestionGrader {
         JsonNode rows = first(data, "answers", "selections", "rowSelections", "selectedColumns", "matches");
         if (rows != null && rows.isObject()) {
             Map<String, Set<String>> result = new LinkedHashMap<>();
-            rows.fields().forEachRemaining(entry -> result.put(token(entry.getKey()), tokens(entry.getValue())));
-            return result;
+            rows.fields().forEachRemaining(entry -> {
+                String rowId = token(entry.getKey());
+                Set<String> columns = tokens(entry.getValue());
+                if (!rowId.isBlank() && !columns.isEmpty()) result.put(rowId, columns);
+            });
+            if (!result.isEmpty()) return result;
         }
         JsonNode cells = first(data, "cells");
         if (cells == null || !cells.isObject()) return Map.of();
@@ -239,6 +244,15 @@ final class ShsatQuestionGrader {
             else if (isSelected(value) || value.equals(parts[1])) result.computeIfAbsent(parts[0], ignored -> new LinkedHashSet<>()).add(parts[1]);
         });
         return result;
+    }
+
+    private int duplicateTableSelections(JsonNode data) {
+        JsonNode rows = first(data, "answers", "selections", "rowSelections", "selectedColumns", "matches");
+        if (rows == null || !rows.isObject()) return 0;
+        int duplicates = 0;
+        Iterator<JsonNode> values = rows.elements();
+        while (values.hasNext()) duplicates += duplicateTokenCount(values.next());
+        return duplicates;
     }
 
     private boolean graph(JsonNode key, JsonNode answer, JsonNode config) {
