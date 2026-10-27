@@ -13,13 +13,17 @@ async function main() {
   });
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const teacherContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const studentContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const admin = await adminContext.newPage();
   const teacher = await teacherContext.newPage();
+  const student = await studentContext.newPage();
   const errors = [];
-  [admin, teacher].forEach(page => page.on('pageerror', error => errors.push(error.message)));
+  [admin, teacher, student].forEach(page => page.on('pageerror', error => errors.push(error.message)));
   const stamp = Date.now();
   const teacherUsername = `shsat_teacher_${stamp}`;
   const teacherPassword = `Teacher${stamp}!`;
+  const studentUsername = `shsat_student_${stamp}`;
+  const studentPassword = `Student${stamp}!`;
   const className = `SHSAT Teacher Check ${String(stamp).slice(-6)}`;
   const examTitle = `SHSAT Teacher Release ${String(stamp).slice(-6)}`;
   let teacherId;
@@ -39,7 +43,7 @@ async function main() {
     });
     classId = Number(classroom.classId || classroom.id);
     const studentAccount = await api(admin, '/api/admin/users', 'POST', {
-      username: `shsat_student_${stamp}`, password: `Student${stamp}!`, realName: `Student ${stamp}`,
+      username: studentUsername, password: studentPassword, realName: `Student ${stamp}`,
       roleCode: 'STUDENT', email: null, phone: null,
     });
     studentId = Number(studentAccount.id);
@@ -70,6 +74,8 @@ async function main() {
     assert.ok(paper, 'the official SHSAT paper is available to select');
     await modal.locator('.exam-paper-select').selectOption(String(paper.id));
     await modal.getByLabel('Exam Title').fill(examTitle);
+    await modal.locator('input[aria-label="Start time"]').fill(formatLocalDateTime(new Date(Date.now() - 60_000)));
+    await modal.locator('input[aria-label="End time"]').fill(formatLocalDateTime(new Date(Date.now() + 2 * 60 * 60_000)));
     await modal.getByRole('radio', { name: /Specific classes/ }).check();
     const classOption = modal.locator('.exam-class-option').filter({ hasText: className });
     await classOption.locator('input[type="checkbox"]').check();
@@ -110,6 +116,33 @@ async function main() {
     await teacher.getByRole('heading', { name: 'Current Question Distribution' }).waitFor();
     await teacher.getByText('No response-time data has been recorded for this exam yet.').waitFor();
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-${stamp}.png` });
+
+    await login(student, studentUsername, studentPassword);
+    const started = await api(student, `/api/student/exams/${examId}/attempts`, 'POST', { firstSection: 'ELA' });
+    const attemptId = Number(started.id);
+    const attempt = await api(student, `/api/student/attempts/${attemptId}`);
+    const firstQuestion = (attempt.questions || []).find(question => Number(question.displayNumber) === 1);
+    assert.ok(firstQuestion, 'the published SHSAT exam gives the student a first question');
+    await api(student, `/api/student/attempts/${attemptId}/presence`, 'POST', { questionNumber: 1 });
+    await api(student, `/api/student/attempts/${attemptId}/answers/${firstQuestion.paperItemId}`, 'PUT', {
+      answer: { selectedOptionIds: ['A'] }, timeSpentSeconds: 38,
+    });
+
+    const liveMonitor = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/live`);
+    assert.ok(liveMonitor.currentQuestionDistribution.some(item =>
+      Number(item.questionNumber) === 1 && Number(item.students) === 1),
+    'live monitoring places the active student at question 1');
+    const analytics = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`);
+    const questionOneAnalytics = analytics.questionAnalytics.find(item => Number(item.questionNumber) === 1);
+    assert.equal(Number(questionOneAnalytics?.attemptedCount), 1, 'monitor analytics counts the saved answer');
+    assert.equal(Number(questionOneAnalytics?.averageTimeSpent), 38, 'monitor analytics reports the saved response time');
+
+    await teacher.reload();
+    await teacher.getByRole('heading', { name: 'Current Question Distribution' }).waitFor();
+    await teacher.locator('.chart-bar--blue title').filter({ hasText: 'Question 1: 1 students' }).waitFor({ state: 'attached' });
+    await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 38s' }).waitFor({ state: 'attached' });
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-${stamp}.png` });
+
     const firstQuestionTile = teacher.getByRole('button', { name: 'Open question 1 details' });
     await firstQuestionTile.waitFor();
     const previewAssetUrl = '/uploads/paper-materials/611-3cba11d3-9ce9-40bc-8191-b923c3704736.png';
@@ -164,7 +197,7 @@ async function main() {
     await teacher.evaluate(() => window.scrollTo(0, 0));
     const monitorMobileSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(monitorMobileSize.page <= monitorMobileSize.viewport, 'teacher monitor fits a 390px viewport');
-    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-mobile-${stamp}.png` });
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-mobile-${stamp}.png` });
     await teacher.getByRole('button', { name: 'Open question 1 details' }).click();
     await questionDrawer.waitFor();
     await questionDrawer.locator('.monitor-question-detail').waitFor();
@@ -194,7 +227,11 @@ async function main() {
     assert.equal(forbiddenDelete.status, 403, 'the backend also denies teacher release deletion');
     await row.getByRole('button', { name: `Actions for ${examTitle}` }).click();
     await teacher.getByRole('menuitem', { name: 'Unpublish', exact: true }).click();
+    const unpublishResponse = teacher.waitForResponse(response =>
+      response.url().endsWith(`/api/admin/exams/${examId}/unpublish`) && response.request().method() === 'POST');
     await teacher.getByRole('button', { name: 'Unpublish Exam', exact: true }).click();
+    const unpublishResult = await unpublishResponse;
+    assert.equal(unpublishResult.status(), 200, `teacher unpublish succeeds: ${await unpublishResult.text()}`);
     const unpublished = await api(teacher, '/api/admin/exam-types/SHSAT/exams');
     assert.equal(unpublished.find(item => Number(item.id) === examId)?.status, 'DRAFT',
       'a teacher can unpublish a release');
@@ -210,7 +247,8 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['teacher SHSAT tab access', 'shared all-class directory', 'account directory denied',
-        'create, publish and unpublish release', 'monitor access, empty analytics and return path',
+        'create, publish and unpublish release', 'empty and populated monitoring charts from a real student attempt',
+        'monitor analytics and return path',
         'heatmap question details drawer and backdrop close', 'desktop/mobile monitor image preview and close controls',
         'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
@@ -232,6 +270,7 @@ async function main() {
       assert.ok(!classes.some(item => Number(item.classId || item.id) === classId), 'the temporary class is removed');
     }
     await teacherContext.close();
+    await studentContext.close();
     await adminContext.close();
     await browser.close();
   }
@@ -243,6 +282,11 @@ async function login(page, username, password) {
   await page.getByLabel('Password').fill(password);
   await page.locator('button[type="submit"]').click();
   await page.waitForURL(url => !url.pathname.endsWith('/login'));
+}
+
+function formatLocalDateTime(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 async function api(page, path, method = 'GET', body) {
