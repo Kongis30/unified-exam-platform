@@ -104,6 +104,57 @@ async function main() {
     const savedQuestions = readQuestions(detail);
     assert.equal(savedQuestions.length, 1, 'saving adds one question');
     assert.equal(savedQuestions[0].stem, questionStem, 'saved question content is returned by the paper API');
+
+    const sourceMetadata = {
+      sourceQuestionId: 987654,
+      sourceScoringSectionCode: null,
+      sourceDifficulty: 'Medium',
+      legacyCorrectAnswer: 'B',
+    };
+    const withSourceMetadata = await api(page, `/api/admin/papers/${paperId}`);
+    const sourceMetadataQuestion = findQuestion(withSourceMetadata.sections, questionStem);
+    Object.assign(sourceMetadataQuestion.render, sourceMetadata);
+    const asQuestionRequest = question => ({
+      questionTypeCode: question.questionTypeCode,
+      payloadSchemaVersion: question.payloadSchemaVersion,
+      stem: question.stem,
+      render: question.render,
+      answerKey: question.answerKey,
+      grading: question.grading,
+      explanation: question.explanation,
+      categoryId: question.categoryId,
+      sortOrder: question.sortOrder,
+      displayNumber: question.displayNumber,
+      maxPoints: question.maxPoints,
+      scoringSectionCode: question.scoringSectionCode,
+    });
+    const asSectionRequest = section => ({
+      sectionCode: section.sectionCode,
+      sectionKind: section.sectionKind,
+      title: section.title,
+      sortOrder: section.sortOrder,
+      instructions: section.instructions,
+      settings: section.settings,
+      questions: section.questions.map(asQuestionRequest),
+      children: section.children.map(asSectionRequest),
+    });
+    await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', {
+      sections: withSourceMetadata.sections.map(asSectionRequest),
+    });
+    await page.reload();
+    await page.locator('.stem-input').waitFor();
+    await page.locator('.meta-field').filter({ hasText: 'Difficulty' }).locator('select').selectOption('Medium');
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    const metadataAfterEditorSave = findQuestion(
+      (await api(page, `/api/admin/papers/${paperId}`)).sections,
+      questionStem,
+    ).render;
+    for (const [key, value] of Object.entries(sourceMetadata)) {
+      assert.equal(metadataAfterEditorSave[key], value, `editing a question preserves its ${key} provenance`);
+    }
+    await page.screenshot({ path: `/tmp/shsat-paper-editor-metadata-preservation-${stamp}.png` });
+
     await page.reload();
     await page.locator('.stem-input').waitFor();
     assert.equal(await page.locator('.stem-input').inputValue(), questionStem,
@@ -739,6 +790,7 @@ async function main() {
       result: 'PASS',
       checks: ['unchanged save disabled', 'scoring rule persists', 'unsaved preview is blocked',
         'Stay preserves edits', 'Leave Without Saving discards edits', 'saved question survives reload',
+        'source question provenance survives a normal editor save',
         'primary and secondary type create/edit/delete and protect referenced types', 'official SHSAT labels are protected',
         'import source, performance filter, preview, cancel, and confirm',
         'preview review/bookmark/section navigation and toolbar tools', 'preview does not write student attempts',
@@ -779,6 +831,10 @@ function readQuestions(detail) {
   };
   visit(detail.sections);
   return questions;
+}
+
+function findQuestion(sections, stem) {
+  return readQuestions({ sections }).find(question => question.stem === stem);
 }
 
 function findQuestionSection(sections, paperItemId) {

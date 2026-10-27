@@ -130,6 +130,10 @@ function mapPaperDetail(detail) {
       return {
         questionId: item.questionId, paperItemId: item.paperItemId, paperId: detail.summary.id,
         questionSchemaVersion: item.payloadSchemaVersion || 1,
+        sourceQuestionId: render.sourceQuestionId ?? null,
+        sourceScoringSectionCode: render.sourceScoringSectionCode ?? null,
+        sourceDifficulty: render.sourceDifficulty ?? null,
+        legacyCorrectAnswer: render.legacyCorrectAnswer ?? null,
         partId: String(part.id), subTypeId: section.subTypeId, materialId,
         questionNumber,
         questionType: item.questionTypeCode, stem: item.stem,
@@ -192,6 +196,9 @@ function mapShsatQuestion(question, sortOrder, sectionCode) {
     validationRules: parsePayload(question.validationRules, {}),
     difficulty: question.difficulty || null,
   };
+  for (const field of ['sourceQuestionId', 'sourceScoringSectionCode', 'sourceDifficulty', 'legacyCorrectAnswer']) {
+    if (question[field] !== undefined) render[field] = question[field];
+  }
   if (question.materialType && question.materialType !== 'none') {
     if (question.materialId && /^\d+$/.test(String(question.materialId))) {
       render.materialId = Number(question.materialId);
