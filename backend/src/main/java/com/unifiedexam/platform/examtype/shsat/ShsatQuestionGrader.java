@@ -3,7 +3,7 @@ package com.unifiedexam.platform.examtype.shsat;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -20,6 +20,8 @@ import java.util.regex.Pattern;
 final class ShsatQuestionGrader {
 
     private static final Pattern LATEX_FRACTION = Pattern.compile("\\\\frac\\s*\\{([^{}]+)}\\s*\\{([^{}]+)}");
+    private static final Pattern INTEGER = Pattern.compile("[+-]?\\d+");
+    private static final Pattern DECIMAL = Pattern.compile("[+-]?(?:\\d+\\.\\d+|\\d+\\.|\\.\\d+)");
 
     Boolean grade(String rawType, JsonNode key, JsonNode answer, JsonNode render, JsonNode grading) {
         String type = normalize(rawType);
@@ -485,25 +487,49 @@ final class ShsatQuestionGrader {
     }
 
     private boolean equivalentNumber(String left, String right) {
-        BigDecimal a = number(left);
-        BigDecimal b = number(right);
-        return a != null && b != null && a.compareTo(b) == 0;
+        RationalNumber a = number(left);
+        RationalNumber b = number(right);
+        return a != null && a.equals(b);
     }
 
-    private BigDecimal number(String value) {
+    /** 与独立 SHSAT 一样以最简有理数比较，避免有限小数近似被当成精确相等。 */
+    private RationalNumber number(String value) {
         if (value == null) return null;
         String normalized = value.trim().replaceAll("\\s+", "");
         Matcher fraction = LATEX_FRACTION.matcher(normalized);
         if (fraction.matches()) normalized = fraction.group(1) + "/" + fraction.group(2);
-        try {
-            if (normalized.contains("/")) {
-                String[] parts = normalized.split("/", -1);
-                if (parts.length != 2) return null;
-                return new BigDecimal(parts[0]).divide(new BigDecimal(parts[1]), 12, java.math.RoundingMode.HALF_UP).stripTrailingZeros();
+
+        int separator = normalized.indexOf('/');
+        if (separator >= 0) {
+            if (normalized.indexOf('/', separator + 1) >= 0) return null;
+            String numerator = normalized.substring(0, separator);
+            String denominator = normalized.substring(separator + 1);
+            if (!INTEGER.matcher(numerator).matches() || !INTEGER.matcher(denominator).matches()) return null;
+            BigInteger divisor = new BigInteger(denominator);
+            return divisor.signum() == 0 ? null : new RationalNumber(new BigInteger(numerator), divisor);
+        }
+        if (INTEGER.matcher(normalized).matches()) return new RationalNumber(new BigInteger(normalized), BigInteger.ONE);
+        if (!DECIMAL.matcher(normalized).matches()) return null;
+
+        boolean negative = normalized.startsWith("-");
+        String unsigned = normalized.startsWith("-") || normalized.startsWith("+") ? normalized.substring(1) : normalized;
+        String[] parts = unsigned.split("\\.", -1);
+        String integerPart = parts[0].isEmpty() ? "0" : parts[0];
+        String decimalPart = parts.length > 1 ? parts[1] : "";
+        BigInteger numerator = new BigInteger(integerPart + decimalPart);
+        if (negative) numerator = numerator.negate();
+        return new RationalNumber(numerator, BigInteger.TEN.pow(decimalPart.length()));
+    }
+
+    private record RationalNumber(BigInteger numerator, BigInteger denominator) {
+        private RationalNumber {
+            if (denominator.signum() < 0) {
+                numerator = numerator.negate();
+                denominator = denominator.negate();
             }
-            return new BigDecimal(normalized).stripTrailingZeros();
-        } catch (NumberFormatException | ArithmeticException exception) {
-            return null;
+            BigInteger divisor = numerator.gcd(denominator);
+            numerator = numerator.divide(divisor);
+            denominator = denominator.divide(divisor);
         }
     }
 

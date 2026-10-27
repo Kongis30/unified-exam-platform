@@ -60,6 +60,14 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void rejectsRoundedDecimalThatOnlyApproximatesAnExactFraction() throws Exception {
+        assertFalse(grade("MATH_FILL_IN_BLANK", "{\"acceptedAnswers\":[\"1/3\"]}",
+            "{\"value\":\"0.333333333333\"}"));
+        assertTrue(grade("MATH_FILL_IN_BLANK", "{\"acceptedAnswers\":[\"1/3\"]}",
+            "{\"value\":\"2/6\"}"));
+    }
+
+    @Test
     void gradesEquationEditorEquivalentInequalityAndMultiplicationNotation() throws Exception {
         assertTrue(grade("EQUATION_EDITOR", "{\"acceptedAnswers\":[{\"value\":\"8x+35\\\\le95\"}]}",
             "{\"value\":\"8*x + 35 ≤ 95\"}"));
