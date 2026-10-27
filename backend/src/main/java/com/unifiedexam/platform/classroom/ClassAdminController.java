@@ -386,7 +386,7 @@ public class ClassAdminController {
             SELECT u.id, u.username, u.real_name, u.email, m.joined_at, u.status,
                    sp.gender, sp.notes, sa.time_multiplier,
                    stats.average_score, COALESCE(stats.exam_count, 0) AS exam_count
-            FROM class_memberships m JOIN users u ON u.id = m.student_user_id
+            FROM class_memberships m JOIN users u ON u.id = m.student_user_id AND u.role_code = 'STUDENT'
             LEFT JOIN shsat_student_profiles sp ON sp.student_user_id = u.id
             LEFT JOIN shsat_student_accommodations sa ON sa.student_user_id = u.id
             LEFT JOIN (

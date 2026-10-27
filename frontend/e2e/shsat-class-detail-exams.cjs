@@ -25,14 +25,19 @@ async function main() {
 
   try {
     await login(page);
-    const classes = await api(page, '/api/admin/classes?examTypeCodes=SHSAT');
+    const classes = asList(await api(page, '/api/admin/classes?examTypeCodes=SHSAT'));
     const candidates = await Promise.all(classes.map(async classroom => {
       const classId = Number(classroom.classId || classroom.id);
-      const exams = await api(page, `/api/admin/classes/${classId}/exams?examTypeCodes=SHSAT`);
-      return { classroom, classId, exams };
+      const [exams, students] = await Promise.all([
+        api(page, `/api/admin/classes/${classId}/exams?examTypeCodes=SHSAT`),
+        api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`),
+      ]);
+      return { classroom, classId, exams: asList(exams), students: asList(students) };
     }));
-    const sample = candidates.sort((left, right) => right.exams.length - left.exams.length)[0];
-    assert.ok(sample && sample.exams.length >= 6, 'read-only class data includes at least six exams for pagination coverage');
+    const sample = candidates
+      .filter(candidate => candidate.exams.length >= 6 && candidate.students.length > 0)
+      .sort((left, right) => right.exams.length - left.exams.length)[0];
+    assert.ok(sample, 'read-only class data includes at least six exams and one student');
 
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin/classes/${sample.classId}`);
     await page.getByRole('heading', { name: sample.classroom.name, exact: true }).waitFor();
@@ -129,6 +134,33 @@ async function main() {
     assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - classDetailScrollY) <= 2,
       'returning from Monitor restores the class detail scroll position');
 
+    const student = sample.students[0];
+    const studentName = student.studentName || student.realName || student.name;
+    const studentId = Number(student.studentId || student.id);
+    assert.ok(studentName && studentId, 'sample class includes a student with an identifiable name and id');
+    const studentViewButton = page.locator('.student-table tbody tr')
+      .filter({ hasText: studentName })
+      .getByRole('button', { name: 'View', exact: true });
+    await studentViewButton.scrollIntoViewIfNeeded();
+    const studentDetailScrollY = await page.evaluate(() => window.scrollY);
+    await studentViewButton.click();
+    await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${sample.classId}/students/${studentId}`));
+    await page.getByRole('heading', { name: studentName, exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Score Statistics', exact: true }).waitFor();
+    assert.equal(await page.getByRole('heading', { name: 'Unable to Load History', exact: true }).count(), 0,
+      'student detail loads the account history instead of showing an error');
+    await page.screenshot({ path: `/tmp/shsat-class-detail-student-desktop-${stamp}.png` });
+    await page.getByRole('button', { name: 'Back to Class Detail', exact: true }).click();
+    await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${sample.classId}`));
+    await page.getByRole('heading', { name: sample.classroom.name, exact: true }).waitFor();
+    assert.equal(await search.inputValue(), '', 'returning from Student Detail preserves the cleared search state');
+    assert.equal(await sort.inputValue(), 'start-desc', 'returning from Student Detail preserves newest-first sorting');
+    assert.equal(await pageSize.inputValue(), '5', 'returning from Student Detail preserves the selected page size');
+    assert.equal(await rows.count(), 5, 'returning from Student Detail restores the first page of exams');
+    assert.match(await pagination.innerText(), /Page 1 \/ 2/, 'returning from Student Detail restores the pagination page');
+    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - studentDetailScrollY) <= 2,
+      'returning from Student Detail restores the class detail scroll position');
+
     await page.setViewportSize({ width: 390, height: 844 });
     const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(dimensions.page <= dimensions.viewport, 'class detail fits a 390px viewport');
@@ -156,13 +188,33 @@ async function main() {
       'mobile results action remains visible');
     assert.ok(await rows.first().getByRole('button', { name: 'Monitor', exact: true }).isVisible(),
       'mobile monitor action remains visible');
+    const mobileStudentViewButton = page.locator('.student-table tbody tr')
+      .filter({ hasText: studentName })
+      .getByRole('button', { name: 'View', exact: true });
+    await mobileStudentViewButton.scrollIntoViewIfNeeded();
+    const mobileClassDetailScrollY = await page.evaluate(() => window.scrollY);
+    await mobileStudentViewButton.click();
+    await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${sample.classId}/students/${studentId}`));
+    await page.getByRole('heading', { name: studentName, exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'Score Statistics', exact: true }).waitFor();
+    const studentPageDimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(studentPageDimensions.page <= studentPageDimensions.viewport, 'student detail fits a 390px viewport');
+    await page.screenshot({ path: `/tmp/shsat-class-detail-student-mobile-${stamp}.png` });
+    await page.getByRole('button', { name: 'Back to Class Detail', exact: true }).click();
+    await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${sample.classId}`));
+    await page.getByRole('heading', { name: sample.classroom.name, exact: true }).waitFor();
+    assert.equal(await sort.inputValue(), 'start-desc', 'mobile return from Student Detail preserves sorting');
+    assert.equal(await pageSize.inputValue(), '5', 'mobile return from Student Detail preserves page size');
+    assert.equal(await rows.count(), 5, 'mobile return from Student Detail restores the exam page');
+    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - mobileClassDetailScrollY) <= 2,
+      'mobile return from Student Detail restores the class detail scroll position');
     await page.screenshot({ path: `/tmp/shsat-class-detail-exams-mobile-${stamp}.png` });
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ result: 'PASS', classId: sample.classId, examCount: sample.exams.length,
       checks: ['search and empty state', 'ascending/descending sort', 'page size and pagination',
-        'View Results and Monitor return with filters/pagination/scroll position preserved',
-        '390px card layout and actions'],
-      dimensions, toolbarGeometry, mobileTableWidth, mobileCardWidth, pageErrors: errors.length }));
+        'View Results, Monitor, and Student Detail return with filters/pagination/scroll position preserved',
+        '390px class/student detail layout and actions'],
+      dimensions, toolbarGeometry, mobileTableWidth, mobileCardWidth, studentPageDimensions, pageErrors: errors.length }));
   } finally {
     await context.close();
     await browser.close();
@@ -184,6 +236,12 @@ async function api(page, path) {
   }, path);
   if (result.status < 200 || result.status >= 300) throw new Error(`GET ${path}: ${result.status} ${result.text}`);
   return result.text ? JSON.parse(result.text) : null;
+}
+
+function asList(response) {
+  if (Array.isArray(response)) return response;
+  const payload = response?.data ?? response;
+  return payload?.items || payload?.records || payload?.list || payload?.content || [];
 }
 
 async function alignCardTitle(page) {

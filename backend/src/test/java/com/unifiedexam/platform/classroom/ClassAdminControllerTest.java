@@ -233,6 +233,7 @@ class ClassAdminControllerTest {
         assertEquals(2L, result.get(0).examCount());
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END)")
+                && sql.contains("u.role_code = 'STUDENT'")
                 && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED')")
                 && sql.contains("a.is_practice = FALSE")
                 && sql.contains("p.exam_type_code IN (?)")
