@@ -32,7 +32,8 @@ async function main() {
   const questionStem = `Editor persistence question ${stamp}`;
   let paperId;
   let metadataPaperId;
-  let tempUserId;
+  const tempUserIds = [];
+  const tempStudentPages = [];
   let sourceExamId;
 
   try {
@@ -549,6 +550,36 @@ async function main() {
     const sourcePaper = await api(page, `/api/admin/papers/${sourcePaperId}`);
     const sourceQuestions = readQuestions(sourcePaper);
     assert.ok(sourceQuestions.length > 0, 'the ready SHSAT source paper has questions');
+    const sourceQuestionSubjects = new Map();
+    const collectQuestionSubjects = (sections, subject = 'OTHER') => {
+      for (const section of sections || []) {
+        const sectionSubject = section.sectionKind === 'PART'
+          ? String(section.settings?.partCode || section.sectionCode).toUpperCase()
+          : subject;
+        (section.questions || []).forEach(question => sourceQuestionSubjects.set(
+          Number(question.paperItemId), sectionSubject,
+        ));
+        collectQuestionSubjects(section.children, sectionSubject);
+      }
+    };
+    collectQuestionSubjects(sourcePaper.sections);
+    const answerableElaQuestions = sourceQuestions.filter(question => {
+      const rawAnswerIds = question.answerKey?.answers ?? question.answerKey?.answer;
+      const answerIds = (Array.isArray(rawAnswerIds) ? rawAnswerIds : rawAnswerIds == null ? [] : [rawAnswerIds])
+        .map(String);
+      const options = (question.render?.options || []).map(option => String(option.key ?? option.id ?? option.value));
+      return question.questionTypeCode === 'MULTIPLE_CHOICE'
+        && sourceQuestionSubjects.get(Number(question.paperItemId)) === 'ELA'
+        && answerIds.length === 1 && options.includes(answerIds[0])
+        && options.some(option => !answerIds.includes(option));
+    });
+    const sourceQuestion = answerableElaQuestions.find(question => question.render?.materialId);
+    assert.ok(sourceQuestion, 'the source exam includes an answerable material-backed ELA question');
+    const importPerformanceQuestions = [sourceQuestion, ...answerableElaQuestions
+      .filter(question => Number(question.paperItemId) !== Number(sourceQuestion.paperItemId))]
+      .slice(0, 5);
+    assert.equal(importPerformanceQuestions.length, 5,
+      'the source paper has five answerable ELA multiple-choice questions for accuracy buckets');
     const existingTargetQuestions = readQuestions(await api(page, `/api/admin/papers/${paperId}`));
     const targetSections = sourcePaper.sections.map((part, partIndex) => {
       const partCode = part.settings?.partCode || part.sectionCode;
@@ -573,15 +604,23 @@ async function main() {
       };
     });
     await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', { sections: targetSections });
-    const importStudent = await api(page, '/api/admin/users', 'POST', {
-      username: `editorimport${stamp}@jin`,
-      password: `Import-${stamp}-Pass!`,
-      realName: `Editor Import ${stamp}`,
-      roleCode: 'STUDENT',
-      email: null,
-      phone: null,
-    });
-    tempUserId = Number(importStudent.id);
+    const importStudents = [];
+    for (let index = 0; index < 4; index += 1) {
+      const student = await api(page, '/api/admin/users', 'POST', {
+        username: `editorimport${stamp}_${index}@jin`,
+        password: `Import-${stamp}-${index}-Pass!`,
+        realName: `Editor Import ${stamp} ${index + 1}`,
+        roleCode: 'STUDENT',
+        email: null,
+        phone: null,
+      });
+      tempUserIds.push(Number(student.id));
+      importStudents.push({
+        id: Number(student.id),
+        username: `editorimport${stamp}_${index}@jin`,
+        password: `Import-${stamp}-${index}-Pass!`,
+      });
+    }
     const importRelease = await api(page, `/api/admin/papers/${sourcePaperId}/exams`, 'POST', {
       title: `Editor Import Source ${stamp}`,
       description: 'Temporary paper editor import verification',
@@ -592,19 +631,53 @@ async function main() {
       targetScope: 'SELECTED',
     });
     sourceExamId = Number(importRelease.summary.id);
-    await api(page, `/api/admin/exams/${sourceExamId}/targets`, 'PUT', { classIds: [], studentUserIds: [tempUserId] });
+    await api(page, `/api/admin/exams/${sourceExamId}/targets`, 'PUT', {
+      classIds: [], studentUserIds: importStudents.map(student => student.id),
+    });
     await api(page, `/api/admin/exams/${sourceExamId}/publish`, 'POST');
+
+    // 模拟真实提交分布，供发布后题目正确率筛选使用。
+    const correctStudentCounts = [4, 3, 2, 1, 0];
+    for (let studentIndex = 0; studentIndex < importStudents.length; studentIndex += 1) {
+      const student = importStudents[studentIndex];
+      const studentPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      tempStudentPages.push(studentPage);
+      await login(studentPage, student.username, student.password);
+      const attempt = await api(studentPage, `/api/student/exams/${sourceExamId}/attempts`, 'POST', {
+        firstSection: 'ELA',
+      });
+      const attemptId = Number(attempt.id || attempt.attemptId);
+      for (let questionIndex = 0; questionIndex < importPerformanceQuestions.length; questionIndex += 1) {
+        const question = importPerformanceQuestions[questionIndex];
+        const rawCorrectIds = question.answerKey.answers ?? question.answerKey.answer;
+        const correctIds = (Array.isArray(rawCorrectIds) ? rawCorrectIds : [rawCorrectIds]).map(String);
+        const optionIds = question.render.options.map(option => String(option.key ?? option.id ?? option.value));
+        const correct = studentIndex < correctStudentCounts[questionIndex];
+        const answer = correct
+          ? correctIds[0]
+          : optionIds.find(option => !correctIds.includes(option));
+        await api(studentPage, `/api/student/attempts/${attemptId}/answers/${question.paperItemId}`, 'PUT', {
+          answer: { answers: [answer] }, timeSpentSeconds: 12,
+        });
+      }
+      await api(studentPage, `/api/student/attempts/${attemptId}/submit`, 'POST');
+    }
 
     const sourceAnalytics = await api(page, `/api/admin/reports/exams/${sourceExamId}/monitor/analytics`);
     const analyticsRows = sourceAnalytics.questionAnalytics || [];
     assert.ok(analyticsRows.length > 0, 'a published SHSAT exam exposes questions for import');
-    const sourceQuestion = sourceQuestions.find(question => question.render?.materialId
-      && question.questionTypeCode === 'MULTIPLE_CHOICE');
-    assert.ok(sourceQuestion, 'the published source paper has a multiple-choice question with shared material');
+    for (let index = 0; index < importPerformanceQuestions.length; index += 1) {
+      const questionNumber = Number(importPerformanceQuestions[index].displayNumber);
+      const analytics = analyticsRows.find(row => Number(row.questionNumber) === questionNumber);
+      const expectedAccuracy = [100, 75, 50, 25, 0][index];
+      assert.equal(Number(analytics?.accuracy), expectedAccuracy,
+        `submitted source attempts produce ${expectedAccuracy}% accuracy for Q${questionNumber}`);
+    }
     const sourceQuestionNumber = Number(sourceQuestion.displayNumber);
     const sourceAnalyticsRow = analyticsRows.find(row => Number(row.questionNumber) === sourceQuestionNumber);
     assert.ok(sourceAnalyticsRow, 'question analytics map to the material-backed source question');
-    assert.equal(sourceAnalyticsRow.accuracy, null, 'an exam without attempts marks the material question as unanswered');
+    assert.equal(Number(sourceAnalyticsRow.accuracy), 100,
+      'the material-backed source question retains its submitted 100% accuracy');
 
     await page.locator('.notice').waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: 'Import from Exam', exact: true }).click();
@@ -616,16 +689,53 @@ async function main() {
     }, sourceExamId);
     const questionTypeFilter = page.locator('.import-type-select select');
     await questionTypeFilter.selectOption({ label: 'Multiple Choice' });
-    assert.ok(await page.locator('.import-question-row').count() > 0,
+    assert.ok(await page.locator('.import-question-row').count() >= importPerformanceQuestions.length,
       'the question type filter shows matching questions');
     await questionTypeFilter.selectOption('all');
-    for (const filter of ['Below 50%', '50% to <75%', '75%+']) {
-      await page.getByRole('button', { name: filter, exact: true }).click();
-      await page.getByText('No questions match this filter.', { exact: true }).waitFor();
+
+    const importRow = questionNumber => page.locator('.import-question-row')
+      .filter({ hasText: new RegExp(`^Q${questionNumber}\\s`) });
+    const expectedAccuracies = ['100.0% correct', '75.0% correct', '50.0% correct', '25.0% correct', '0.0% correct'];
+    for (let index = 0; index < importPerformanceQuestions.length; index += 1) {
+      const questionNumber = Number(importPerformanceQuestions[index].displayNumber);
+      const row = importRow(questionNumber);
+      await row.waitFor();
+      assert.equal((await row.locator('.import-accuracy').innerText()).trim(), expectedAccuracies[index],
+        `the import list displays the correct accuracy for Q${questionNumber}`);
     }
+
+    const importGroupHeadings = page.locator('.import-question-group__heading');
+    assert.ok(await importGroupHeadings.filter({ hasText: /^ELA/ }).count() > 0,
+      'the question list groups ELA questions');
+    assert.ok(await importGroupHeadings.filter({ hasText: /^Math/ }).count() > 0,
+      'the question list groups Math questions');
+    const mathGroup = importGroupHeadings.filter({ hasText: /^Math/ });
+    await mathGroup.click();
+    assert.equal(await mathGroup.getAttribute('aria-expanded'), 'false', 'the Math question group can collapse');
+    await mathGroup.click();
+    assert.equal(await mathGroup.getAttribute('aria-expanded'), 'true', 'the Math question group can expand again');
+
+    for (const [filter, expectedCount, questionIndex] of [
+      ['Below 50%', 2, 3], ['50% to <75%', 1, 2], ['75%+', 2, 0],
+    ]) {
+      await page.getByRole('button', { name: filter, exact: true }).click();
+      assert.equal(await page.locator('.import-question-row').count(), expectedCount,
+        `${filter} shows the questions in its accuracy range`);
+      const bucketQuestion = Number(importPerformanceQuestions[questionIndex].displayNumber);
+      assert.ok(await importRow(bucketQuestion).count() > 0, `${filter} includes Q${bucketQuestion}`);
+    }
+
     await page.getByRole('button', { name: 'No answers', exact: true }).click();
     assert.ok(await page.locator('.import-question-row').count() > 0,
       'the No answers filter shows unanswered source questions');
+    const noAnswerQuestion = answerableElaQuestions.find(question => !importPerformanceQuestions.some(
+      selected => Number(selected.paperItemId) === Number(question.paperItemId),
+    ));
+    assert.ok(noAnswerQuestion, 'the source paper includes an unattempted answerable question');
+    assert.ok(await importRow(noAnswerQuestion.displayNumber).count() > 0,
+      'the No answers filter includes a question with no submissions');
+
+    await page.getByRole('button', { name: 'All questions', exact: true }).click();
     await page.locator('.import-question-row__preview')
       .filter({ hasText: new RegExp(`^Q${sourceQuestionNumber}(?:\\s|$)`) }).click();
     await page.getByText(`Question ${sourceQuestionNumber}`, { exact: true }).waitFor();
@@ -655,17 +765,35 @@ async function main() {
       const select = document.querySelector('.import-source-select select');
       return select && select.value === String(examId);
     }, sourceExamId);
+    await page.getByRole('button', { name: '75%+', exact: true }).click();
+    await page.getByLabel('Select all visible questions', { exact: true }).check();
+    const highAccuracyQuestions = importPerformanceQuestions.slice(0, 2);
+    const firstHighQuestionNumber = Number(highAccuracyQuestions[0].displayNumber);
+    const firstHighQuestion = page.getByLabel(`Select question ${firstHighQuestionNumber}`, { exact: true });
+    await firstHighQuestion.uncheck();
+    await firstHighQuestion.check();
+    assert.equal((await page.locator('.import-questions-footer p').innerText()).match(/^\d+/)?.[0], '2',
+      'filter changes and repeated checkbox interaction do not duplicate selected questions');
+    await page.getByRole('button', { name: '50% to <75%', exact: true }).click();
+    await page.getByLabel(`Select question ${importPerformanceQuestions[2].displayNumber}`, { exact: true }).check();
+    await page.getByRole('button', { name: 'Below 50%', exact: true }).click();
+    await page.getByLabel('Select all visible questions', { exact: true }).check();
+    assert.match(await page.locator('.import-questions-footer p').innerText(), /^5 selected/,
+      'bulk selection across accuracy buckets retains each question exactly once');
+    await page.getByRole('button', { name: 'No answers', exact: true }).click();
+    assert.ok(await page.getByLabel(`Select question ${noAnswerQuestion.displayNumber}`, { exact: true }).count() > 0,
+      'the unattempted question remains available without clearing previous selections');
+    await page.getByRole('button', { name: '75%+', exact: true }).click();
     await page.locator('.import-question-row__preview')
       .filter({ hasText: new RegExp(`^Q${sourceQuestionNumber}(?:\\s|$)`) }).click();
-    await page.getByLabel(`Select question ${sourceQuestionNumber}`, { exact: true }).check();
-    await page.getByRole('button', { name: 'Add 1 questions', exact: true }).click();
+    await page.getByRole('button', { name: 'Add 5 questions', exact: true }).click();
     await page.waitForTimeout(1000);
     if (await page.locator('.import-questions-dialog').count()) {
       const dialogText = await page.locator('.import-questions-dialog').innerText();
       const failures = failedApiResponses.map(response => `${response.status} ${response.url}: ${response.body}`).join('\n');
       throw new Error(`Question import did not close the dialog. Dialog: ${dialogText}\nAPI failures: ${failures}`);
     }
-    await page.getByText('1 questions added from', { exact: false }).waitFor();
+    await page.getByText('5 questions added from', { exact: false }).waitFor();
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileNoticePosition = await page.locator('.notice').evaluate(element => ({
       bottom: getComputedStyle(element).bottom,
@@ -679,7 +807,8 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1000 });
     const importedPaper = await api(page, `/api/admin/papers/${paperId}`);
     const importedQuestions = readQuestions(importedPaper);
-    assert.equal(importedQuestions.length, 2, 'confirming import adds one source question');
+    assert.equal(importedQuestions.length, 1 + importPerformanceQuestions.length,
+      'confirming a batch import adds all selected source questions');
     const importedQuestion = importedQuestions.find(question => question.stem === sourceQuestion.stem);
     assert.ok(importedQuestion, 'the imported source question retains its original stem');
     assert.equal(importedQuestion.questionTypeCode, sourceQuestion.questionTypeCode,
@@ -831,7 +960,7 @@ async function main() {
         'Stay preserves edits', 'Leave Without Saving discards edits', 'saved question survives reload',
         'source question provenance survives a normal editor save',
         'primary and secondary type create/edit/delete and protect referenced types', 'official SHSAT labels are protected',
-        'import source, performance filter, preview, cancel, and confirm',
+        'real-attempt accuracy buckets, unanswered filter, ELA/Math groups, bulk selection, preview, cancel, and confirm',
         'SHSAT import copies shared material and remaps its ID in the target paper',
         'imported material survives editor reload and appears in paper preview',
         'preview review/bookmark/section navigation and toolbar tools', 'preview does not write student attempts',
@@ -849,17 +978,20 @@ async function main() {
     }));
   } finally {
     if (sourceExamId) await api(page, `/api/admin/exams/${sourceExamId}`, 'DELETE').catch(() => {});
-    if (tempUserId) await api(page, `/api/admin/users/${tempUserId}`, 'DELETE').catch(() => {});
+    await Promise.all(tempStudentPages.map(studentPage => studentPage.close().catch(() => {})));
+    for (const tempUserId of tempUserIds) {
+      await api(page, `/api/admin/users/${tempUserId}`, 'DELETE').catch(() => {});
+    }
     if (metadataPaperId) await api(page, `/api/admin/papers/${metadataPaperId}`, 'DELETE').catch(() => {});
     if (paperId) await api(page, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
     await browser.close();
   }
 }
 
-async function login(page) {
+async function login(page, loginUsername = username, loginPassword = password) {
   await page.goto(`${baseUrl}/login`);
-  await page.getByLabel('Username').fill(username);
-  await page.getByLabel('Password').fill(password);
+  await page.getByLabel('Username').fill(loginUsername);
+  await page.getByLabel('Password').fill(loginPassword);
   await page.locator('button[type="submit"]').click();
   await page.waitForURL(url => !url.pathname.endsWith('/login'));
 }

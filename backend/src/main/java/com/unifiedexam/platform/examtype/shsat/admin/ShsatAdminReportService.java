@@ -349,6 +349,8 @@ public class ShsatAdminReportService {
         // 监考统计按已保存答案计算；导入的未答记录用 legacyAnswer:null 占位，需排除该占位值。
         List<Map<String, Object>> questions = jdbcTemplate.query("""
             SELECT pi.display_number, q.id AS question_id, q.question_type_code,
+                   COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(part.settings_json, '$.partCode')), ''),
+                            part.section_code) AS subject_code,
                    qm.skill_tag_code,
                    (SELECT COUNT(*) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
                     WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id
@@ -364,6 +366,9 @@ public class ShsatAdminReportService {
                     WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id) AS average_time_spent
             FROM paper_sections ps JOIN paper_items pi ON pi.section_id = ps.id
             JOIN questions q ON q.id = pi.question_id
+            LEFT JOIN paper_sections parent ON parent.id = ps.parent_section_id
+            LEFT JOIN paper_sections part ON part.id = CASE
+                WHEN ps.section_kind = 'PART' THEN ps.id ELSE parent.id END
             LEFT JOIN shsat_question_metadata qm ON qm.question_id = q.id
             WHERE ps.paper_id = ? AND pi.display_number IS NOT NULL
             ORDER BY pi.display_number, pi.id
@@ -383,7 +388,7 @@ public class ShsatAdminReportService {
                 row.put("unansweredCount", Math.max(0, started - attempted));
                 row.put("accuracy", percent(correct, correct + wrong));
                 row.put("averageTimeSpent", rs.getBigDecimal("average_time_spent"));
-                row.put("shsatSubjectCode", null);
+                row.put("shsatSubjectCode", rs.getString("subject_code"));
                 row.put("skillTagCode", rs.getString("skill_tag_code"));
                 row.put("materialId", null);
                 row.put("materialTitle", null);
