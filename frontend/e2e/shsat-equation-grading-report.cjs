@@ -18,17 +18,21 @@ async function main() {
   });
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const studentContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const otherStudentContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const admin = await adminContext.newPage();
   const student = await studentContext.newPage();
+  const otherStudent = await otherStudentContext.newPage();
   const pageErrors = [];
-  [admin, student].forEach(page => page.on('pageerror', error => pageErrors.push(error.message)));
+  [admin, student, otherStudent].forEach(page => page.on('pageerror', error => pageErrors.push(error.message)));
 
   const stamp = Date.now();
   const suffix = String(stamp).slice(-6);
   const username = `shsat_equation_${stamp}`;
+  const otherUsername = `shsat_equation_other_${stamp}`;
   const password = `Equation${stamp}!`;
   const title = `Equation Grade ${suffix}`;
   let userId;
+  let otherUserId;
   let classId;
   let paperId;
   let examId;
@@ -39,6 +43,11 @@ async function main() {
       username, password, realName: `Equation Student ${suffix}`, roleCode: 'STUDENT', email: null, phone: null,
     });
     userId = Number(user.id);
+    const otherUser = await api(admin, '/api/admin/users', 'POST', {
+      username: otherUsername, password, realName: `Other Equation Student ${suffix}`,
+      roleCode: 'STUDENT', email: null, phone: null,
+    });
+    otherUserId = Number(otherUser.id);
     const classroom = await api(admin, '/api/admin/classes?examTypeCodes=SHSAT', 'POST', {
       name: `Equation ${suffix}`, description: 'Temporary equation grading report test', sortOrder: 0,
       teacherName: null, teacherEmail: null, gradeLevel: null, academicYear: null, active: true,
@@ -184,6 +193,13 @@ async function main() {
     assert.equal(startResponse.status(), 200);
     const started = await startResponse.json();
     const attemptId = Number(started.id || started.attemptId);
+    assert.equal(await apiStatus(student, `/api/student/attempts/${attemptId}/report`), 409,
+      'a report is not available while the student attempt is still in progress');
+    await login(otherStudent, otherUsername, password);
+    assert.equal(await apiStatus(otherStudent, `/api/student/attempts/${attemptId}`), 404,
+      'another student cannot read this attempt by guessing its ID');
+    assert.equal(await apiStatus(otherStudent, `/api/student/attempts/${attemptId}/report`), 404,
+      'another student cannot read this report by guessing its ID');
     const attempt = await api(student, `/api/student/attempts/${attemptId}`);
     assert.deepEqual([...new Set((attempt.items || attempt.questions || []).map(item => item.questionTypeCode))].sort(), [
       'DRAG_AND_DROP', 'EQUATION_EDITOR', 'FILL_IN_BLANK', 'GRAPH_QUESTION', 'HOT_TEXT',
@@ -755,8 +771,10 @@ async function main() {
     if (classId && userId) await api(admin, `/api/admin/classes/${classId}/students/${userId}`, 'DELETE').catch(() => {});
     if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});
+    if (otherUserId) await api(admin, `/api/admin/users/${otherUserId}`, 'DELETE').catch(() => {});
     if (paperId) await api(admin, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
     await studentContext.close();
+    await otherStudentContext.close();
     await adminContext.close();
     await browser.close();
   }
@@ -839,6 +857,13 @@ async function api(page, path, method = 'GET', body) {
   }, { path, method, body, token });
   if (response.status < 200 || response.status >= 300) throw new Error(`${method} ${path}: ${response.status} ${response.text}`);
   return response.text ? JSON.parse(response.text) : null;
+}
+
+async function apiStatus(page, path) {
+  return page.evaluate(async path => {
+    const response = await fetch(path, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    return response.status;
+  }, path);
 }
 
 main().catch(error => { console.error(error.stack || error); process.exit(1); });
