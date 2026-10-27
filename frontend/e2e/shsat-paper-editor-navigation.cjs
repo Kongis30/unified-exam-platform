@@ -256,8 +256,10 @@ async function main() {
       [questionStem, mathStem], 'questions added from separate parts persist in the expected order');
 
     const previewMaterialRef = `preview-material-${stamp}`;
+    const previewMissingImageRef = `preview-missing-image-${stamp}`;
     const previewPaperDetail = await api(page, `/api/admin/papers/${paperId}`);
     let previewMaterialAttached = false;
+    let previewMissingImageAttached = false;
     const mapSectionForSave = section => ({
       sectionCode: section.sectionCode,
       sectionKind: section.sectionKind,
@@ -270,6 +272,9 @@ async function main() {
         if (question.stem === questionStem) {
           render.materialRef = previewMaterialRef;
           previewMaterialAttached = true;
+        } else if (question.stem === mathStem) {
+          render.materialRef = previewMissingImageRef;
+          previewMissingImageAttached = true;
         }
         return {
           questionTypeCode: question.questionTypeCode,
@@ -292,6 +297,7 @@ async function main() {
       'the ELA preview question is present in the saved paper structure');
     const savedSections = previewPaperDetail.sections.map(mapSectionForSave);
     assert.equal(previewMaterialAttached, true, 'the preview test question receives a temporary reading material');
+    assert.equal(previewMissingImageAttached, true, 'the math preview question receives a missing image fixture');
     const materialWrites = (previewPaperDetail.materials || []).map(material => ({
       materialId: String(material.id), clientRef: null, partCode: material.partCode,
       subTypeCode: material.subTypeCode, materialType: material.materialType,
@@ -304,6 +310,13 @@ async function main() {
       content: 'A short passage used to verify the preview drawing pen.', assetUrl: null,
       sortOrder: materialWrites.length,
     });
+    materialWrites.push({
+      materialId: null, clientRef: previewMissingImageRef, partCode: 'MATH', subTypeCode: null,
+      materialType: 'IMAGE', category: 'Question Image', title: `Missing Preview Image ${stamp}`,
+      content: null, assetUrl: `${baseUrl}/uploads/paper-materials/missing-preview-${stamp}.png`,
+      sortOrder: materialWrites.length,
+    });
+    await page.route(`**/uploads/paper-materials/missing-preview-${stamp}.png`, route => route.fulfill({ status: 404, body: '' }));
     await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', {
       sections: savedSections, materials: materialWrites,
     });
@@ -322,6 +335,8 @@ async function main() {
     await page.getByText(questionStem, { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByText(mathStem, { exact: true }).waitFor();
+    await page.getByText('Question image is unavailable.', { exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-paper-preview-missing-image-${stamp}.png` });
     await page.screenshot({ path: `/tmp/shsat-paper-preview-tools-desktop-${stamp}.png` });
     await page.getByRole('button', { name: 'Previous', exact: true }).click();
     await page.getByText(questionStem, { exact: true }).waitFor();
