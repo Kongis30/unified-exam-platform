@@ -498,4 +498,6 @@
 
 - `paper-editor-navigation` 使用真实学生提交成绩验证 Import from Exam 的 0%/25%/50%/75%/100% 正确率分桶、No answers、ELA/Math 分组与折叠、筛选间批量选择和重复切换、取消、导入题目答案/标签及材料复制。发现监考分析未返回 SHSAT 科目导致分组失效；现已修复并在 `ShsatAdminReportServiceTest` 验证。桌面和 390px 弹窗截图 `/tmp/shsat-paper-editor-import-1793111523285.png`、`/tmp/shsat-paper-editor-import-mobile-1793111523285.png` 已检查。
 - Monitor 接口变更后再次以教师账号运行 `teacher-workspace`，准确率、结束场次汇总、题目详情/缺图状态、权限拒绝等全部通过，`pageErrors=0`、390px 无页面溢出。手机热图和题目详情截图 `/tmp/shsat-teacher-monitor-accuracy-mobile-1793111633499.png`、`/tmp/shsat-teacher-monitor-image-unavailable-mobile-1793111633499.png` 已检查。
+- 学生资格与历史流程再次运行 `student-states` 通过：Upcoming/Available/Closed、目标资格隔离、重试及最新优先、历史报告返回状态、错误密码/禁用账号/会话刷新、跨学生隐私均通过；桌面与 390px 首屏截图 `/tmp/shsat-student-exam-states-1793111818890.png`、`/tmp/shsat-student-exam-states-mobile-1793111818890.png` 已复核，页面错误为 0。
+- 班级考试详情再次运行 `class-detail-exams` 通过：搜索、排序、分页、View Results 和 Monitor 返回后筛选/分页状态恢复；桌面、390px 及成绩/监考页截图 `/tmp/shsat-class-detail-exams-desktop-1793111846293.png`、`/tmp/shsat-class-detail-exams-mobile-1793111846293.png`、`/tmp/shsat-class-detail-exams-results-1793111846293.png`、`/tmp/shsat-class-detail-exams-monitor-1793111846293.png` 已目视检查，浏览器错误为 0。
 - Java 17 `mvn -q clean test`：113 项通过，失败/错误/跳过均为 0；`npm run build` 成功。当前增量已提交 `980fa37`。整体目标继续进行，不能视作清单全部完成。
