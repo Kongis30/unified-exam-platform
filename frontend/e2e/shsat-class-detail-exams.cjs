@@ -78,7 +78,12 @@ async function main() {
     const firstVisibleTitle = (await firstRow.locator('.class-exam-table__exam-title').innerText()).trim();
     assert.equal(firstVisibleTitle, displayTitle(apiSorted[0]), 'first page first row matches newest exam');
     const firstExamId = Number(apiSorted[0].examId);
-    await firstRow.getByRole('button', { name: 'View Results', exact: true }).click();
+    await page.evaluate(() => window.scrollTo(0, 300));
+    const viewResultsButton = firstRow.getByRole('button', { name: 'View Results', exact: true });
+    await viewResultsButton.scrollIntoViewIfNeeded();
+    const classDetailScrollY = await page.evaluate(() => window.scrollY);
+    assert.ok(classDetailScrollY >= 100, 'class detail is scrolled before opening a child page');
+    await viewResultsButton.click();
     await page.waitForURL(url => url.pathname.endsWith(`/classes/${sample.classId}/exams/${firstExamId}/results`));
     const resultsHero = page.locator('.class-results-hero');
     await resultsHero.waitFor();
@@ -104,6 +109,9 @@ async function main() {
     assert.equal(await pageSize.inputValue(), '5', 'returning from results preserves the selected page size');
     assert.equal(await rows.count(), 5, 'returning from results restores the first page of filtered exams');
     assert.match(await pagination.innerText(), /Page 1 \/ 2/, 'returning from results restores the original pagination page');
+    const resultsReturnScrollY = await page.evaluate(() => window.scrollY);
+    assert.ok(Math.abs(resultsReturnScrollY - classDetailScrollY) <= 2,
+      `returning from results restores the class detail scroll position (${classDetailScrollY} -> ${resultsReturnScrollY})`);
 
     await page.locator('.class-exam-table tbody tr').first().getByRole('button', { name: 'Monitor', exact: true }).click();
     await page.waitForURL(url => url.pathname.endsWith(`/exams/${firstExamId}/monitor`));
@@ -118,6 +126,8 @@ async function main() {
     assert.equal(await pageSize.inputValue(), '5', 'returning from Monitor preserves the selected page size');
     assert.equal(await rows.count(), 5, 'returning from Monitor restores the first page of exams');
     assert.match(await pagination.innerText(), /Page 1 \/ 2/, 'returning from Monitor restores the original pagination page');
+    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - classDetailScrollY) <= 2,
+      'returning from Monitor restores the class detail scroll position');
 
     await page.setViewportSize({ width: 390, height: 844 });
     const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
@@ -150,7 +160,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ result: 'PASS', classId: sample.classId, examCount: sample.exams.length,
       checks: ['search and empty state', 'ascending/descending sort', 'page size and pagination',
-        'View Results and return with filters/pagination preserved', 'Monitor and return with filters/pagination preserved',
+        'View Results and Monitor return with filters/pagination/scroll position preserved',
         '390px card layout and actions'],
       dimensions, toolbarGeometry, mobileTableWidth, mobileCardWidth, pageErrors: errors.length }));
   } finally {

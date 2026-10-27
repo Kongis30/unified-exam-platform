@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
@@ -39,6 +39,9 @@ const exams = ref([]);
 const students = ref([]);
 const examKeyword = ref('');
 let classToastTimer = null;
+let classScoreTrendReady = false;
+let resolveClassScoreTrendReady;
+let classScoreTrendReadyPromise = new Promise(resolve => { resolveClassScoreTrendReady = resolve; });
 
 const classId = computed(() => route.params.classId);
 let restoringClassExamState = false;
@@ -229,6 +232,7 @@ function saveClassExamState() {
       sortBy: examFilters.sortBy,
       page: examFilters.page,
       pageSize: examFilters.pageSize,
+      scrollY: window.scrollY,
     }));
   } catch {
     // 隐私浏览或存储空间受限时仍允许正常导航。
@@ -250,6 +254,31 @@ function restoreClassExamState() {
   } finally {
     restoringClassExamState = false;
   }
+}
+
+// 子页面返回时等班级内容渲染完成后再恢复原滚动位置，避免页面高度不足导致位置被截断。
+async function restoreClassDetailScroll() {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(classExamStateKey()) || 'null');
+    if (!Number.isFinite(saved?.scrollY) || saved.scrollY <= 0) return;
+
+    if (!errorMessage.value && !classScoreTrendReady) await classScoreTrendReadyPromise;
+    await nextTick();
+    window.scrollTo(0, saved.scrollY);
+  } catch {
+    // 状态不可读时保持默认页面位置。
+  }
+}
+
+function markClassScoreTrendReady(trendClassId) {
+  if (String(trendClassId) !== String(classId.value) || classScoreTrendReady) return;
+  classScoreTrendReady = true;
+  resolveClassScoreTrendReady?.();
+}
+
+function resetClassScoreTrendReady() {
+  classScoreTrendReady = false;
+  classScoreTrendReadyPromise = new Promise(resolve => { resolveClassScoreTrendReady = resolve; });
 }
 
 function goClassExamPage(page) {
@@ -759,15 +788,18 @@ watch(classExamTotalPages, (totalPages) => {
   }
 });
 
-onMounted(() => {
+onMounted(async () => {
   restoreClassExamState();
-  loadPage();
+  await loadPage();
+  await restoreClassDetailScroll();
 });
 onBeforeRouteUpdate(saveClassExamState);
 onBeforeRouteLeave(saveClassExamState);
-watch(classId, () => {
+watch(classId, async () => {
+  resetClassScoreTrendReady();
   restoreClassExamState();
-  loadPage();
+  await loadPage();
+  await restoreClassDetailScroll();
 });
 onBeforeUnmount(() => {
   saveClassExamState();
@@ -872,7 +904,7 @@ onBeforeUnmount(() => {
       </AppCard>
 
       <template v-else>
-        <ClassExamScoreTrend :class-id="classId" :exam-type-codes="['SHSAT']" />
+        <ClassExamScoreTrend :class-id="classId" :exam-type-codes="['SHSAT']" @loaded="markClassScoreTrendReady" />
 
         <AppCard class="class-exams-card" title="Class Exams" subtitle="Review the exams that students in this class have actually taken.">
           <div class="admin-toolbar class-exams-toolbar">

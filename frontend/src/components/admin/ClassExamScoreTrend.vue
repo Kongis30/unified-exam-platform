@@ -9,6 +9,7 @@ const props = defineProps({
   classId: { type: [String, Number], required: true },
   examTypeCodes: { type: Array, required: true },
 })
+const emit = defineEmits(['loaded'])
 
 const loading = ref(false)
 const error = ref('')
@@ -72,16 +73,19 @@ function niceStep(value) {
 
 // 由图表容器负责加载：切换班级或考试模块时重新请求对应的成绩序列。
 async function loadTrend() {
+  const requestedClassId = props.classId
+  const requestedExamTypeCodes = [...props.examTypeCodes]
   loading.value = true
   error.value = ''
   hoveredPoint.value = null
   try {
-    const response = await listClassExamScoreTrend(props.classId, props.examTypeCodes)
+    const response = await listClassExamScoreTrend(requestedClassId, requestedExamTypeCodes)
     rows.value = Array.isArray(response) ? response : response?.items || response?.records || []
   } catch (requestError) {
     error.value = requestError.message || 'Unable to load class score trend.'
   } finally {
     loading.value = false
+    emit('loaded', requestedClassId)
   }
 }
 
@@ -122,7 +126,7 @@ watch(scoreMetric, () => { hoveredPoint.value = null })
 </script>
 
 <template>
-  <AppCard title="Class Exam Score Trend" :subtitle="chartSubtitle">
+  <AppCard class="class-exam-score-trend" :data-loading="loading" title="Class Exam Score Trend" :subtitle="chartSubtitle">
     <div v-if="loading" class="admin-state">Loading score trend...</div>
     <div v-else-if="error" class="admin-state admin-state--error">
       <p class="error-text">{{ error }}</p>
