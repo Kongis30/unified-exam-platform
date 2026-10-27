@@ -410,7 +410,9 @@ function viewShsatWrongAnswers(item) {
 
 function wrongAnswerBookStatus(item) {
   if (!item.answersVisible) return `Attempt #${item.attemptNumber} · Review locked`
-  return `Attempt #${item.attemptNumber} · ${item.remainingReviewCount} questions remaining`
+  const remaining = Number(item.remainingReviewCount) || 0
+  const questionLabel = remaining === 1 ? 'question' : 'questions'
+  return `Attempt #${item.attemptNumber} · ${remaining} ${questionLabel} remaining`
 }
 
 async function practiceShsatWrongAnswers(item) {

@@ -145,31 +145,88 @@ async function main() {
     const practiceItems = practiceAttempt.items || practiceAttempt.questions || [];
     assert.equal(practiceItems.length, 2, 'personal practice includes the incorrect and unanswered questions only');
 
-    for (let index = 0; index < 2; index += 1) {
-      await student.locator('.choice-answer__option').first().click();
-      await student.locator('.choice-answer__option input:checked').waitFor({ state: 'attached' });
-      if (index === 0) {
-        await student.getByRole('button', { name: 'Next', exact: true }).click();
-        await student.getByText('Question 2: select the correct answer.', { exact: true }).waitFor();
-      }
+    await student.getByRole('button', { name: 'Leave exam page' }).click();
+    const leaveDialog = student.getByRole('dialog', { name: 'Leave Exam Page' });
+    await leaveDialog.getByRole('button', { name: 'Stay Here', exact: true }).click();
+    assert.match(student.url(), /practiceAttemptId=/, 'canceling the leave prompt keeps the active practice open');
+    await student.locator('.choice-answer__option').first().click();
+    await student.getByRole('button', { name: 'Next', exact: true }).click();
+    await student.getByText('Question 2: select the correct answer.', { exact: true }).waitFor();
+    await student.getByRole('button', { name: 'Leave exam page' }).click();
+    await student.getByRole('dialog', { name: 'Leave Exam Page' }).getByRole('button', { name: 'Leave', exact: true }).click();
+    await student.waitForURL(url => url.pathname === '/exam-types/SHSAT');
+
+    const interruptedPractice = await api(student, `/api/student/attempts/${practiceAttemptId}`);
+    assert.equal(interruptedPractice.status, 'IN_PROGRESS', 'leaving preserves the unfinished practice attempt');
+    await student.getByRole('tab', { name: /Wrong Answer Book/ }).click();
+    const refreshedBook = student.locator('.shsat-history-row').filter({ hasText: title });
+    await refreshedBook.getByRole('button', { name: 'Practice', exact: true }).click();
+    await student.waitForURL(url => Number(url.searchParams.get('practiceAttemptId')) === practiceAttemptId);
+    const resumeOverlay = student.locator('.fullscreen-required-overlay');
+    await continueExamDirections(student);
+    await resumeOverlay.waitFor({ state: 'visible' });
+    await resumeOverlay.locator('.fullscreen-required-dialog__button').click();
+    await resumeOverlay.waitFor({ state: 'hidden' });
+    const questionOne = student.getByText('Question 1: select the correct answer.', { exact: true });
+    const questionTwo = student.getByText('Question 2: select the correct answer.', { exact: true });
+    await student.locator('.question-number').waitFor();
+    if (!(await questionOne.isVisible().catch(() => false))) {
+      await questionTwo.waitFor();
+      await student.getByRole('button', { name: 'Previous', exact: true }).click();
+      await questionOne.waitFor();
     }
+    await student.locator('.choice-answer__option input:checked').waitFor({ state: 'attached' });
+    const resumedMobileSize = await pageSize(student);
+    assert.ok(resumedMobileSize.page <= resumedMobileSize.viewport, `resumed practice fits mobile: ${JSON.stringify(resumedMobileSize)}`);
+    await student.screenshot({ path: `/tmp/shsat-wrong-book-resumed-${stamp}.png` });
+    await student.getByRole('button', { name: 'Next', exact: true }).click();
+    await questionTwo.waitFor();
+    await student.locator('.choice-answer__option').nth(1).click();
+    await student.locator('.choice-answer__option input:checked').waitFor({ state: 'attached' });
     await student.getByRole('button', { name: /Submit Exam|Submit/ }).click();
     await student.getByRole('dialog').getByRole('button', { name: 'Submit Exam', exact: true }).click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${practiceAttemptId}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
 
-    const remaining = await api(student, `/api/student/attempts/${sourceAttempt.id}/wrong-answer-question-numbers`);
-    assert.deepEqual(remaining, [], 'correct practice clears every question from the personal wrong-answer book');
+    const remainingAfterFirstPractice = await api(student, `/api/student/attempts/${sourceAttempt.id}/wrong-answer-question-numbers`);
+    assert.deepEqual(remainingAfterFirstPractice, [2], 'a wrong practice answer keeps that question in the personal wrong-answer book');
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     await student.getByRole('tab', { name: /Wrong Answer Book/ }).click();
-    await book.getByText('0 questions remaining', { exact: false }).waitFor();
+    const retryBook = student.locator('.shsat-history-row').filter({ hasText: title });
+    await retryBook.getByText('1 question remaining', { exact: false }).waitFor();
+    const retryPractice = retryBook.getByRole('button', { name: 'Practice', exact: true });
+    assert.equal(await retryPractice.isEnabled(), true, 'remaining wrong answers can be practiced again');
+    await retryPractice.click();
+    await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}`
+      && Number(url.searchParams.get('practiceAttemptId')) > 0
+      && Number(url.searchParams.get('practiceAttemptId')) !== practiceAttemptId);
+    const retryAttemptId = Number(new URL(student.url()).searchParams.get('practiceAttemptId'));
+    const retryOverlay = student.locator('.fullscreen-required-overlay');
+    await retryOverlay.waitFor({ state: 'visible' });
+    await retryOverlay.locator('.fullscreen-required-dialog__button').click();
+    await continueExamDirections(student);
+    await student.getByText('Question 2: select the correct answer.', { exact: true }).waitFor();
+    const retryQuestions = await api(student, `/api/student/attempts/${retryAttemptId}`);
+    assert.equal(retryQuestions.questions.length, 1, 'a retry includes only the uncleared question');
+    await student.locator('.choice-answer__option').first().click();
+    await student.locator('.choice-answer__option input:checked').waitFor({ state: 'attached' });
+    await student.getByRole('button', { name: /Submit Exam|Submit/ }).click();
+    await student.getByRole('dialog').getByRole('button', { name: 'Submit Exam', exact: true }).click();
+    await student.waitForURL(url => url.pathname === `/student/attempts/${retryAttemptId}/report`);
+    await student.getByText('Result Summary', { exact: true }).waitFor();
+
+    const remaining = await api(student, `/api/student/attempts/${sourceAttempt.id}/wrong-answer-question-numbers`);
+    assert.deepEqual(remaining, [], 'correct retry clears the remaining question from the personal wrong-answer book');
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    await student.getByRole('tab', { name: /Wrong Answer Book/ }).click();
+    await retryBook.getByText('0 questions remaining', { exact: false }).waitFor();
     await viewAnswers.waitFor({ state: 'visible' });
     assert.equal(await viewAnswers.isDisabled(), true, 'cleared questions cannot be opened again');
     assert.equal(await practice.isDisabled(), true, 'cleared questions cannot start another practice');
     await latestReport.waitFor({ state: 'visible' });
     assert.equal(await latestReport.isEnabled(), true, 'latest practice report becomes available after submission');
     await latestReport.click();
-    await student.waitForURL(url => url.pathname === `/student/attempts/${practiceAttemptId}/report`);
+    await student.waitForURL(url => url.pathname === `/student/attempts/${retryAttemptId}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
     await student.setViewportSize({ width: 1440, height: 900 });
     await student.screenshot({ path: `/tmp/shsat-wrong-book-practice-report-desktop-${stamp}.png` });
@@ -185,11 +242,12 @@ async function main() {
     assert.deepEqual(pageErrors, [], 'wrong-answer book flow has no browser errors');
 
     console.log(JSON.stringify({
-      result: 'PASS', examId, sourceAttemptId: sourceAttempt.id, practiceAttemptId,
-      lockedMobileSize, reviewMobileSize, clearMobileSize, pageErrors: pageErrors.length,
+      result: 'PASS', examId, sourceAttemptId: sourceAttempt.id, practiceAttemptId, retryAttemptId,
+      lockedMobileSize, reviewMobileSize, resumedMobileSize, clearMobileSize, pageErrors: pageErrors.length,
       screenshots: [
         `/tmp/shsat-wrong-book-locked-${stamp}.png`, `/tmp/shsat-wrong-book-locked-mobile-${stamp}.png`,
         `/tmp/shsat-wrong-book-review-${stamp}.png`, `/tmp/shsat-wrong-book-review-mobile-${stamp}.png`,
+        `/tmp/shsat-wrong-book-resumed-${stamp}.png`,
         `/tmp/shsat-wrong-book-practice-report-desktop-${stamp}.png`,
         `/tmp/shsat-wrong-book-practice-report-${stamp}.png`, `/tmp/shsat-wrong-book-cleared-mobile-${stamp}.png`,
       ],
