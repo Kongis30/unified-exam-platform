@@ -465,6 +465,8 @@
 - [x] **Hot Spot 合成样题作答/评分/报告复测**：`npm run test:e2e:shsat:hotspot-flow` 通过，学生真实点选目标区域、保存并交卷，报告按答案键评分为 2 分；桌面及 390px 考试/报告页面无整页横向溢出，`pageErrors=0`。截图 `/tmp/shsat-hotspot-active-1793105434004.png`、`/tmp/shsat-hotspot-active-mobile-1793105434004.png`、`/tmp/shsat-hotspot-report-1793105434004.png`、`/tmp/shsat-hotspot-report-mobile-1793105434004.png` 已检查。**此项证明 Hot Spot 交互链路正常，不覆盖 4 道源题缺失的原图；原题视觉和目标区域含义仍待恢复素材后验收。**
 - [x] **正式 100 题考试与报告流程复测**：`npm run test:e2e:shsat:full-length-navigation` 通过，验证 ELA→Math 分段交卷、旧分段写入拒绝、重复最终交卷幂等、书签/Review 受限导航、画笔实际绘制与清除、100 题成绩及师生报告题数一致。390px 根页面无横向溢出，`pageErrors=0`；桌面/手机真实考试界面截图 `/tmp/shsat-exam-drawing-desktop-1793105439924.png`、`/tmp/shsat-exam-drawing-mobile-1793105439924.png` 已检查。该流程证明考试主链路，不替代 12 种题型分别按迁移原题数据逐项对账。
 
+- [x] **Paper Detail 答案 PDF 计数恢复（2026-10-27）**：对照独立版确认其详情响应包含答案 PDF 记录并在详情弹窗显示数量；统一版原先详情 DTO 未返回数量，适配层又固定 `solutions: []`，导致已迁移记录始终显示 0。现由详情 API 返回 SHSAT 答案 PDF 记录数，前端直接展示；SAT 类型返回 0。扩展 `paper-filters`，逐卷核对详情计数与删除影响预览计数一致，并要求已有迁移答案 PDF 的试卷在 UI 弹窗显示正确数值。`npm run test:e2e:shsat:paper-filters`、`npm run build` 及 Java 17 `mvn test -q` 通过；无浏览器错误。截图 `/tmp/shsat-paper-answer-pdf-count-20261027.png` 已目视检查，弹窗信息层级和留白正常。该修复仅恢复现有详情数量，不新增源版 UI 未提供的上传/下载操作。
+
 ## 9. 建议执行顺序与完成门槛
 
 1. **P0 学生主链路**：补齐 G1/G2；用真实学生跑完整考试、两种 section 顺序、12 题型答案保存与报告；这是切换独立 SHSAT 的门槛。

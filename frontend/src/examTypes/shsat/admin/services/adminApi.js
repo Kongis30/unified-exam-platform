@@ -174,7 +174,7 @@ function mapPaperDetail(detail) {
     status: detail.summary.status, online: detail.summary.status === 'READY',
     totalParts: parts.length, totalQuestions: questions.length,
     scoringProfileCode: detail.scoringProfileCode || 'SHSAT_2026_100',
-    parts, subTypes, materials, questions, solutions: [],
+    parts, subTypes, materials, questions, solutionCount: Number(detail.solutionCount || 0),
   };
 }
 

@@ -88,6 +88,37 @@ async function main() {
     const detailDialog = page.locator('.modal-card--wide');
     await detailDialog.getByRole('heading', { name: onlinePaper.title, exact: true }).waitFor();
     await detailDialog.getByText(String(onlinePaper.questionCount || 0), { exact: true }).waitFor();
+    const paperDetailResponse = await page.request.get(`${baseUrl}/api/admin/papers/${onlinePaper.id}`);
+    const paperDetail = await paperDetailResponse.json();
+    const deleteImpactResponse = await page.request.get(`${baseUrl}/api/admin/papers/${onlinePaper.id}/delete-impact`);
+    const deleteImpact = await deleteImpactResponse.json();
+    assert.ok(paperDetailResponse.ok() && deleteImpactResponse.ok(), 'paper detail and delete impact should load');
+    assert.equal(paperDetail.solutionCount, deleteImpact.solutionCount,
+      'paper detail should report the same migrated answer PDF count as the delete impact preview');
+    await detailDialog.getByText(String(paperDetail.solutionCount), { exact: true }).waitFor();
+    await detailDialog.getByRole('button', { name: 'Close paper details dialog' }).click();
+    await detailDialog.waitFor({ state: 'detached' });
+
+    const papersWithSolutions = [];
+    for (const paper of papers) {
+      const impactResponse = await page.request.get(`${baseUrl}/api/admin/papers/${paper.id}/delete-impact`);
+      assert.ok(impactResponse.ok(), `delete impact should load for paper ${paper.id}`);
+      const impact = await impactResponse.json();
+      if (impact.solutionCount > 0) papersWithSolutions.push({ paper, solutionCount: impact.solutionCount });
+    }
+    assert.ok(papersWithSolutions.length > 0, 'migrated SHSAT papers should retain their answer PDF records');
+    const { paper: solutionPaper, solutionCount } = papersWithSolutions[0];
+    await folderFilter.selectOption(String(solutionPaper.groupId));
+    await search.fill(solutionPaper.title);
+    await applySearch();
+    const solutionFolder = page.locator('.folder-panel').filter({ hasText: solutionPaper.groupName });
+    await solutionFolder.locator('.folder-panel__main-button').click();
+    const solutionRow = solutionFolder.locator('.paper-table tbody tr').filter({ hasText: solutionPaper.title });
+    await solutionRow.getByRole('button', { name: 'Paper actions', exact: true }).click();
+    await page.getByRole('menu').getByRole('button', { name: 'Detail', exact: true }).click();
+    await detailDialog.getByRole('heading', { name: solutionPaper.title, exact: true }).waitFor();
+    await detailDialog.getByText(String(solutionCount), { exact: true }).waitFor();
+    await page.screenshot({ path: '/tmp/shsat-paper-answer-pdf-count-20261027.png', fullPage: true });
     await detailDialog.getByRole('button', { name: 'Close paper details dialog' }).click();
     await detailDialog.waitFor({ state: 'detached' });
 
@@ -120,6 +151,7 @@ async function main() {
       checks: [
         'folder filter', 'Online filter', 'Offline filter', 'combined folder/status/name search',
         'filtered paper summary columns match API', 'filtered row action menu opens detail for the correct paper',
+        'migrated answer PDF counts match delete impact and appear in the paper detail UI',
         'no-results state', 'clear all filters', 'reload restores full list',
       ],
       matchedPapers: { online: expectedPapers.filter(paper => paper.status === 'READY').length,

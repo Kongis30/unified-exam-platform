@@ -115,7 +115,10 @@ public class PaperService {
             """, String.class, paperId);
         List<SectionView> sections = loadSections(paperId, null);
         List<MaterialView> materials = "SHSAT".equals(summary.examTypeCode()) ? loadShsatMaterials(paperId) : List.of();
-        return new PaperDetail(summary, description, groupId, scoringProfileCode, sections, materials);
+        long solutionCount = "SHSAT".equals(summary.examTypeCode())
+            ? count("SELECT COUNT(*) FROM shsat_paper_solutions WHERE paper_id = ?", paperId)
+            : 0;
+        return new PaperDetail(summary, description, groupId, scoringProfileCode, sections, materials, solutionCount);
     }
 
     @Transactional
@@ -1073,7 +1076,7 @@ public class PaperService {
                                String status, Integer defaultDurationSeconds, int sectionCount, int questionCount,
                                BigDecimal totalScore, String createdAt, String updatedAt) { }
     public record PaperDetail(PaperSummary summary, String description, Long groupId, String scoringProfileCode,
-                              List<SectionView> sections, List<MaterialView> materials) { }
+                              List<SectionView> sections, List<MaterialView> materials, long solutionCount) { }
     public record MaterialView(long id, String partCode, String subTypeCode, String materialType,
                                String category, String title, String content, String assetUrl, int sortOrder) { }
     public record SectionView(long id, String sectionCode, String sectionKind, String title, int sortOrder,

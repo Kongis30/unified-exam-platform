@@ -3481,7 +3481,7 @@ onBeforeUnmount(() => {
                   </div>
                   <div>
                     <dt>Answer PDF</dt>
-                    <dd>{{ paperDetail.solutions?.length || 0 }}</dd>
+                    <dd>{{ paperDetail.solutionCount || 0 }}</dd>
                   </div>
                 </dl>
                 <div v-if="paperDetail.parts?.length" class="tag-list">
