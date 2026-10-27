@@ -41,4 +41,8 @@ public class ExamTypeRegistry {
     public Optional<ExamTypeModule> module(String code) {
         return modules.stream().filter(module -> module.definition().code().equals(code)).findFirst();
     }
+
+    public void validatePaperForPublication(String code, long paperId) {
+        module(code).ifPresent(module -> module.validatePaperForPublication(paperId));
+    }
 }

@@ -1623,11 +1623,7 @@ function showNotice(message, type = 'success') {
   noticeMessage.value = message;
   noticeType.value = type;
 
-  if (type !== 'error') {
-    noticeTimer = window.setTimeout(() => {
-      closeNotice();
-    }, 2600);
-  }
+  noticeTimer = window.setTimeout(closeNotice, type === 'error' ? 6000 : 2600);
 }
 
 function closeNotice() {
@@ -2273,7 +2269,7 @@ function formatImportExamDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Date unavailable';
   return new Intl.DateTimeFormat('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23',
   }).format(date);
 }
 
@@ -2415,14 +2411,33 @@ function updateMaterialDraft(question = currentQuestion.value) {
     return;
   }
 
-  if (question.material) {
-    question.material = {
-      ...question.material,
-      materialTitle: question.materialTitle,
-      materialCategory: question.materialCategory,
-      materialContent: question.materialType === 'image' ? null : question.materialContent,
-      assetUrl: question.materialType === 'image' ? question.imageUrl : question.material?.assetUrl,
-    };
+  const materialUpdate = {
+    ...(question.material || {}),
+    materialId: question.materialId,
+    materialType: question.materialType === 'image' ? 'IMAGE' : 'TEXT',
+    materialTitle: question.materialTitle,
+    materialCategory: question.materialCategory,
+    materialContent: question.materialType === 'image' ? null : question.materialContent,
+    assetUrl: question.materialType === 'image' ? question.imageUrl : question.material?.assetUrl,
+  };
+
+  if (question.materialId) {
+    // 共享材料存于各题的试卷结构中，编辑一题时同步所有同 ID 关联题，避免保存后内容分叉。
+    questions.value
+      .filter((item) => sameId(item.materialId, question.materialId))
+      .forEach((item) => {
+        item.materialTitle = question.materialTitle;
+        item.materialCategory = question.materialCategory;
+        item.materialContent = question.materialContent;
+        item.imageUrl = question.imageUrl;
+        item.material = materialUpdate;
+      });
+
+    materials.value = materials.value.map((material) => sameId(material.materialId, question.materialId)
+      ? materialUpdate
+      : material);
+  } else {
+    question.material = materialUpdate;
   }
 
   markQuestionDirty(question);
@@ -3159,8 +3174,16 @@ async function deletePart(part) {
     showNotice(officialDeleteBlockMessage('part'), 'error');
     return;
   }
-  if (questions.value.some((question) => sameId(question.partId, part.partId))) {
-    showNotice('Move or delete this type’s questions before deleting it.', 'error');
+  const partSubTypeIds = new Set(subTypes.value
+    .filter((subType) => sameId(subType.partId, part.partId))
+    .map((subType) => String(subType.subTypeId)));
+  const isInUse = questions.value.some((question) => sameId(question.partId, part.partId)
+    || partSubTypeIds.has(String(question.subTypeId)))
+    || materials.value.some((material) => sameId(material.partId, part.partId)
+      || partSubTypeIds.has(String(material.subTypeId)))
+    || subTypes.value.some((subType) => sameId(subType.partId, part.partId));
+  if (isInUse) {
+    showNotice('Move or delete this type’s questions, materials, and secondary types before deleting it.', 'error');
     return;
   }
 
@@ -3210,15 +3233,15 @@ async function deleteSubType(subType) {
     showNotice(officialDeleteBlockMessage('subType'), 'error');
     return;
   }
+  const isInUse = questions.value.some((question) => sameId(question.subTypeId, subType.subTypeId))
+    || materials.value.some((material) => sameId(material.subTypeId, subType.subTypeId));
+  if (isInUse) {
+    showNotice('Move or delete this type’s questions and materials before deleting it.', 'error');
+    return;
+  }
 
   try {
     subTypes.value = subTypes.value.filter((item) => !sameId(item.subTypeId, subType.subTypeId));
-    questions.value.forEach((question) => {
-      if (sameId(question.subTypeId, subType.subTypeId)) {
-        question.subTypeId = null;
-        markQuestionDirty(question);
-      }
-    });
     markStructureDirty('subType', subType.subTypeId);
     showNotice('Secondary type deleted.');
   } catch (error) {
@@ -4644,8 +4667,9 @@ onBeforeUnmount(() => {
 
 .notice {
   position: fixed;
-  top: 76px;
+  top: auto;
   right: 24px;
+  bottom: 24px;
   z-index: 1200;
   display: flex;
   align-items: flex-start;
@@ -6765,7 +6789,6 @@ select.form-input {
 
 @media (max-width: 560px) {
   .notice {
-    top: auto;
     right: 12px;
     bottom: 12px;
     width: min(360px, calc(100vw - 24px));
@@ -6788,6 +6811,19 @@ select.form-input {
 
   .scoring-rule-field select { min-width: 0; width: 100%; }
   .edit-header__actions > * { flex: 1 1 0; }
+  .question-navigation {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+  .question-navigation > .app-button {
+    padding-inline: 8px;
+    white-space: nowrap;
+  }
+  .question-navigation .delete-question-button {
+    grid-column: 1 / -1;
+    width: 100%;
+    white-space: nowrap;
+  }
   .import-questions-header { padding: 16px; }
   .import-source-toolbar { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 10px; }
   .import-questions-filters { padding: 0 16px 12px; }

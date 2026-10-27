@@ -106,6 +106,41 @@ async function main() {
       await row.waitFor();
     }
     await admin.screenshot({ path: `/tmp/shsat-historical-exams-desktop-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await historicalCard.getByRole('combobox', { name: 'Historical rows per page' }).selectOption('5');
+    const paginationLayout = await historicalCard.locator('.table-pagination').evaluate(pagination => {
+      const actions = pagination.querySelector('.table-pagination__actions');
+      const bounds = element => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      };
+      return {
+        card: bounds(pagination.closest('.app-card')),
+        actions: bounds(actions),
+        children: [...actions.children].map(bounds),
+      };
+    });
+    assert.ok(paginationLayout.actions.right <= paginationLayout.card.right,
+      'historical pagination controls stay inside the card on mobile');
+    assert.ok(paginationLayout.children.every(child => child.right <= paginationLayout.actions.right),
+      'pagination labels and buttons do not overflow their action row');
+    await historicalCard.locator('.table-pagination').scrollIntoViewIfNeeded();
+    await admin.screenshot({ path: `/tmp/shsat-historical-pagination-mobile-${stamp}.png` });
+    const historicalActions = row.getByRole('button', { name: `Actions for ${examTitle}` });
+    await historicalActions.waitFor();
+    await historicalActions.click();
+    const historicalMenuItems = admin.getByRole('menuitem');
+    const historicalActionLabels = await historicalMenuItems.allTextContents();
+    assert.deepEqual(historicalActionLabels.map(label => label.trim()), ['Monitor', 'Delete'],
+      'ended exam actions contain Monitor followed by Delete, with no publish action');
+    await admin.screenshot({ path: `/tmp/shsat-historical-actions-mobile-${stamp}.png` });
+    await admin.keyboard.press('Escape');
+    await historicalMenuItems.first().waitFor({ state: 'detached' });
+    await historicalActions.click();
+    await historicalMenuItems.first().waitFor();
+    await historicalCard.locator('h2').click();
+    await historicalMenuItems.first().waitFor({ state: 'detached' });
+    await admin.setViewportSize({ width: 1440, height: 900 });
     await row.getByRole('button', { name: `Actions for ${examTitle}` }).click();
     await admin.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     const dialog = admin.getByRole('dialog', { name: 'Delete this exam release?' });
@@ -164,12 +199,14 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['closed release enters Historical Exams as Unpublished', 'Historical Exams collapse/expand and pagination',
-        'deletion warning identifies all cascaded data', '5-second confirmation cooldown', 'cancel preserves exam and review task',
+        'ended release action menu closes on Escape/outside click and keeps Delete last', 'deletion warning identifies all cascaded data',
+        '5-second confirmation cooldown', 'cancel preserves exam and review task',
         'confirmed deletion removes release, attempt and review task', 'class and shared student account remain intact',
         'desktop and 390px confirmation layout'],
       examId: release.summary.id, attemptId, taskId: review.taskId, mobileSize, pageErrors: pageErrors.length,
       screenshots: [`/tmp/shsat-historical-exams-desktop-${stamp}.png`, `/tmp/shsat-historical-delete-confirm-${stamp}.png`,
-        `/tmp/shsat-historical-delete-confirm-mobile-${stamp}.png`, `/tmp/shsat-historical-exams-page-2-${stamp}.png`],
+        `/tmp/shsat-historical-delete-confirm-mobile-${stamp}.png`, `/tmp/shsat-historical-actions-mobile-${stamp}.png`,
+        `/tmp/shsat-historical-pagination-mobile-${stamp}.png`, `/tmp/shsat-historical-exams-page-2-${stamp}.png`],
     }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});

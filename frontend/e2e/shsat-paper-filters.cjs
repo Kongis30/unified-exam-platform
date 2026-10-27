@@ -74,6 +74,23 @@ async function main() {
     const displayedSearchResults = await filteredFolder.locator('tbody tr td:first-child strong').allTextContents();
     assert.deepEqual(displayedSearchResults, [onlinePaper.title], 'folder, online status, and name filters should combine');
 
+    const filteredRow = filteredFolder.locator('.paper-table tbody tr').filter({ hasText: onlinePaper.title });
+    const rowValues = (await filteredRow.locator('td').allTextContents()).map(value => value.replace(/\s+/g, ' ').trim());
+    assert.equal(rowValues[0], onlinePaper.title, 'the first column shows the paper name only');
+    assert.equal(rowValues[1], String(onlinePaper.questionCount || 0), 'the list question count matches the paper summary API');
+    assert.equal(rowValues[2], `${Math.round((onlinePaper.defaultDurationSeconds || 0) / 60) || '-'} min`,
+      'the list duration matches the paper summary API');
+    assert.equal(rowValues[3], formatNumber(onlinePaper.totalScore), 'the list score matches the paper summary API');
+    assert.equal(rowValues[4], `${onlinePaper.status || '-'} / Online`, 'the list status reflects the READY/Online paper state');
+
+    await filteredRow.getByRole('button', { name: 'Paper actions', exact: true }).click();
+    await page.getByRole('menu').getByRole('button', { name: 'Detail', exact: true }).click();
+    const detailDialog = page.locator('.modal-card--wide');
+    await detailDialog.getByRole('heading', { name: onlinePaper.title, exact: true }).waitFor();
+    await detailDialog.getByText(String(onlinePaper.questionCount || 0), { exact: true }).waitFor();
+    await detailDialog.getByRole('button', { name: 'Close paper details dialog' }).click();
+    await detailDialog.waitFor({ state: 'detached' });
+
     await search.fill('zz_no_matching_paper_927');
     await applySearch();
     await page.getByText('No papers found. Try changing or clearing the filters.', { exact: true }).waitFor();
@@ -102,6 +119,7 @@ async function main() {
       result: 'PASS',
       checks: [
         'folder filter', 'Online filter', 'Offline filter', 'combined folder/status/name search',
+        'filtered paper summary columns match API', 'filtered row action menu opens detail for the correct paper',
         'no-results state', 'clear all filters', 'reload restores full list',
       ],
       matchedPapers: { online: expectedPapers.filter(paper => paper.status === 'READY').length,
@@ -111,6 +129,11 @@ async function main() {
   } finally {
     await browser.close();
   }
+}
+
+function formatNumber(value) {
+  const number = Number(value || 0);
+  return number.toFixed(1).replace(/\.0$/, '');
 }
 
 async function signIn(page) {

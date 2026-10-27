@@ -133,55 +133,58 @@ function updateTextCell(rowId, columnId, value) {
 </script>
 
 <template>
-  <div class="structured-answer table-grid-answer">
-    <table>
-      <thead>
-        <tr>
-          <th scope="col">Item</th>
-          <th v-for="column in columns" :key="column.id" scope="col">
-            {{ column.label }}
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in rows" :key="row.id">
-          <th class="table-grid-answer__row-label" scope="row">{{ row.label }}</th>
-          <td
-            v-for="column in columns"
-            :key="column.id"
-            class="table-grid-answer__cell"
-            :class="{
-              selected: !isTextMode && isSelected(row.id, column.id),
-              correct: answersVisible && isCorrect(row.id, column.id),
-            }"
-          >
-            <input
-              v-if="isTextMode"
-              class="form-input table-grid-answer__text-input"
-              type="text"
-              :value="textCellValue(row.id, column.id)"
-              :disabled="readonly"
-              :aria-label="`${row.label}: ${column.label}`"
-              placeholder="Type here"
-              @input="updateTextCell(row.id, column.id, $event.target.value)"
-            />
-            <label v-else class="table-grid-answer__choice">
+  <div class="structured-answer table-grid-answer" :class="{ 'has-many-columns': columns.length > 2 }">
+    <div class="table-grid-answer__table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Item</th>
+            <th v-for="column in columns" :key="column.id" scope="col">
+              {{ column.label }}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in rows" :key="row.id">
+            <th class="table-grid-answer__row-label" scope="row">{{ row.label }}</th>
+            <td
+              v-for="column in columns"
+              :key="column.id"
+              class="table-grid-answer__cell"
+              :class="{
+                selected: !isTextMode && isSelected(row.id, column.id),
+                correct: answersVisible && isCorrect(row.id, column.id),
+              }"
+            >
               <input
-                class="table-grid-answer__input"
-                :type="isMultiMode ? 'checkbox' : 'radio'"
-                :name="`question-${question.questionNumber}-row-${row.id}`"
-                :value="column.id"
-                :checked="isSelected(row.id, column.id)"
+                v-if="isTextMode"
+                class="form-input table-grid-answer__text-input"
+                type="text"
+                :value="textCellValue(row.id, column.id)"
                 :disabled="readonly"
                 :aria-label="`${row.label}: ${column.label}`"
-                @change="updateAnswer(row.id, column.id, $event.target.checked)"
+                placeholder="Type here"
+                @input="updateTextCell(row.id, column.id, $event.target.value)"
               />
-              <span class="table-grid-answer__control" :class="{ 'table-grid-answer__control--multi': isMultiMode }" aria-hidden="true"></span>
-            </label>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+              <label v-else class="table-grid-answer__choice">
+                <input
+                  class="table-grid-answer__input"
+                  :type="isMultiMode ? 'checkbox' : 'radio'"
+                  :name="`question-${question.questionNumber}-row-${row.id}`"
+                  :value="column.id"
+                  :checked="isSelected(row.id, column.id)"
+                  :disabled="readonly"
+                  :aria-label="`${row.label}: ${column.label}`"
+                  @change="updateAnswer(row.id, column.id, $event.target.checked)"
+                />
+                <span class="table-grid-answer__control" :class="{ 'table-grid-answer__control--multi': isMultiMode }" aria-hidden="true"></span>
+              </label>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p v-if="columns.length > 2" class="table-grid-answer__scroll-hint">On narrow screens, scroll the table horizontally to see every choice.</p>
     <p v-if="!readonly" class="fill-blank-hint">
       {{ isTextMode ? 'Enter the requested value for each cell.' : (isMultiMode ? 'Select all correct options for each row.' : 'Select one option for each row.') }}
     </p>
@@ -193,9 +196,13 @@ function updateTextCell(rowId, columnId, value) {
 
 <style scoped>
 .structured-answer.table-grid-answer {
-  overflow-x: auto;
   padding: 10px;
   border-radius: 14px;
+}
+
+.table-grid-answer__table {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .table-grid-answer table {
@@ -314,5 +321,39 @@ function updateTextCell(rowId, columnId, value) {
   padding: 8px 10px;
   color: var(--color-success);
   font-size: calc(13px * var(--exam-font-scale));
+}
+
+.table-grid-answer__scroll-hint {
+  margin: 8px 0 0;
+  color: var(--color-text-muted);
+  font-size: calc(12px * var(--exam-font-scale));
+}
+
+@media (max-width: 600px) {
+  .table-grid-answer table {
+    min-width: 100%;
+    table-layout: fixed;
+  }
+
+  .table-grid-answer thead th:first-child,
+  .table-grid-answer__row-label {
+    width: 38%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .table-grid-answer__cell {
+    min-width: 0;
+    padding: 6px 3px;
+  }
+
+  .table-grid-answer__text-input {
+    min-width: 0;
+  }
+
+  .table-grid-answer.has-many-columns table {
+    min-width: 440px;
+    table-layout: auto;
+  }
 }
 </style>

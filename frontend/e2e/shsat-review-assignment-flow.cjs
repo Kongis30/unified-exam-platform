@@ -232,9 +232,30 @@ async function main() {
     assert.equal(await dashboardTask.count(), 0, 'the collapsed dashboard hides its review task cards after refresh');
     await dashboardReviewCard.getByRole('button', { name: 'Expand assigned review' }).click();
     await dashboardTask.waitFor();
+    let failProgressLoadOnce = true;
+    const progressUrl = `**/api/admin/wrong-answer-tasks/${taskId}`;
+    await admin.route(progressUrl, async route => {
+      if (route.request().method() === 'GET' && failProgressLoadOnce) {
+        failProgressLoadOnce = false;
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'Progress could not be loaded. Please retry.' }) });
+        return;
+      }
+      await route.continue();
+    });
     await dashboardTask.getByRole('button', { name: 'View Progress', exact: true }).click();
     await admin.waitForURL(url => url.pathname.endsWith(`/wrong-answer-tasks/${taskId}`));
+    await admin.getByText('Progress could not be loaded. Please retry.', { exact: true }).waitFor();
+    await admin.screenshot({ path: `/tmp/shsat-review-progress-retry-error-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const progressErrorMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(progressErrorMobileSize.page <= progressErrorMobileSize.viewport,
+      'the review progress error state fits a 390px viewport');
+    await admin.screenshot({ path: `/tmp/shsat-review-progress-retry-error-mobile-${stamp}.png` });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await admin.getByRole('button', { name: 'Retry', exact: true }).click();
     await admin.getByRole('heading', { name: taskTitle, exact: true }).waitFor();
+    await admin.locator('.task-table tbody tr').filter({ hasText: `Review Student ${displayStamp}` }).waitFor();
+    await admin.unroute(progressUrl);
     await admin.getByRole('button', { name: 'Back to Review Assignments', exact: true }).click();
     await admin.waitForURL(url => url.pathname.endsWith('/exam-types/SHSAT/admin')
       && url.searchParams.get('tab') === 'wrong-answer-tasks');
@@ -488,11 +509,99 @@ async function main() {
     assert.equal(await student.getByRole('tab', { name: /Review Task History/ }).getAttribute('aria-selected'), 'true',
       'returning from the report preserves the selected history tab');
     await student.unroute('**/api/student/wrong-answer-tasks');
+    await api(admin, `/api/admin/classes/${classId}/students/${userId}`, 'DELETE');
+    await admin.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    await admin.getByRole('tab', { name: 'Classes', exact: true }).click();
+    await admin.getByRole('button', { name: 'Refresh classes' }).click();
+    const reviewClassCard = admin.locator('.class-card').filter({ hasText: className });
+    assert.equal(await reviewClassCard.getByRole('button', { name: 'Delete', exact: true }).count(), 0,
+      'the UI hides class deletion while review assignments still reference the class');
+    await reviewClassCard.scrollIntoViewIfNeeded();
+    const reviewClassDesktop = `/tmp/shsat-review-class-linked-desktop-${stamp}.png`;
+    await admin.screenshot({ path: reviewClassDesktop });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await reviewClassCard.scrollIntoViewIfNeeded();
+    await admin.waitForTimeout(200);
+    const reviewClassMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(reviewClassMobileSize.page <= reviewClassMobileSize.viewport,
+      'the class list fits a 390px viewport while its review task prevents deletion');
+    const reviewClassMobile = `/tmp/shsat-review-class-linked-mobile-${stamp}.png`;
+    await admin.screenshot({ path: reviewClassMobile });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    const classDeleteConflict = await api(admin, `/api/admin/classes/${classId}`, 'DELETE')
+      .then(() => '', error => error.message);
+    assert.match(classDeleteConflict, /409.*Reassign or remove this class's SHSAT review tasks/,
+      'the API explains why a class with review assignments cannot be deleted');
+    const sourceExamId = examId;
+    const sourceTaskIds = (await api(admin, '/api/admin/wrong-answer-tasks'))
+      .filter(task => task.examId === sourceExamId)
+      .map(task => Number(task.taskId));
+    assert.ok(sourceTaskIds.includes(taskId), 'the source exam has its completed review task before deletion');
+    await api(admin, `/api/admin/exams/${sourceExamId}`, 'DELETE');
+    examId = undefined;
+    const tasksAfterSourceDelete = await api(admin, '/api/admin/wrong-answer-tasks');
+    assert.ok(sourceTaskIds.every(id => !tasksAfterSourceDelete.some(task => Number(task.taskId) === id)),
+      'deleting a source exam removes its associated review assignments');
+    const studentTasksAfterSourceDelete = await api(student, '/api/student/wrong-answer-tasks');
+    assert.ok(studentTasksAfterSourceDelete.every(task => task.examId !== sourceExamId),
+      'students no longer see review assignments for a deleted exam');
+    await student.reload();
+    assert.equal(await student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle }).count(), 0,
+      'refreshing the student workspace removes the deleted source exam task');
+    const deletedSourceTaskDesktop = `/tmp/shsat-review-source-delete-${stamp}.png`;
+    await student.screenshot({ path: deletedSourceTaskDesktop });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const deletedSourceTaskMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(deletedSourceTaskMobileSize.page <= deletedSourceTaskMobileSize.viewport,
+      'the student workspace remains within the viewport after source task removal');
+    const deletedSourceTaskMobile = `/tmp/shsat-review-source-delete-mobile-${stamp}.png`;
+    await student.screenshot({ path: deletedSourceTaskMobile });
+    const deletedAttemptReportError = await api(student, `/api/student/attempts/${practiceAttemptId}/report`)
+      .then(() => '', error => error.message);
+    assert.match(deletedAttemptReportError, /404/, 'attempt reports tied to a deleted source exam are no longer accessible');
+    await admin.getByRole('button', { name: 'Refresh classes' }).click();
+    const deletableReviewClass = admin.locator('.class-card').filter({ hasText: className });
+    await deletableReviewClass.getByRole('button', { name: 'Delete', exact: true }).click();
+    const deleteClassAfterCleanup = admin.getByRole('dialog', { name: 'Delete empty class?' });
+    let simulatedDeleteConflict = false;
+    const deleteClassUrl = `**/api/admin/classes/${classId}`;
+    await admin.route(deleteClassUrl, async route => {
+      if (route.request().method() === 'DELETE' && !simulatedDeleteConflict) {
+        simulatedDeleteConflict = true;
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ detail: 'This class changed. Refresh and try again.' }) });
+        return;
+      }
+      await route.continue();
+    });
+    await deleteClassAfterCleanup.getByRole('button', { name: 'Delete Class', exact: true }).click();
+    await deleteClassAfterCleanup.getByRole('alert').getByText('This class changed. Refresh and try again.', { exact: true }).waitFor();
+    const deleteClassConflictDesktop = `/tmp/shsat-class-delete-conflict-${stamp}.png`;
+    await admin.screenshot({ path: deleteClassConflictDesktop });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const deleteClassConflictMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(deleteClassConflictMobileSize.page <= deleteClassConflictMobileSize.viewport,
+      'the class delete conflict message fits a 390px viewport');
+    const deleteClassConflictMobile = `/tmp/shsat-class-delete-conflict-mobile-${stamp}.png`;
+    await admin.screenshot({ path: deleteClassConflictMobile });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await admin.unroute(deleteClassUrl);
+    await deleteClassAfterCleanup.getByRole('button', { name: 'Delete Class', exact: true }).click();
+    await admin.getByText('Class Deleted', { exact: true }).waitFor();
+    const deletedClassError = await api(admin, `/api/admin/classes/${classId}`)
+      .then(() => '', error => error.message);
+    assert.match(deletedClassError, /404/, 'the class can be deleted after its review assignments are removed');
     await student.reload();
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'teacher views task progress and ends the assignment', 'eligible question snapshot', 'admin Start Exam launches SHSAT practice, hides platform nav, and returns to dashboard', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment'],
+      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'teacher views task progress and ends the assignment', 'eligible question snapshot', 'admin Start Exam launches SHSAT practice, hides platform nav, and returns to dashboard', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment', 'class deletion is hidden while review tasks are linked, API explains the conflict, and the class can be deleted after source cleanup', 'deleting the source exam removes student review tasks and reports'],
+      sourceTaskIds,
+      deletedSourceTaskMobileSize,
+      reviewClassMobileSize,
+      progressErrorMobileSize,
+      deleteClassConflictMobileSize,
+      screenshots: [reviewClassDesktop, reviewClassMobile, deleteClassConflictDesktop, deleteClassConflictMobile, deletedSourceTaskDesktop, deletedSourceTaskMobile,
+        `/tmp/shsat-review-progress-retry-error-${stamp}.png`, `/tmp/shsat-review-progress-retry-error-mobile-${stamp}.png`],
       assignedQuestions: details.assignments[0].totalQuestions,
       mobileSize,
       modalScroll,

@@ -348,6 +348,7 @@ function formatDateTime(value) {
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 
@@ -583,7 +584,7 @@ onBeforeUnmount(() => {
             <p class="question-detail-eyebrow">Question {{ selectedQuestionNumber }}</p>
             <h2 id="question-detail-title">Question details</h2>
           </div>
-          <button type="button" class="question-detail-close" aria-label="Close question details" @click="closeQuestionDetail">×</button>
+          <button v-if="!previewImageUrl" type="button" class="question-detail-close" aria-label="Close question details" @click="closeQuestionDetail">×</button>
         </header>
 
         <div v-if="questionDetailLoading" class="question-detail-state">Loading question...</div>

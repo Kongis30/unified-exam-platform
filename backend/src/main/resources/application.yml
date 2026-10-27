@@ -20,6 +20,10 @@ spring:
 
 server:
   port: ${PORT:8080}
+  servlet:
+    session:
+      # 与独立 SHSAT 系统的 24 小时登录凭证保持一致，并允许部署环境显式覆盖。
+      timeout: ${SESSION_TIMEOUT:24h}
 
 logging:
   level:
@@ -30,3 +34,4 @@ platform:
     sat-import-materials-directory: ${SAT_IMPORT_MATERIALS_DIRECTORY:uploads/sat-import/materials}
   session:
     cookie-secure: ${SESSION_COOKIE_SECURE:false}
+    max-age: ${SESSION_MAX_AGE:24h}

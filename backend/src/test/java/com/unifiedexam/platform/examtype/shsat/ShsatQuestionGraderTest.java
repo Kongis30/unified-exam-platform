@@ -14,6 +14,14 @@ class ShsatQuestionGraderTest {
     private final ShsatQuestionGrader grader = new ShsatQuestionGrader();
 
     @Test
+    void treatsEmptyStructuredValuesAsUnanswered() throws Exception {
+        assertFalse(grader.hasMeaningfulAnswer(json("{}")));
+        assertFalse(grader.hasMeaningfulAnswer(json("{\"answers\":[\"\",null]}")));
+        assertTrue(grader.hasMeaningfulAnswer(json("{\"answers\":[\"A\"]}")));
+        assertTrue(grader.hasMeaningfulAnswer(json("{\"answers\":[false]}")));
+    }
+
+    @Test
     void gradesSingleAndMultipleSelectionAsExactSets() throws Exception {
         assertTrue(grade("MULTIPLE_CHOICE", "{\"answers\":[\"B\"]}", "{\"value\":\"b\"}"));
         assertFalse(grade("MULTI_SELECT", "{\"answers\":[\"A\",\"C\"]}", "{\"answers\":[\"A\"]}"));

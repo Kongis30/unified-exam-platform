@@ -63,8 +63,23 @@ async function main() {
 
     await login(student, username, password);
     await installFullscreenMock(student);
-    const first = await runAttempt(student, examId, 'ELA', { ELA: 'A', MATH: 'A' });
-    const second = await runAttempt(student, examId, 'MATH', { ELA: 'B', MATH: 'B' });
+    const first = await runAttempt(student, examId, 'ELA', { ELA: 'A', MATH: 'A' }, username, password);
+    assert.equal(await student.locator('.summary-field').filter({ hasText: 'Left Exam Page' })
+      .locator('.summary-field__value').innerText(), '1',
+    'the student report displays the persisted fullscreen violation count');
+    const violationReportDesktop = `/tmp/shsat-focus-violation-report-${stamp}.png`;
+    await student.locator('.result-summary-card').scrollIntoViewIfNeeded();
+    await student.screenshot({ path: violationReportDesktop });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const violationReportMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(violationReportMobileSize.page <= violationReportMobileSize.viewport,
+      'the report containing focus violations fits the mobile viewport');
+    const focusViolationField = student.locator('.summary-field').filter({ hasText: 'Left Exam Page' });
+    await focusViolationField.scrollIntoViewIfNeeded();
+    const violationReportMobile = `/tmp/shsat-focus-violation-report-mobile-${stamp}.png`;
+    await student.screenshot({ path: violationReportMobile });
+    await student.setViewportSize({ width: 1440, height: 900 });
+    const second = await runAttempt(student, examId, 'MATH', { ELA: 'B', MATH: 'B' }, username, password);
     const firstReport = await api(admin, `/api/admin/reports/attempts/${first.attemptId}/result`);
     const secondReport = await api(admin, `/api/admin/reports/attempts/${second.attemptId}/result`);
     const firstStudentReport = await api(student, `/api/student/attempts/${first.attemptId}/report`);
@@ -86,6 +101,10 @@ async function main() {
     assert.equal(firstStudentReport.correctCount, null, 'correct counts remain hidden with answer details');
     assert.equal(firstStudentReport.wrongCount, null, 'wrong counts remain hidden with answer details');
     assert.equal(firstStudentReport.accuracy, null, 'accuracy remains hidden with answer details');
+    assert.equal(firstStudentReport.focusViolationCount, 1,
+      'a fullscreen exit is recorded once and included in the submitted report');
+    assert.equal(firstReport.focusViolationCount, 1,
+      'the administrator report contains the same persisted fullscreen violation count');
     await student.screenshot({ path: `/tmp/shsat-two-section-report-${stamp}.png` });
     await student.setViewportSize({ width: 390, height: 844 });
     const mobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
@@ -95,9 +114,15 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student starts from the SHSAT workspace', 'ELA then Math order and section submit transition', 'Math then ELA order and section submit transition', 'admin scores and counts match both section attempts', 'student score/answer visibility follows exam policy', 'desktop and 390px report layout'],
+      checks: ['student starts from the SHSAT workspace', 'brief/sustained hidden-page events follow focus-warning rules; the violation count persists through section transition into both reports',
+        'an interrupted answer survives refresh, fits desktop/mobile, saves after recovery, and resumes on a second device',
+        'ELA then Math order and section submit transition', 'Math then ELA order and section submit transition',
+        'rapidly clicking the starting section creates a single attempt',
+        'admin scores and counts match both section attempts', 'student score/answer visibility follows exam policy',
+        'desktop and 390px report layout'],
       attemptIds: [first.attemptId, second.attemptId], mobileSize, pageErrors: pageErrors.length,
-      screenshots: [`/tmp/shsat-two-section-report-${stamp}.png`, `/tmp/shsat-two-section-report-mobile-${stamp}.png`],
+      screenshots: [...first.recoveryScreenshots, violationReportDesktop, violationReportMobile,
+        `/tmp/shsat-two-section-report-${stamp}.png`, `/tmp/shsat-two-section-report-mobile-${stamp}.png`],
     }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
@@ -132,18 +157,30 @@ function makePart(code, title, sortOrder, subtypeCode, displayNumber, answer, sc
   };
 }
 
-async function runAttempt(student, examId, firstSection, answers) {
+async function runAttempt(student, examId, firstSection, answers, username, password) {
+  const recoveryScreenshots = [];
   await student.goto(`${baseUrl}/student/systems/SHSAT`);
   const card = student.locator('.student-exam-list article.paper-row').filter({ hasText: 'Two Section Check' });
   await card.getByRole('button', { name: /Start exam|Retake exam/ }).click();
   await student.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}`);
   await student.locator('.exam-transition-page--pre-attempt .exam-transition-card__button').click();
   await student.getByRole('heading', { name: 'Choose Starting Section', exact: true }).waitFor();
+  const startRequests = [];
+  const trackStartRequest = request => {
+    if (request.url().endsWith(`/api/student/exams/${examId}/attempts`) && request.method() === 'POST') {
+      startRequests.push(request);
+    }
+  };
+  student.on('request', trackStartRequest);
   const startRequest = student.waitForResponse(response => response.url().endsWith(`/api/student/exams/${examId}/attempts`)
     && response.request().method() === 'POST');
-  await student.getByRole('button', { name: firstSection === 'ELA' ? /ELA/ : /Math/ }).click();
+  await student.getByRole('button', { name: firstSection === 'ELA' ? /ELA/ : /Math/ })
+    .evaluate(button => { button.click(); button.click(); });
   const startResponse = await startRequest;
+  await student.waitForTimeout(100);
+  student.off('request', trackStartRequest);
   assert.equal(startResponse.status(), 200, 'the selected exam section starts successfully');
+  assert.equal(startRequests.length, 1, 'a rapid double click creates only one attempt');
   const startedAttempt = await startResponse.json();
   await student.locator('.exam-transition-page .exam-transition-card__button').click();
   try {
@@ -155,9 +192,78 @@ async function runAttempt(student, examId, firstSection, answers) {
   const attemptId = Number(startedAttempt.id || startedAttempt.attemptId);
   assert.ok(attemptId > 0, 'starting the selected section creates a student attempt');
 
+  if (firstSection === 'ELA') {
+    await installVisibilityStateMock(student);
+    await student.evaluate(() => window.__dispatchVisibilityChange('hidden'));
+    await student.waitForTimeout(150);
+    await student.evaluate(() => window.__dispatchVisibilityChange('visible'));
+    await student.waitForTimeout(1_300);
+    assert.equal(await student.locator('.focus-violation-modal').count(), 0,
+      'a brief hidden/visible transition does not create a focus violation');
+
+    const violationRequest = student.waitForResponse(response => response.url().endsWith(`/api/student/attempts/${attemptId}/focus-violations`)
+      && response.request().method() === 'POST');
+    await student.evaluate(() => window.__dispatchVisibilityChange('hidden'));
+    const violationResponse = await violationRequest;
+    assert.equal(violationResponse.status(), 200, 'a sustained hidden page records the focus violation');
+    await student.evaluate(() => window.__dispatchVisibilityChange('visible'));
+    await student.locator('.focus-violation-modal').waitFor();
+    assert.match(await student.locator('.focus-violation-modal').innerText(), /This is the 1 time/i,
+      'returning to the page shows the first violation warning');
+    await student.getByRole('button', { name: 'OK, Continue', exact: true }).click();
+    await student.locator('.focus-violation-modal').waitFor({ state: 'detached' });
+    await student.waitForFunction(() => Boolean(document.fullscreenElement), null, { timeout: 3000 });
+  }
+
   const firstStem = firstSection === 'ELA' ? 'Select the correct language answer.' : 'Select the correct math answer.';
   await answerCurrentQuestion(student, firstStem, answers[firstSection]);
-  await student.getByRole('button', { name: 'Submit Section', exact: true }).click();
+  if (firstSection === 'ELA') {
+    let failAnswerSave = true;
+    const interruptAnswerSave = async route => {
+      if (failAnswerSave && route.request().method() === 'PUT') {
+        failAnswerSave = false;
+        await route.abort('internetdisconnected');
+        return;
+      }
+      await route.continue();
+    };
+    await student.route(`**/api/student/attempts/${attemptId}/answers/**`, interruptAnswerSave);
+    const failedAnswerSave = student.waitForEvent('requestfailed', request =>
+      request.url().includes(`/api/student/attempts/${attemptId}/answers/`));
+    await student.getByRole('button', { name: 'Submit Section', exact: true }).click();
+    await failedAnswerSave;
+    await student.locator('.student-exam__alert--error').getByText(/Failed to save Question 1/).waitFor();
+    assert.equal(await student.locator('.choice-answer__option input:checked').count(), 1,
+      'the answer remains visible locally while the student is offline');
+    await student.unroute(`**/api/student/attempts/${attemptId}/answers/**`, interruptAnswerSave);
+    await student.reload();
+    await installFullscreenMock(student);
+    await student.getByRole('button', { name: 'Enter Fullscreen', exact: true }).click();
+    await continueExamDirections(student);
+    await student.locator('.question-number').filter({ hasText: 'Question 1' }).waitFor();
+    assert.equal(await student.locator('.choice-answer__option input:checked').count(), 1,
+      'the unsaved answer is restored after refreshing the page');
+    const recoveredAnswerDesktop = `/tmp/shsat-offline-answer-restored-${Date.now()}.png`;
+    recoveryScreenshots.push(recoveredAnswerDesktop);
+    await student.screenshot({ path: recoveredAnswerDesktop });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const recoveredAnswerMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(recoveredAnswerMobileSize.page <= recoveredAnswerMobileSize.viewport,
+      'the restored active exam fits a 390px viewport');
+    const recoveredAnswerMobile = `/tmp/shsat-offline-answer-restored-mobile-${Date.now()}.png`;
+    recoveryScreenshots.push(recoveredAnswerMobile);
+    await student.screenshot({ path: recoveredAnswerMobile });
+    await student.setViewportSize({ width: 1440, height: 900 });
+    const retriedAnswerSave = student.waitForResponse(response => response.url().includes(`/api/student/attempts/${attemptId}/answers/`)
+      && response.request().method() === 'PUT');
+    await student.getByRole('button', { name: 'Submit Section', exact: true }).click();
+    assert.equal((await retriedAnswerSave).status(), 200,
+      'resubmitting the section after reconnecting persists the locally retained answer');
+    await verifyCrossDeviceResume(student, examId, username, password);
+  }
+  if (firstSection !== 'ELA') {
+    await student.getByRole('button', { name: 'Submit Section', exact: true }).click();
+  }
   await student.getByRole('dialog').getByRole('button', { name: 'Submit Section', exact: true }).click();
   await student.waitForFunction(() => document.querySelector('.exam-transition-card__button'));
   await student.locator('.exam-transition-card__button').click();
@@ -169,7 +275,33 @@ async function runAttempt(student, examId, firstSection, answers) {
   await student.getByRole('dialog').getByRole('button', { name: 'Submit Exam', exact: true }).click();
   await student.waitForURL(url => url.pathname === `/student/attempts/${attemptId}/report`);
   await student.getByText('Result Summary', { exact: true }).waitFor();
-  return { attemptId };
+  return { attemptId, recoveryScreenshots };
+}
+
+// 新浏览器上下文代表另一设备；只验证服务端已保存答案可以跨会话恢复。
+async function verifyCrossDeviceResume(student, examId, username, password) {
+  const deviceContext = await student.context().browser().newContext({ viewport: { width: 1440, height: 900 } });
+  const device = await deviceContext.newPage();
+  try {
+    await login(device, username, password);
+    await installFullscreenMock(device);
+    await device.goto(`${baseUrl}/student/systems/SHSAT`);
+    const activeExam = device.locator('.student-exam-list article.paper-row').filter({ hasText: 'Two Section Check' });
+    await activeExam.getByRole('button', { name: /Continue/ }).click();
+    await device.waitForURL(url => url.pathname === `/student/shsat/exams/${examId}`);
+    await device.locator('.fullscreen-required-overlay').waitFor();
+    await device.getByRole('button', { name: 'Enter Fullscreen', exact: true }).click();
+    await device.locator('.fullscreen-required-overlay').waitFor({ state: 'detached' });
+    await continueExamDirections(device);
+    await device.locator('.question-number').filter({ hasText: 'Question 1' }).waitFor({ timeout: 6000 }).catch(async error => {
+      await device.screenshot({ path: `/tmp/shsat-cross-device-resume-failure-${Date.now()}.png`, fullPage: true });
+      throw new Error(`Cross-device resume did not reach Question 1. URL: ${device.url()} Body: ${(await device.locator('body').innerText()).slice(0, 1000)}; ${error.message}`);
+    });
+    assert.equal(await device.locator('.choice-answer__option input:checked').count(), 1,
+      'a second browser context restores the answer saved on the first device');
+  } finally {
+    await deviceContext.close();
+  }
 }
 
 async function answerCurrentQuestion(page, stem, optionKey) {
@@ -179,11 +311,25 @@ async function answerCurrentQuestion(page, stem, optionKey) {
   await page.locator('.choice-answer__option input:checked').waitFor({ state: 'attached' });
 }
 
+async function continueExamDirections(page) {
+  const questionNumber = page.locator('.question-number');
+  for (let step = 0; step < 6; step += 1) {
+    const continueButton = page.locator('.exam-transition-card__button');
+    if (await continueButton.isVisible().catch(() => false)) {
+      await continueButton.click();
+      continue;
+    }
+    if (await questionNumber.isVisible().catch(() => false)) return;
+    break;
+  }
+}
+
 async function installFullscreenMock(page) {
   await page.evaluate(() => {
     let activeElement = null;
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => activeElement });
     Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: true });
+    window.__isExamFullscreen = () => Boolean(activeElement);
     document.documentElement.requestFullscreen = async function () {
       activeElement = this;
       document.dispatchEvent(new Event('fullscreenchange'));
@@ -191,6 +337,17 @@ async function installFullscreenMock(page) {
     document.exitFullscreen = async () => {
       activeElement = null;
       document.dispatchEvent(new Event('fullscreenchange'));
+    };
+  });
+}
+
+async function installVisibilityStateMock(page) {
+  await page.evaluate(() => {
+    let visibilityState = document.visibilityState;
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibilityState });
+    window.__dispatchVisibilityChange = state => {
+      visibilityState = state;
+      document.dispatchEvent(new Event('visibilitychange'));
     };
   });
 }

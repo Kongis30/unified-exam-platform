@@ -305,6 +305,12 @@ export function saveStudentAnswer(attemptId, paperItemId, answer, timeSpentSecon
   })
 }
 
+export function setStudentBookmark(attemptId, paperItemId, marked) {
+  return apiRequest(`/api/student/attempts/${attemptId}/bookmarks/${paperItemId}`, {
+    method: 'PUT', body: JSON.stringify({ marked }),
+  })
+}
+
 export function submitStudentAttempt(attemptId) {
   return apiRequest(`/api/student/attempts/${attemptId}/submit`, { method: 'POST' })
 }

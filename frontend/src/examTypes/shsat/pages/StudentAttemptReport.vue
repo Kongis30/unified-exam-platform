@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router';
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
 import MainLayout from '@shsat/layouts/MainLayout.vue';
-import { getQuestionTypeDefinition } from '@shsat/questionTypes';
+import { getQuestionTypeDefinition, getQuestionTypeLabel } from '@shsat/questionTypes';
 import { normalizeQuestionType, parseJson } from '@shsat/questionTypes/utils';
 import { adminApi } from '@shsat/admin/services/adminApi';
 import { studentApi } from '@shsat/admin/services/studentApi';
@@ -648,6 +648,7 @@ function formatDateTime(value) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 
@@ -1023,12 +1024,7 @@ function prettifyQuestionTypeLabel(questionType) {
 }
 
 function formatQuestionTypeLabel(questionType) {
-  const definition = getQuestionTypeDefinition(questionType);
-  const label = String(definition?.label || questionType || '').trim();
-  if (!label) {
-    return 'Question';
-  }
-  return /^[A-Z0-9_]+$/.test(label) ? prettifyQuestionTypeLabel(label) : label;
+  return getQuestionTypeLabel(questionType);
 }
 
 function formatAnswerValue(value, emptyText = 'Not answered') {
@@ -1268,7 +1264,8 @@ onMounted(loadReport);
               </div>
 
               <p v-if="knowledgeBreakdown.unlabeledTotal > 0" class="analysis-muted">
-                {{ knowledgeBreakdown.unlabeledTotal }} questions do not have a knowledge tag yet.
+                {{ knowledgeBreakdown.unlabeledTotal }} question{{ knowledgeBreakdown.unlabeledTotal === 1 ? '' : 's' }}
+                {{ knowledgeBreakdown.unlabeledTotal === 1 ? 'does' : 'do' }} not have a knowledge tag yet.
               </p>
             </div>
           </AppCard>

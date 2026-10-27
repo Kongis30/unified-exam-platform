@@ -61,15 +61,25 @@ async function main() {
     examIds.push(available.id);
     const retake = await createPublishedExam(admin, paper.id, eligible.id, 'Retake', -5, 3);
     examIds.push(retake.id);
+    const closingExam = await createPublishedExam(admin, paper.id, eligible.id, 'Closing Soon', -5, 1, 5 * 60_000);
+    examIds.push(closingExam.id);
 
     await login(student, eligibleUsername, password);
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     await student.getByRole('heading', { name: 'SHSAT', exact: true }).waitFor();
+    await student.reload();
+    await student.getByRole('heading', { name: 'SHSAT', exact: true }).waitFor();
     const rows = student.locator('.student-exam-list .paper-row');
     const upcomingRow = rows.filter({ hasText: upcoming.title });
     const availableRow = rows.filter({ hasText: available.title });
+    const closingRow = rows.filter({ hasText: closingExam.title });
     await upcomingRow.waitFor();
     await availableRow.waitFor();
+    await closingRow.getByText('Available', { exact: true }).waitFor();
+    const initialClosingExam = (await api(student, '/api/student/exams'))
+      .find(exam => Number(exam.examId || exam.id) === closingExam.id);
+    assert.equal(await closingRow.getByRole('button', { name: /^Start exam/ }).count(), 1,
+      `a newly available exam must expose Start exam; api=${JSON.stringify(initialClosingExam)}, card=${await closingRow.innerText()}`);
 
     assert.match(await upcomingRow.innerText(), /Upcoming/);
     assert.equal(await upcomingRow.getByRole('button', { name: 'Start exam' }).count(), 0,
@@ -103,6 +113,9 @@ async function main() {
       'student history exposes the expected attempts for this exam');
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     const retakeCard = student.locator('.student-exam-list article.paper-row').filter({ hasText: retake.title });
+    await retakeCard.getByText('Submitted', { exact: true }).waitFor();
+    assert.equal(await retakeCard.getByRole('button', { name: /^Start exam/ }).count(), 0,
+      'the exam cannot be started after all allowed attempts are used');
     const viewAttemptButton = retakeCard.getByRole('button', { name: 'View attempt', exact: true });
     await viewAttemptButton.waitFor();
     await viewAttemptButton.click();
@@ -185,6 +198,21 @@ async function main() {
     assert.equal(returnedHistoryPosition.scrollY, historyScrollY,
       `returning from a report preserves the history list position (${JSON.stringify({ historyScrollY, historyPageBeforeReport, ...returnedHistoryPosition })})`);
 
+    await outsider.goto(`${baseUrl}/login`);
+    await outsider.getByLabel('Username').fill('');
+    await outsider.getByLabel('Password').fill('');
+    await outsider.locator('button[type="submit"]').click();
+    await outsider.getByText('Please enter your username.', { exact: true }).waitFor();
+    await outsider.getByText('Please enter your password.', { exact: true }).waitFor();
+    await outsider.getByLabel('Username').fill(outsiderUsername);
+    await outsider.getByLabel('Password').fill(`${password}-wrong`);
+    await outsider.locator('button[type="submit"]').click();
+    await outsider.getByText('Invalid username or password.', { exact: true }).waitFor();
+    await api(admin, `/api/admin/users/${ineligible.id}/status`, 'PATCH', { status: 'DISABLED' });
+    await outsider.getByLabel('Password').fill(password);
+    await outsider.locator('button[type="submit"]').click();
+    await outsider.getByText('Invalid username or password.', { exact: true }).waitFor();
+    await api(admin, `/api/admin/users/${ineligible.id}/status`, 'PATCH', { status: 'ACTIVE' });
     await login(outsider, outsiderUsername, password);
     const foreignReportStatus = await outsider.evaluate(async attemptId =>
       (await fetch(`/api/student/attempts/${attemptId}/report`)).status, retakeAttempts[2]);
@@ -196,6 +224,25 @@ async function main() {
       'a student outside the target audience cannot see an upcoming release');
     assert.equal(await outsider.getByText(available.title, { exact: true }).count(), 0,
       'a student outside the target audience cannot see an available release');
+
+    await student.addInitScript(endedAt => { Date.now = () => endedAt; }, Date.parse(closingExam.closesAt) + 1);
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    const expiredRow = student.locator('.student-exam-list article.paper-row').filter({ hasText: closingExam.title });
+    await expiredRow.getByText('Closed', { exact: true }).waitFor();
+    assert.ok(await expiredRow.locator('.status-pill.is-closed').isVisible(),
+      'the closed state uses a neutral status style rather than the available green style');
+    assert.equal(await expiredRow.getByRole('button', { name: /^Start exam/ }).count(), 0,
+      'a closed exam cannot be started after its availability window ends');
+    assert.equal(await api(student, '/api/student/exams').then(exams =>
+      exams.some(exam => Number(exam.examId || exam.id) === closingExam.id)), true,
+    'the student can still see the closed release and its final status');
+    await student.screenshot({ path: `/tmp/shsat-student-exam-closed-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const closedMobileSize = await student.evaluate(() => ({ pageWidth: document.documentElement.scrollWidth, viewportWidth: innerWidth }));
+    assert.ok(closedMobileSize.pageWidth <= closedMobileSize.viewportWidth, 'the closed exam card fits the mobile viewport');
+    await expiredRow.getByText('Closed', { exact: true }).waitFor();
+    await expiredRow.scrollIntoViewIfNeeded();
+    await student.screenshot({ path: `/tmp/shsat-student-exam-closed-mobile-${stamp}.png`, fullPage: true });
     assert.deepEqual(pageErrors, []);
 
     console.log(JSON.stringify({
@@ -204,10 +251,12 @@ async function main() {
         'target eligibility isolation', 'View attempt opens the latest submitted read-only attempt',
         'repeated attempts and latest-first history',
         'history refresh, report route, tab/scroll return, and 390px report layout',
-        'student report access remains private', '390px layout'],
+        'required login fields, invalid password, disabled account and refresh session',
+        'student report access remains private', 'availability closure disables Start exam', '390px layout'],
       mobileSize,
       historyMobileSize,
       historyReportMobileSize,
+      closedMobileSize,
       pageErrors: pageErrors.length,
     }));
   } finally {
@@ -251,13 +300,14 @@ async function api(page, path, method = 'GET', body) {
   return response.text ? JSON.parse(response.text) : null;
 }
 
-async function createPublishedExam(admin, paperId, studentId, state, startOffsetMinutes, attemptLimit = 1) {
+async function createPublishedExam(admin, paperId, studentId, state, startOffsetMinutes, attemptLimit = 1,
+                                   closesInMilliseconds = 45 * 60_000) {
   const now = Date.now();
   const created = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
     title: `SHSAT ${state} state ${Date.now()}`,
     description: 'Temporary student status verification',
     opensAt: new Date(now + startOffsetMinutes * 60_000).toISOString(),
-    closesAt: new Date(now + 45 * 60_000).toISOString(),
+    closesAt: new Date(now + closesInMilliseconds).toISOString(),
     durationSeconds: 10_800,
     attemptLimit,
     targetScope: 'SELECTED',
@@ -268,7 +318,7 @@ async function createPublishedExam(admin, paperId, studentId, state, startOffset
     studentUserIds: [studentId],
   });
   await api(admin, `/api/admin/exams/${examId}/publish`, 'POST');
-  return { id: examId, title: created.summary.title };
+  return { id: examId, title: created.summary.title, closesAt: created.summary.closesAt };
 }
 
 main().catch(error => {

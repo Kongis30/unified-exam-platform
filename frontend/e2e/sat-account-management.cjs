@@ -40,6 +40,20 @@ async function main() {
     await admin.goto(`${baseUrl}/users`);
     await admin.getByRole('heading', { name: 'Account management' }).waitFor();
 
+    const loginProbeContext = await browser.newContext();
+    const loginProbe = await loginProbeContext.newPage();
+    await loginProbe.goto(`${baseUrl}/login`);
+    await loginProbe.getByLabel('Username').fill('');
+    await loginProbe.getByLabel('Password').fill('');
+    await loginProbe.locator('button[type="submit"]').click();
+    await loginProbe.getByText('Please enter your username.', { exact: true }).waitFor();
+    await loginProbe.getByText('Please enter your password.', { exact: true }).waitFor();
+    await loginProbe.getByLabel('Username').fill(adminUsername);
+    await loginProbe.getByLabel('Password').fill('invalid-login-probe');
+    await loginProbe.locator('button[type="submit"]').click();
+    await loginProbe.getByText('Invalid username or password.', { exact: true }).waitFor();
+    await loginProbeContext.close();
+
     await admin.getByRole('button', { name: 'Create account', exact: true }).click();
     const nameInput = admin.locator('input[autocomplete="name"]');
     const usernameInput = admin.locator('input[autocomplete="username"]');
@@ -140,7 +154,7 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['create with editable defaults and optional details', 'alphabetical order, search and role filter',
+      checks: ['required/invalid login validation', 'create with editable defaults and optional details', 'alphabetical order, search and role filter',
         'change role', 'reset password, invalid-password message, session restore and sign out',
         'disabled-account login rejection and re-enable', 'five-second delete confirmation'],
       screenshot: '/tmp/sat-account-management-ui.png',

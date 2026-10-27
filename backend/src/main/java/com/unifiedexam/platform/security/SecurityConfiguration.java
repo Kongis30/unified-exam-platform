@@ -24,6 +24,8 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 import java.util.Map;
+import java.time.Clock;
+import java.time.Duration;
 
 @Configuration
 public class SecurityConfiguration {
@@ -58,6 +60,7 @@ public class SecurityConfiguration {
                                              DaoAuthenticationProvider authenticationProvider,
                                              PlatformUserDetailsService userDetailsService,
                                              @Value("${platform.session.cookie-secure:false}") boolean secureCookie,
+                                             @Value("${platform.session.max-age:24h}") Duration sessionMaxAge,
                                              ObjectMapper objectMapper) throws Exception {
         CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookieCustomizer(cookie -> cookie.secure(secureCookie).path("/"));
@@ -68,6 +71,7 @@ public class SecurityConfiguration {
             .securityContext(context -> context.securityContextRepository(contextRepository))
             .sessionManagement(session -> session.sessionFixation(fixation -> fixation.migrateSession()))
             .addFilterAfter(new AccountStatusFilter(userDetailsService), SecurityContextHolderFilter.class)
+            .addFilterAfter(new AuthenticatedSessionExpiryFilter(sessionMaxAge, Clock.systemUTC()), AccountStatusFilter.class)
             .authenticationProvider(authenticationProvider)
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/health", "/api/auth/csrf", "/api/auth/login", "/api/exam-types",

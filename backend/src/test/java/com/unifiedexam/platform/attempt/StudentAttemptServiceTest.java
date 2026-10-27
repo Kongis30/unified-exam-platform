@@ -2,6 +2,7 @@ package com.unifiedexam.platform.attempt;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.unifiedexam.platform.examtype.ExamTypeRegistry;
+import com.unifiedexam.platform.examtype.shsat.ShsatScoreScaleService;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,7 +37,7 @@ class StudentAttemptServiceTest {
     @Test
     void expiresTimedOutAttemptBeforeItCanBeResumed() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        StudentAttemptService service = new StudentAttemptService(jdbc, mock(ExamTypeRegistry.class), new ObjectMapper());
+        StudentAttemptService service = new StudentAttemptService(jdbc, mock(ExamTypeRegistry.class), new ObjectMapper(), mock(ShsatScoreScaleService.class));
         when(jdbc.update(any(String.class), any(Object[].class))).thenReturn(1);
 
         int updated = service.expireTimedOutAttempts(41, 17, false);
@@ -52,7 +53,7 @@ class StudentAttemptServiceTest {
     @Test
     void countsOnlyAttemptsThatHaveConsumedAnAttempt() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        StudentAttemptService service = new StudentAttemptService(jdbc, mock(ExamTypeRegistry.class), new ObjectMapper());
+        StudentAttemptService service = new StudentAttemptService(jdbc, mock(ExamTypeRegistry.class), new ObjectMapper(), mock(ShsatScoreScaleService.class));
         when(jdbc.queryForObject(any(String.class), eq(Integer.class), eq(41L), eq(17L))).thenReturn(1);
 
         int used = service.countUsedFormalAttempts(41, 17);

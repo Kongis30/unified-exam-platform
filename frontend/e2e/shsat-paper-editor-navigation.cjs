@@ -79,6 +79,17 @@ async function main() {
       'reopening the editor does not retain the discarded question');
     await page.getByRole('button', { name: 'Add Question', exact: true }).first().click();
     await page.locator('.stem-input').fill(questionStem);
+    await page.route(`**/api/admin/papers/${paperId}/structure`, route => route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ message: 'The paper changed before your save. Reload and try again.' }),
+    }), { times: 1 });
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('The paper changed before your save. Reload and try again.', { exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-paper-editor-save-conflict-${stamp}.png` });
+    assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 0,
+      'a rejected save does not partially persist editor changes');
+    await page.getByRole('button', { name: 'Close notification', exact: true }).click();
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
     await page.getByText('All changes saved.', { exact: true }).waitFor();
 
@@ -94,6 +105,7 @@ async function main() {
 
     const customPartCode = `CUSTOM_${stamp}`;
     const customPartName = `Custom Part ${stamp}`;
+    const updatedCustomPartName = `${customPartName} Updated`;
     await page.getByRole('button', { name: 'Parts', exact: true }).click();
     const partsModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Primary Types' }) });
     const officialEla = partsModal.locator('.structure-item').filter({ hasText: 'English Language Arts' }).first();
@@ -109,11 +121,23 @@ async function main() {
     await page.getByText('All changes saved.', { exact: true }).waitFor();
     assert.ok((await api(page, `/api/admin/papers/${paperId}`)).sections.some(section => section.sectionCode === customPartCode),
       'a custom primary type persists as a section');
+    await page.getByRole('button', { name: 'Parts', exact: true }).click();
+    const editablePart = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Primary Types' }) })
+      .locator('.structure-item').filter({ hasText: customPartName });
+    await editablePart.locator('.form-field').filter({ hasText: 'Part Name' }).locator('input').fill(updatedCustomPartName);
+    await editablePart.getByRole('button', { name: 'Update', exact: true }).click();
+    await page.getByText('Primary type updated.', { exact: true }).waitFor();
+    await page.locator('.modal-card--wide .modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    assert.ok((await api(page, `/api/admin/papers/${paperId}`)).sections.some(section => section.sectionCode === customPartCode
+      && section.title === updatedCustomPartName), 'updating a custom primary type persists its name');
 
     const savedEla = (await api(page, `/api/admin/papers/${paperId}`)).sections.find(section => section.sectionCode === 'ELA');
     assert.ok(savedEla, 'the official ELA primary type remains available');
     const customSubTypeCode = `CUSTOM_TYPE_${stamp}`;
     const customSubTypeName = `Custom Secondary ${stamp}`;
+    const updatedCustomSubTypeName = `${customSubTypeName} Updated`;
     await page.getByRole('button', { name: 'Types', exact: true }).click();
     const typesModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Secondary Types' }) });
     const officialSubType = typesModal.locator('.structure-item').filter({ hasText: 'Revising/Editing Part A' }).first();
@@ -131,6 +155,76 @@ async function main() {
     assert.ok((await api(page, `/api/admin/papers/${paperId}`)).sections
       .find(section => section.sectionCode === 'ELA')?.children.some(section => section.sectionCode === `ELA_${customSubTypeCode}`),
     'a custom secondary type persists under its selected primary type');
+    await page.getByRole('button', { name: 'Types', exact: true }).click();
+    const editableSubType = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Secondary Types' }) })
+      .locator('.structure-item').filter({ hasText: customSubTypeName });
+    await editableSubType.locator('.form-field').filter({ hasText: 'Type Name' }).locator('input').fill(updatedCustomSubTypeName);
+    await editableSubType.getByRole('button', { name: 'Update', exact: true }).click();
+    await page.getByText('Secondary type updated.', { exact: true }).waitFor();
+    await page.locator('.modal-card--wide .modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    const updatedEla = (await api(page, `/api/admin/papers/${paperId}`)).sections.find(section => section.sectionCode === 'ELA');
+    assert.ok(updatedEla?.children.some(section => section.sectionCode === `ELA_${customSubTypeCode}`
+      && section.title === updatedCustomSubTypeName), 'updating a custom secondary type persists its name');
+
+    const primaryTypeSelect = page.locator('.meta-field').filter({ hasText: 'Primary Type' }).locator('select');
+    await primaryTypeSelect.selectOption({ label: updatedCustomPartName });
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Parts', exact: true }).click();
+    const referencedPartsModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Primary Types' }) });
+    const referencedCustomPart = referencedPartsModal.locator('.structure-item').filter({ hasText: updatedCustomPartName });
+    await referencedCustomPart.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByText('Move or delete this type’s questions, materials, and secondary types before deleting it.', { exact: true }).waitFor();
+    assert.equal(await referencedCustomPart.count(), 1, 'a primary type used by a question cannot be removed');
+    await page.getByRole('button', { name: 'Close notification', exact: true }).click();
+    await referencedPartsModal.locator('.modal-card__close').click();
+
+    await primaryTypeSelect.selectOption({ label: 'English Language Arts' });
+    const secondaryTypeSelect = page.locator('.meta-field').filter({ hasText: 'Secondary Type' }).locator('select');
+    await secondaryTypeSelect.selectOption({ label: updatedCustomSubTypeName });
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    const paperWithCustomType = await api(page, `/api/admin/papers/${paperId}`);
+    assert.ok(paperWithCustomType.sections.find(section => section.sectionCode === 'ELA')?.children
+      .find(section => section.title === updatedCustomSubTypeName)?.questions.some(question => question.stem === questionStem),
+    'the question is saved under its custom secondary type');
+
+    await page.getByRole('button', { name: 'Types', exact: true }).click();
+    const referencedTypesModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Secondary Types' }) });
+    const referencedCustomSubType = referencedTypesModal.locator('.structure-item').filter({ hasText: updatedCustomSubTypeName });
+    await referencedCustomSubType.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByText('Move or delete this type’s questions and materials before deleting it.', { exact: true }).waitFor();
+    assert.equal(await referencedCustomSubType.count(), 1, 'a secondary type used by a question cannot be removed');
+    await page.getByRole('button', { name: 'Close notification', exact: true }).click();
+    await referencedTypesModal.locator('.modal-card__close').click();
+    await secondaryTypeSelect.selectOption('');
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+
+    await page.getByRole('button', { name: 'Types', exact: true }).click();
+    const unusedTypesModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Secondary Types' }) });
+    const unusedCustomSubType = unusedTypesModal.locator('.structure-item').filter({ hasText: updatedCustomSubTypeName });
+    await unusedCustomSubType.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByText('Secondary type deleted.', { exact: true }).waitFor();
+    await unusedTypesModal.locator('.modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).sections
+      .find(section => section.sectionCode === 'ELA')?.children.some(section => section.sectionCode === `ELA_${customSubTypeCode}`), false,
+    'deleting an unused custom secondary type persists');
+
+    await page.getByRole('button', { name: 'Parts', exact: true }).click();
+    const unusedPartsModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Primary Types' }) });
+    const unusedCustomPart = unusedPartsModal.locator('.structure-item').filter({ hasText: updatedCustomPartName });
+    await unusedCustomPart.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByText('Primary type deleted.', { exact: true }).waitFor();
+    await unusedPartsModal.locator('.modal-card__close').click();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).sections.some(section => section.sectionCode === customPartCode), false,
+      'an unused custom primary type can still be removed');
 
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
@@ -178,31 +272,6 @@ async function main() {
     await page.getByRole('heading', { name: 'Question 1 · Multiple Choice', exact: true }).waitFor();
     assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 1,
       'confirming question deletion removes the selected saved question');
-
-    await page.getByRole('button', { name: 'Parts', exact: true }).click();
-    const reopenedPartsModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Primary Types' }) });
-    const savedCustomPart = reopenedPartsModal.locator('.structure-item').filter({ hasText: customPartName });
-    assert.equal(await savedCustomPart.count(), 1, 'custom primary type remains visible after reload and further edits');
-    await savedCustomPart.getByRole('button', { name: 'Delete', exact: true }).click();
-    await page.getByText('Primary type deleted.', { exact: true }).waitFor();
-    await reopenedPartsModal.locator('.modal-card__close').click();
-    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
-    await page.getByText('All changes saved.', { exact: true }).waitFor();
-    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).sections.some(section => section.sectionCode === customPartCode), false,
-      'deleting an unused custom primary type persists');
-
-    await page.getByRole('button', { name: 'Types', exact: true }).click();
-    const reopenedTypesModal = page.locator('.modal-card--wide').filter({ has: page.getByRole('heading', { name: 'Manage Secondary Types' }) });
-    const savedCustomSubType = reopenedTypesModal.locator('.structure-item').filter({ hasText: customSubTypeName });
-    assert.equal(await savedCustomSubType.count(), 1, 'custom secondary type remains visible after reload and further edits');
-    await savedCustomSubType.getByRole('button', { name: 'Delete', exact: true }).click();
-    await page.getByText('Secondary type deleted.', { exact: true }).waitFor();
-    await reopenedTypesModal.locator('.modal-card__close').click();
-    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
-    await page.getByText('All changes saved.', { exact: true }).waitFor();
-    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).sections
-      .find(section => section.sectionCode === 'ELA')?.children.some(section => section.sectionCode === `ELA_${customSubTypeCode}`), false,
-    'deleting an unused custom secondary type persists');
 
     const sourcePaperId = 247;
     const sourcePaper = await api(page, `/api/admin/papers/${sourcePaperId}`);
@@ -406,13 +475,13 @@ async function main() {
       result: 'PASS',
       checks: ['unchanged save disabled', 'scoring rule persists', 'unsaved preview is blocked',
         'Stay preserves edits', 'Leave Without Saving discards edits', 'saved question survives reload',
-        'primary and secondary type create/delete', 'official SHSAT labels are protected',
+        'primary and secondary type create/edit/delete and protect referenced types', 'official SHSAT labels are protected',
         'import source, performance filter, preview, cancel, and confirm',
         'preview shows saved question and Back returns to editor', 'per-part add and question navigation',
         'question deletion cancel and confirm', '390px editor layout'],
       mobileSize,
       pageErrors: pageErrors.length,
-      screenshots: ['clean', 'saved', 'preview', 'import', 'import-mobile', 'mobile-success-notice', 'mobile']
+      screenshots: ['clean', 'saved', 'save-conflict', 'preview', 'import', 'import-mobile', 'mobile-success-notice', 'mobile']
         .map(name => `/tmp/shsat-paper-editor-${name}-${stamp}.png`),
     }));
   } finally {

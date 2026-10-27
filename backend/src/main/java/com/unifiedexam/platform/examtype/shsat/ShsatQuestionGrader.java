@@ -40,6 +40,20 @@ final class ShsatQuestionGrader {
         return null;
     }
 
+    /** 与 SHSAT 题型评分共用同一空答案定义，嵌套结构中至少有一个有效值才算作答。 */
+    boolean hasMeaningfulAnswer(JsonNode answer) {
+        if (answer == null || answer.isNull()) return false;
+        if (answer.isTextual()) return !answer.asText().isBlank();
+        if (answer.isNumber() || answer.isBoolean()) return true;
+        if (answer.isContainerNode()) {
+            Iterator<JsonNode> values = answer.elements();
+            while (values.hasNext()) {
+                if (hasMeaningfulAnswer(values.next())) return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isSelection(String type) {
         return type.equals("MULTIPLE_CHOICE") || type.equals("SINGLE_CHOICE") || type.equals("CHOICE")
             || type.contains("MULTI_SELECT") || type.contains("MULTISELECT") || type.contains("MULTIPLE_RESPONSE")

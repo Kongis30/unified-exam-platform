@@ -11,10 +11,13 @@ import org.springframework.stereotype.Component;
 public class ShsatExamTypeModule implements ExamTypeModule {
 
     private final ShsatQuestionGrader questionGrader;
+    private final ShsatPaperPublicationValidator paperPublicationValidator;
 
     @Autowired
-    public ShsatExamTypeModule(ShsatQuestionGrader questionGrader) {
+    public ShsatExamTypeModule(ShsatQuestionGrader questionGrader,
+                               ShsatPaperPublicationValidator paperPublicationValidator) {
         this.questionGrader = questionGrader;
+        this.paperPublicationValidator = paperPublicationValidator;
     }
 
     @Override
@@ -34,8 +37,18 @@ public class ShsatExamTypeModule implements ExamTypeModule {
     }
 
     @Override
+    public boolean hasMeaningfulAnswer(JsonNode answer) {
+        return questionGrader.hasMeaningfulAnswer(answer);
+    }
+
+    @Override
     public boolean supportsStudentAttempts() {
         return true;
+    }
+
+    @Override
+    public void validatePaperForPublication(long paperId) {
+        paperPublicationValidator.validate(paperId);
     }
 
 }

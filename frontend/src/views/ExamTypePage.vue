@@ -378,6 +378,18 @@ function reviewTaskStatusLabel(status) {
   return labels[status] || 'Assigned'
 }
 
+function studentExamStatusClass(exam) {
+  const status = getStudentExamState(exam).label.toLowerCase().replace(/\s+/g, '-')
+  return {
+    available: 'is-active',
+    'in-progress': 'is-progress',
+    submitted: 'is-complete',
+    upcoming: 'is-upcoming',
+    closed: 'is-closed',
+    'no-attempts-left': 'is-disabled',
+  }[status] || ''
+}
+
 function viewShsatAttempt(item) {
   router.push({ name: 'student-attempt-report', params: { attemptId: item.attemptId },
     query: {
@@ -2198,7 +2210,7 @@ watch(() => props.code, (code) => {
         <article v-for="exam in studentExams" :key="exam.id" class="paper-row">
           <div class="paper-mark">{{ examAvailability(exam) === 'Upcoming' ? '↗' : '•' }}</div>
           <div class="paper-copy"><strong>{{ exam.title }}</strong><small><span v-if="props.code === 'SAT'">{{ exam.examTypeCode }} · </span>{{ exam.paperTitle }} · {{ formatExamDate(exam.opensAt) }} — {{ formatExamDate(exam.closesAt) }}</small></div>
-          <span class="status-pill is-active">{{ getStudentExamState(exam).label }}</span>
+          <span class="status-pill" :class="studentExamStatusClass(exam)">{{ getStudentExamState(exam).label }}</span>
           <button v-if="getStudentExamState(exam).canStart" class="secondary-button compact-button" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">{{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}<span v-if="startingExamId !== exam.id">↗</span></button>
           <button v-if="getStudentExamState(exam).canViewAttempt" class="text-button" @click="viewAttempt(exam)">View attempt</button>
         </article>
@@ -2293,6 +2305,10 @@ watch(() => props.code, (code) => {
 .student-exam-list .paper-row { min-height: 72px; gap: 14px; }
 .student-exam-list .paper-copy strong { font-size: 14px; line-height: 1.35; }
 .student-exam-list .paper-copy small { font-size: 12px; line-height: 1.4; }
+.student-exam-list .status-pill.is-progress,
+.student-exam-list .status-pill.is-complete { background: #eaf1ff; color: #245dd8; }
+.student-exam-list .status-pill.is-upcoming { background: #f1f6ff; color: #52627a; }
+.student-exam-list .status-pill.is-closed { background: #eef2f6; color: #66758d; }
 .practice-history-list { border-top: 1px solid var(--color-border); }
 .practice-history-row { display: grid; grid-template-columns: auto minmax(220px, 1fr) minmax(90px, auto) auto; align-items: center; gap: 16px; padding: 14px 4px; border-bottom: 1px solid var(--color-border); }
 .practice-history-score { display: grid; gap: 3px; color: var(--color-text); text-align: right; font-variant-numeric: tabular-nums; }

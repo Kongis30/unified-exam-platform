@@ -183,6 +183,7 @@ public class ExamReleaseService {
         if (!"READY".equals(paperStatus)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Seal the paper before publishing this exam.");
         }
+        examTypeRegistry.validatePaperForPublication(typeCode(paperId), paperId);
         String targetScope = examTargetScope(examId);
         Integer targetCount = jdbcTemplate.queryForObject("""
             SELECT (SELECT COUNT(*) FROM exam_target_classes WHERE exam_id = ?) +
@@ -232,9 +233,17 @@ public class ExamReleaseService {
         Integer attemptCount = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM attempts WHERE exam_id = ? AND is_practice = FALSE", Integer.class, examId);
         if (attemptCount != null && attemptCount > 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "An exam with student attempts cannot be unpublished.");
+            // 撤回只移除尚未开考学生的资格，保留已有尝试的参与记录，保证进行中的学生可继续作答、历史报告仍可访问。
+            jdbcTemplate.update("""
+                DELETE FROM exam_participants ep
+                WHERE ep.exam_id = ? AND NOT EXISTS (
+                    SELECT 1 FROM attempts a
+                    WHERE a.exam_id = ep.exam_id AND a.student_user_id = ep.student_user_id AND a.is_practice = FALSE
+                )
+                """, examId);
+        } else {
+            jdbcTemplate.update("DELETE FROM exam_participants WHERE exam_id = ?", examId);
         }
-        jdbcTemplate.update("DELETE FROM exam_participants WHERE exam_id = ?", examId);
         jdbcTemplate.update("UPDATE exams SET status = 'DRAFT', published_at = NULL WHERE id = ?", examId);
         return get(examId);
     }
@@ -249,7 +258,7 @@ public class ExamReleaseService {
         if (!"PUBLISHED".equals(status)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only published exams can be ended.");
         }
-        jdbcTemplate.update("UPDATE exams SET status = 'CLOSED' WHERE id = ?", examId);
+        jdbcTemplate.update("UPDATE exams SET status = 'CLOSED', closes_at = CURRENT_TIMESTAMP(6) WHERE id = ?", examId);
         return get(examId);
     }
 
@@ -286,11 +295,14 @@ public class ExamReleaseService {
             FROM exam_participants ep JOIN exams e ON e.id = ep.exam_id
             JOIN papers p ON p.id = e.paper_id
             JOIN exam_types et ON et.code = p.exam_type_code AND et.is_active = TRUE
-            WHERE ep.student_user_id = ? AND ep.revoked_at IS NULL AND e.status IN ('PUBLISHED', 'CLOSED')
+            WHERE ep.student_user_id = ? AND ep.revoked_at IS NULL AND e.status IN ('PUBLISHED', 'CLOSED', 'DRAFT')
                 AND NOT EXISTS (SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id)
                 AND NOT EXISTS (SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id)
                 AND ((e.status = 'PUBLISHED' AND e.closes_at > CURRENT_TIMESTAMP(6)) OR EXISTS (
-                    SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ep.student_user_id AND a.is_practice = FALSE
+                    SELECT 1 FROM attempts a
+                    WHERE a.exam_id = e.id AND a.student_user_id = ep.student_user_id AND a.is_practice = FALSE
+                      AND (e.status = 'CLOSED' OR (e.status = 'DRAFT' AND a.status = 'IN_PROGRESS'
+                           AND (a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP(6))))
                 ))
             ORDER BY e.opens_at, e.id
             """, (rs, rowNum) -> new StudentExamView(rs.getLong("id"), rs.getString("exam_type_code"),
@@ -402,7 +414,9 @@ public class ExamReleaseService {
     }
 
     private void requireDraft(long examId) {
-        String status = jdbcTemplate.query("SELECT status FROM exams WHERE id = ?", rs -> rs.next() ? rs.getString(1) : null, examId);
+        // 与 publish 使用同一把 exam 行锁，避免发布和目标/设置修改并发时产生半更新状态。
+        String status = jdbcTemplate.query("SELECT status FROM exams WHERE id = ? FOR UPDATE",
+            rs -> rs.next() ? rs.getString(1) : null, examId);
         if (status == null) throw notFound();
         if (!"DRAFT".equals(status)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft exams can be changed.");
     }

@@ -3,6 +3,7 @@ package com.unifiedexam.platform.paper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.unifiedexam.platform.examtype.ExamTypeDefinition;
 import com.unifiedexam.platform.examtype.ExamTypeRegistry;
 import jakarta.validation.Valid;
@@ -23,6 +24,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
@@ -41,11 +44,14 @@ public class PaperService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final ExamTypeRegistry examTypeRegistry;
+    private final List<PaperStructureTemplateProvider> structureTemplateProviders;
 
-    public PaperService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, ExamTypeRegistry examTypeRegistry) {
+    public PaperService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, ExamTypeRegistry examTypeRegistry,
+                        List<PaperStructureTemplateProvider> structureTemplateProviders) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.examTypeRegistry = examTypeRegistry;
+        this.structureTemplateProviders = List.copyOf(structureTemplateProviders);
     }
 
     public List<PaperSummary> list(String examTypeCode) {
@@ -58,6 +64,9 @@ public class PaperService {
                    (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id) AS section_count,
                    (SELECT COUNT(*) FROM paper_items item JOIN paper_sections section ON section.id = item.section_id
                     WHERE section.paper_id = p.id) AS question_count,
+                   (SELECT COALESCE(SUM(item.max_points), 0) FROM paper_items item
+                    JOIN paper_sections section ON section.id = item.section_id
+                    WHERE section.paper_id = p.id) AS total_score,
                    p.created_at, p.updated_at
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id
             WHERE p.exam_type_code = ? ORDER BY p.updated_at DESC, p.id DESC
@@ -67,6 +76,7 @@ public class PaperService {
                 rs.getString("title"), rs.getString("status"),
                 nullableInt(rs, "default_duration_seconds"),
                 rs.getInt("section_count"), rs.getInt("question_count"),
+                rs.getBigDecimal("total_score"),
                 rs.getTimestamp("created_at").toInstant().toString(), rs.getTimestamp("updated_at").toInstant().toString()), examTypeCode);
     }
 
@@ -84,6 +94,10 @@ public class PaperService {
             jdbcTemplate.update("INSERT INTO sat_paper_settings (paper_id, scoring_table_code) VALUES (?, ?)",
                 paperId, "PSAT".equals(examTypeCode) ? "PSAT" : "SAT");
         }
+        structureTemplateProviders.stream()
+            .filter(provider -> provider.examTypeCode().equals(examTypeCode))
+            .findFirst()
+            .ifPresent(provider -> saveStructure(paperId, new SaveStructureRequest(provider.sections())));
         return get(paperId);
     }
 
@@ -336,6 +350,7 @@ public class PaperService {
         if (sectionCount == null || sectionCount == 0 || itemCount == null || itemCount == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Add at least one section and one question before sealing this paper.");
         }
+        examTypeRegistry.validatePaperForPublication(examTypeCode, paperId);
         jdbcTemplate.update("""
             UPDATE questions q JOIN paper_items pi ON pi.question_id = q.id
             JOIN paper_sections ps ON ps.id = pi.section_id
@@ -660,16 +675,52 @@ public class PaperService {
         return jdbcTemplate.query("""
             SELECT q.id AS question_id, pi.id AS paper_item_id, q.question_type_code, q.payload_schema_version,
                    q.stem, q.render_json, q.answer_key_json, q.grading_json,
-                   q.explanation, pi.category_id, pi.sort_order, pi.display_number, pi.max_points, pi.scoring_section_code
+                   q.explanation, pi.category_id, pi.sort_order, pi.display_number, pi.max_points, pi.scoring_section_code,
+                   COALESCE(shsm.id, shpm.id) AS shsat_material_id,
+                   COALESCE(shsm.title, shpm.title) AS shsat_material_title,
+                   COALESCE(shsm.material_type, shpm.material_type) AS shsat_material_type,
+                   COALESCE(shsm.category, shpm.category) AS shsat_material_category,
+                   COALESCE(shsm.content, shpm.content) AS shsat_material_content,
+                   COALESCE(shsm.asset_key, shpm.asset_key) AS shsat_material_asset_key
             FROM paper_items pi JOIN questions q ON q.id = pi.question_id
+            JOIN paper_sections section ON section.id = pi.section_id
+            JOIN papers p ON p.id = section.paper_id
+            LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
+            LEFT JOIN shsat_section_materials shsm ON p.exam_type_code = 'SHSAT'
+                AND shsm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+                AND (shsm.section_id = section.id OR shsm.section_id = parent.id)
+            LEFT JOIN shsat_paper_materials shpm ON p.exam_type_code = 'SHSAT' AND shsm.id IS NULL
+                AND shpm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+                AND shpm.paper_id = p.id
             WHERE pi.section_id = ? ORDER BY pi.sort_order, pi.id
             """, (rs, rowNum) -> new QuestionView(rs.getLong("question_id"), rs.getLong("paper_item_id"),
                 rs.getString("question_type_code"), rs.getInt("payload_schema_version"), rs.getString("stem"),
-                readJson(rs.getString("render_json")), readJson(rs.getString("answer_key_json")),
+                withShsatMaterial(readJson(rs.getString("render_json")), rs), readJson(rs.getString("answer_key_json")),
                 readJson(rs.getString("grading_json")), rs.getString("explanation"),
                 nullableLong(rs, "category_id"), rs.getInt("sort_order"),
                 (Integer) rs.getObject("display_number"), rs.getBigDecimal("max_points"),
                 rs.getString("scoring_section_code")), sectionId);
+    }
+
+    /** SHSAT 迁移数据把材料单独存储，读取题目时按试卷/分组作用域还原给编辑、预览与导出页面。 */
+    private JsonNode withShsatMaterial(JsonNode render, ResultSet rs) throws SQLException {
+        if (rs.getObject("shsat_material_id") == null) return render;
+        ObjectNode enriched = render != null && render.isObject()
+            ? ((ObjectNode) render).deepCopy() : objectMapper.createObjectNode();
+        ObjectNode material = objectMapper.createObjectNode();
+        material.put("title", rs.getString("shsat_material_title"));
+        material.put("type", rs.getString("shsat_material_type"));
+        material.put("category", rs.getString("shsat_material_category"));
+        material.put("content", rs.getString("shsat_material_content"));
+        material.put("assetUrl", shsatMaterialAssetUrl(rs.getString("shsat_material_asset_key")));
+        enriched.set("material", material);
+        return enriched;
+    }
+
+    private String shsatMaterialAssetUrl(String assetKey) {
+        if (assetKey == null || assetKey.isBlank()) return null;
+        if (assetKey.startsWith("http://") || assetKey.startsWith("https://") || assetKey.startsWith("/")) return assetKey;
+        return "/uploads/paper-materials/" + assetKey;
     }
 
     private SectionRequest toRequest(SectionView section) {
@@ -707,6 +758,9 @@ public class PaperService {
                    (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id) AS section_count,
                    (SELECT COUNT(*) FROM paper_items item JOIN paper_sections section ON section.id = item.section_id
                     WHERE section.paper_id = p.id) AS question_count,
+                   (SELECT COALESCE(SUM(item.max_points), 0) FROM paper_items item
+                    JOIN paper_sections section ON section.id = item.section_id
+                    WHERE section.paper_id = p.id) AS total_score,
                    p.created_at, p.updated_at
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id WHERE p.id = ?
             """, (rs, rowNum) -> new PaperSummary(rs.getLong("id"), rs.getString("exam_type_code"),
@@ -715,6 +769,7 @@ public class PaperService {
                 rs.getString("title"), rs.getString("status"),
                 nullableInt(rs, "default_duration_seconds"),
                 rs.getInt("section_count"), rs.getInt("question_count"),
+                rs.getBigDecimal("total_score"),
                 rs.getTimestamp("created_at").toInstant().toString(), rs.getTimestamp("updated_at").toInstant().toString()), paperId);
         if (result.isEmpty()) throw notFound();
         return result.get(0);
@@ -885,7 +940,7 @@ public class PaperService {
     public record PaperSummary(long id, String examTypeCode, Long groupId, String groupName,
                                String paperCode, int versionNo, Long sourcePaperId, boolean usedByExam, String title,
                                String status, Integer defaultDurationSeconds, int sectionCount, int questionCount,
-                               String createdAt, String updatedAt) { }
+                               BigDecimal totalScore, String createdAt, String updatedAt) { }
     public record PaperDetail(PaperSummary summary, String description, Long groupId, String scoringProfileCode,
                               List<SectionView> sections) { }
     public record SectionView(long id, String sectionCode, String sectionKind, String title, int sortOrder,

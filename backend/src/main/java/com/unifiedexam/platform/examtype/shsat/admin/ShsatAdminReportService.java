@@ -44,6 +44,19 @@ public class ShsatAdminReportService {
                     WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_score,
                    (SELECT rb.raw_score FROM attempt_result_breakdowns rb
                     WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_score,
+                   (SELECT rb.raw_max_score FROM attempt_result_breakdowns rb
+                    WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_raw_max_score,
+                   (SELECT rb.raw_max_score FROM attempt_result_breakdowns rb
+                    WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_raw_max_score,
+                   (SELECT rb.scaled_score FROM attempt_result_breakdowns rb
+                    WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_scaled_score,
+                   (SELECT rb.scaled_score FROM attempt_result_breakdowns rb
+                    WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_score,
+                   (SELECT rb.scaled_max_score FROM attempt_result_breakdowns rb
+                    WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_scaled_max_score,
+                   (SELECT rb.scaled_max_score FROM attempt_result_breakdowns rb
+                    WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_max_score,
+                   sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
@@ -55,6 +68,8 @@ public class ShsatAdminReportService {
                 ORDER BY a2.attempt_no DESC LIMIT 1
             )
             LEFT JOIN attempt_results r ON r.attempt_id = a.id
+            LEFT JOIN exams e ON e.id = a.exam_id
+            LEFT JOIN scoring_profiles sp ON sp.id = COALESCE(r.scoring_profile_id, e.scoring_profile_id)
             WHERE cm.class_id = ? AND cm.left_at IS NULL
             ORDER BY u.real_name, u.id
             """, (rs, rowNum) -> {
@@ -72,10 +87,16 @@ public class ShsatAdminReportService {
                 row.put("status", reportStatus(rs.getString("attempt_status")));
                 row.put("totalScore", rs.getBigDecimal("total_points"));
                 row.put("rawTotalScore", rs.getBigDecimal("total_points"));
+                row.put("rawTotalMaxScore", rs.getBigDecimal("max_points"));
                 row.put("section1Score", rs.getBigDecimal("ela_score"));
                 row.put("section2Score", rs.getBigDecimal("math_score"));
                 row.put("elaRawScore", rs.getBigDecimal("ela_score"));
                 row.put("mathRawScore", rs.getBigDecimal("math_score"));
+                row.put("elaRawMaxScore", rs.getBigDecimal("ela_raw_max_score"));
+                row.put("mathRawMaxScore", rs.getBigDecimal("math_raw_max_score"));
+                addScaledScores(row, rs.getBigDecimal("ela_scaled_score"), rs.getBigDecimal("math_scaled_score"),
+                    nullableInt(rs, "ela_scaled_max_score"), nullableInt(rs, "math_scaled_max_score"),
+                    rs.getString("scoring_mode"));
                 row.put("estimated", rs.getObject("is_estimated") == null ? false : rs.getBoolean("is_estimated"));
                 row.put("correctCount", correct);
                 row.put("wrongCount", wrong);
@@ -101,9 +122,17 @@ public class ShsatAdminReportService {
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    (SELECT raw_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_score,
                    (SELECT raw_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_score,
+                   (SELECT raw_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_raw_max_score,
+                   (SELECT raw_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_raw_max_score,
+                   (SELECT scaled_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_scaled_score,
+                   (SELECT scaled_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_score,
+                   (SELECT scaled_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_scaled_max_score,
+                   (SELECT scaled_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_max_score,
+                   sp.algorithm_code AS scoring_mode,
                    TIMESTAMPDIFF(SECOND, a.started_at, COALESCE(a.submitted_at, CURRENT_TIMESTAMP(6))) AS time_used
             FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             LEFT JOIN attempt_results r ON r.attempt_id = a.id
+            LEFT JOIN scoring_profiles sp ON sp.id = COALESCE(r.scoring_profile_id, e.scoring_profile_id)
             WHERE a.student_user_id = ? AND p.exam_type_code = 'SHSAT'
             ORDER BY a.started_at DESC, a.id DESC
             """, (rs, rowNum) -> historyRow(rs), studentId);
@@ -116,6 +145,11 @@ public class ShsatAdminReportService {
                    a.shsat_self_practice_source_attempt_id, e.title AS exam_title, e.answer_visibility,
                    e.score_visibility, e.allow_review, e.closes_at <= CURRENT_TIMESTAMP(6) AS exam_closed,
                    p.id AS paper_id, p.title AS paper_name, r.total_points, COALESCE(r.ungraded_count, 0) AS ungraded_count,
+                   (SELECT rb.scaled_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_scaled_score,
+                   (SELECT rb.scaled_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_score,
+                   (SELECT rb.scaled_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_scaled_max_score,
+                   (SELECT rb.scaled_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_max_score,
+                   sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
@@ -124,6 +158,7 @@ public class ShsatAdminReportService {
                     WHERE cleared.source_attempt_id = a.id AND cleared.student_user_id = a.student_user_id) AS cleared_count
             FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             JOIN users u ON u.id = a.student_user_id LEFT JOIN attempt_results r ON r.attempt_id = a.id
+            LEFT JOIN scoring_profiles sp ON sp.id = COALESCE(r.scoring_profile_id, e.scoring_profile_id)
             WHERE u.username = ? AND u.role_code = 'STUDENT' AND p.exam_type_code = 'SHSAT'
               AND a.status IN ('SUBMITTED', 'COMPLETED', 'EXPIRED')
             ORDER BY COALESCE(a.submitted_at, a.started_at) DESC, a.id DESC
@@ -153,6 +188,12 @@ public class ShsatAdminReportService {
                 row.put("answersVisible", answersVisible);
                 row.put("totalScore", scoreVisible ? rs.getBigDecimal("total_points") : null);
                 row.put("rawTotalScore", scoreVisible ? rs.getBigDecimal("total_points") : null);
+                addScaledScores(row, scoreVisible ? rs.getBigDecimal("ela_scaled_score") : null,
+                    scoreVisible ? rs.getBigDecimal("math_scaled_score") : null,
+                    scoreVisible ? nullableInt(rs, "ela_scaled_max_score") : null,
+                    scoreVisible ? nullableInt(rs, "math_scaled_max_score") : null,
+                    scoreVisible ? rs.getString("scoring_mode") : null);
+                if (!scoreVisible) row.put("scoringMode", null);
                 row.put("correctCount", rs.getLong("correct_count"));
                 row.put("wrongCount", rs.getLong("wrong_count"));
                 row.put("unansweredCount", Math.max(0, questionCount - answered));
@@ -171,13 +212,18 @@ public class ShsatAdminReportService {
             SELECT a.id, a.exam_id, a.student_user_id, a.attempt_no, a.status, a.is_practice, a.started_at, a.submitted_at,
                    e.title AS exam_title, e.answer_visibility, e.score_visibility, p.id AS paper_id, p.title AS paper_name,
                    u.real_name, r.total_points, r.max_points, r.is_estimated, r.scoring_profile_id,
+                   sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
+                   COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(shsat_state.flow_json, '$.focusViolationCount')) AS UNSIGNED), 0)
+                       AS focus_violation_count,
                    TIMESTAMPDIFF(SECOND, a.started_at, COALESCE(a.submitted_at, CURRENT_TIMESTAMP(6))) AS time_used
             FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             JOIN users u ON u.id = a.student_user_id LEFT JOIN attempt_results r ON r.attempt_id = a.id
+            LEFT JOIN shsat_attempt_state shsat_state ON shsat_state.attempt_id = a.id
+            LEFT JOIN scoring_profiles sp ON sp.id = COALESCE(r.scoring_profile_id, e.scoring_profile_id)
             WHERE a.id = ? AND p.exam_type_code = 'SHSAT'
             """, rs -> {
                 if (!rs.next()) throw notFound("Attempt report not found.");
@@ -207,8 +253,9 @@ public class ShsatAdminReportService {
                 row.put("completionRate", percent(answered, questionCount));
                 row.put("accuracy", percent(rs.getLong("correct_count"), answered));
                 row.put("timeUsed", rs.getInt("time_used"));
+                row.put("focusViolationCount", rs.getInt("focus_violation_count"));
                 row.put("estimated", rs.getObject("is_estimated") == null ? false : rs.getBoolean("is_estimated"));
-                row.put("scoringMode", "RAW_ONLY");
+                row.put("scoringMode", scoringMode(rs.getString("scoring_mode")));
                 row.put("startedAt", local(rs.getTimestamp("started_at")));
                 row.put("submittedAt", local(rs.getTimestamp("submitted_at")));
                 return row;
@@ -439,8 +486,14 @@ public class ShsatAdminReportService {
         row.put("status", reportStatus(rs.getString("status")));
         row.put("totalScore", rs.getBigDecimal("total_points"));
         row.put("rawTotalScore", rs.getBigDecimal("total_points"));
+        row.put("rawTotalMaxScore", rs.getBigDecimal("max_points"));
         row.put("elaRawScore", rs.getBigDecimal("ela_score"));
         row.put("mathRawScore", rs.getBigDecimal("math_score"));
+        row.put("elaRawMaxScore", rs.getBigDecimal("ela_raw_max_score"));
+        row.put("mathRawMaxScore", rs.getBigDecimal("math_raw_max_score"));
+        addScaledScores(row, rs.getBigDecimal("ela_scaled_score"), rs.getBigDecimal("math_scaled_score"),
+            nullableInt(rs, "ela_scaled_max_score"), nullableInt(rs, "math_scaled_max_score"),
+            rs.getString("scoring_mode"));
         row.put("section1Score", rs.getBigDecimal("ela_score"));
         row.put("section2Score", rs.getBigDecimal("math_score"));
         row.put("estimated", rs.getObject("is_estimated") == null ? false : rs.getBoolean("is_estimated"));
@@ -467,11 +520,54 @@ public class ShsatAdminReportService {
                     if (key == null) continue;
                     scores.put(key + "RawScore", rs.getBigDecimal("raw_score"));
                     scores.put(key + "ScaledScore", nullableInt(rs, "scaled_score"));
-                    if ("ela".equals(key)) scores.put("elaRawMaxScore", nullableInt(rs, "raw_max_score"));
-                    if ("math".equals(key)) scores.put("mathRawMaxScore", nullableInt(rs, "raw_max_score"));
+                    if ("ela".equals(key)) {
+                        scores.put("elaRawMaxScore", nullableInt(rs, "raw_max_score"));
+                        scores.put("elaScaledMaxScore", nullableInt(rs, "scaled_max_score"));
+                    }
+                    if ("math".equals(key)) {
+                        scores.put("mathRawMaxScore", nullableInt(rs, "raw_max_score"));
+                        scores.put("mathScaledMaxScore", nullableInt(rs, "scaled_max_score"));
+                    }
+                }
+                Integer ela = (Integer) scores.get("elaScaledScore");
+                Integer math = (Integer) scores.get("mathScaledScore");
+                Integer elaMax = (Integer) scores.get("elaScaledMaxScore");
+                Integer mathMax = (Integer) scores.get("mathScaledMaxScore");
+                if (ela != null && math != null && elaMax != null && mathMax != null) {
+                    scores.put("compositeScore", ela + math);
+                    scores.put("totalScaledScore", ela + math);
+                    scores.put("compositeMaxScore", elaMax + mathMax);
+                    scores.put("totalScaledMaxScore", elaMax + mathMax);
                 }
                 return scores;
             }, attemptId);
+    }
+
+    private void addScaledScores(Map<String, Object> row, BigDecimal elaScaled, BigDecimal mathScaled,
+                                 Integer elaMax, Integer mathMax, String mode) {
+        row.put("elaScaledScore", elaScaled == null ? null : elaScaled.intValue());
+        row.put("mathScaledScore", mathScaled == null ? null : mathScaled.intValue());
+        row.put("section1ScaledScore", row.get("elaScaledScore"));
+        row.put("section2ScaledScore", row.get("mathScaledScore"));
+        row.put("elaScaledMaxScore", elaMax);
+        row.put("mathScaledMaxScore", mathMax);
+        row.put("scoringMode", scoringMode(mode));
+        if (elaScaled != null && mathScaled != null && elaMax != null && mathMax != null) {
+            int composite = elaScaled.intValue() + mathScaled.intValue();
+            row.put("compositeScore", composite);
+            row.put("totalScaledScore", composite);
+            row.put("compositeMaxScore", elaMax + mathMax);
+            row.put("totalScaledMaxScore", elaMax + mathMax);
+        } else {
+            row.put("compositeScore", null);
+            row.put("totalScaledScore", null);
+            row.put("compositeMaxScore", null);
+            row.put("totalScaledMaxScore", null);
+        }
+    }
+
+    private String scoringMode(String mode) {
+        return mode == null || mode.isBlank() ? "RAW_ONLY" : mode;
     }
 
     private ExamMonitor requireShsatExam(long examId) {

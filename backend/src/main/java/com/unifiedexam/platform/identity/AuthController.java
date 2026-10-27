@@ -1,5 +1,6 @@
 package com.unifiedexam.platform.identity;
 
+import com.unifiedexam.platform.security.AuthenticatedSessionExpiryFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -69,6 +70,8 @@ public class AuthController {
         context.setAuthentication(authentication);
         SecurityContextHolder.setContext(context);
         contextRepository.saveContext(context, servletRequest, servletResponse);
+        servletRequest.getSession(true).setAttribute(
+            AuthenticatedSessionExpiryFilter.AUTHENTICATED_AT_ATTRIBUTE, System.currentTimeMillis());
         return findCurrentUser(request.username());
     }
 

@@ -4,7 +4,7 @@ import {
   createExam as createPlatformExam, createUser as createPlatformUser,
   deleteClass as deletePlatformClass, listAvailableStudents, listClassStudents, listClasses, listExams, listPapers,
   publishExam as publishPlatformExam, removeClassStudent, reorderClasses as reorderPlatformClasses, saveExamTargets,
-  updateClass as updatePlatformClass, updateExam as updatePlatformExam,
+  sealPaper as sealPlatformPaper, updateClass as updatePlatformClass, updateExam as updatePlatformExam,
 } from '@/api/platform';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromFullName } from '@shsat/utils/accountCredentials';
 import { applyShsatSkillTagToConfig } from '@shsat/utils/shsatSkillTags';
@@ -24,6 +24,7 @@ function paperSummary(paper) {
     displayOrder: paper.versionNo,
     totalQuestions: paper.questionCount || 0,
     totalParts: paper.sectionCount || 0,
+    totalScore: Number(paper.totalScore || 0),
     online: paper.status === 'READY',
   };
 }
@@ -335,6 +336,10 @@ export const adminApi = {
     return http.post(`/admin/papers/${paperId}/versions`);
   },
 
+  sealPaper(paperId) {
+    return sealPlatformPaper(paperId);
+  },
+
   createPart(paperId, payload) {
     return http.post(`/admin/papers/${paperId}/parts`, payload);
   },
@@ -433,6 +438,7 @@ export const adminApi = {
       examTitle: exam.title, title: exam.title, description: exam.description,
       status: exam.status, published: exam.status === 'PUBLISHED', targetType: exam.targetScope,
       targetSummary: exam.targetSummary,
+      hasStudentAttempts: exam.hasStudentAttempts,
       startTime: exam.opensAt, endTime: exam.closesAt,
       duration: Math.round((exam.durationSeconds || 0) / 60), attemptLimit: exam.attemptLimit,
       publishedAt: exam.publishedAt,

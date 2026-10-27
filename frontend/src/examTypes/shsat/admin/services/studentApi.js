@@ -4,6 +4,7 @@ import {
   listStudentExams,
   listExams,
   saveStudentAnswer,
+  setStudentBookmark,
   startStudentAttempt,
   submitStudentAttempt,
 } from '@/api/platform';
@@ -104,7 +105,7 @@ function mapAttempt(attempt) {
     answers: questions.filter((question) => question.answer != null).map((question) => ({
       questionNumber: question.questionNumber,
       answerData: question.answerData,
-      marked: false,
+      marked: question.marked,
     })),
   };
 }
@@ -132,6 +133,10 @@ export const studentApi = {
     return mapAttempt(await saveStudentAnswer(attemptId, payload.questionId, answer, payload.timeSpent || 0));
   },
 
+  async setQuestionMarked(attemptId, questionId, marked) {
+    return mapAttempt(await setStudentBookmark(attemptId, questionId, marked));
+  },
+
   async getAttempt(attemptId) {
     return mapAttempt(await getStudentAttempt(attemptId));
   },
@@ -140,8 +145,10 @@ export const studentApi = {
     return mapAttempt(await submitStudentAttempt(attemptId));
   },
 
-  async submitSection(attemptId) {
-    return mapAttempt(await apiRequest(`/api/student/attempts/${attemptId}/sections/submit`, { method: 'POST' }));
+  async submitSection(attemptId, sectionCode) {
+    return mapAttempt(await apiRequest(`/api/student/attempts/${attemptId}/sections/submit`, {
+      method: 'POST', body: JSON.stringify({ sectionCode }),
+    }));
   },
 
   updateAttemptPresence(attemptId, payload) {

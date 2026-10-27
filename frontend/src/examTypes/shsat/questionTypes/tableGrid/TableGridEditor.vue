@@ -408,7 +408,8 @@ function emitChange() {
           {{ selectionMode === 'text' ? 'Type the expected answer into each correct cell. Empty cells are ignored.' : 'Click a cell to mark it as correct. In one-choice mode, each row can only have one correct column.' }}
         </p>
       </div>
-      <div class="answer-table table-grid-matrix">
+      <p v-if="columnItems.length > 2" class="table-grid-scroll-hint">On narrow screens, scroll the table horizontally to see every column.</p>
+      <div class="answer-table table-grid-matrix" :class="{ 'has-many-columns': columnItems.length > 2 }">
         <table>
           <thead>
             <tr>
@@ -457,7 +458,8 @@ function emitChange() {
         </div>
         <span class="table-grid-preview-badge">Read-only</span>
       </div>
-      <div class="answer-table table-grid-preview">
+      <p v-if="columnItems.length > 2" class="table-grid-scroll-hint">On narrow screens, scroll the table horizontally to see every column.</p>
+      <div class="answer-table table-grid-preview" :class="{ 'has-many-columns': columnItems.length > 2 }">
         <table>
           <thead>
             <tr>
@@ -494,6 +496,7 @@ function emitChange() {
 .table-grid-section {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .table-grid-editor {
@@ -759,7 +762,15 @@ function emitChange() {
   line-height: 1.45;
 }
 
+.table-grid-scroll-hint {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
 .answer-table {
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
 }
 
@@ -895,6 +906,33 @@ function emitChange() {
   .table-grid-setup-grid,
   .table-grid-steps {
     grid-template-columns: 1fr;
+  }
+
+  .table-grid-matrix table,
+  .table-grid-preview table {
+    min-width: 100%;
+    table-layout: fixed;
+  }
+
+  .table-grid-matrix.has-many-columns table,
+  .table-grid-preview.has-many-columns table {
+    min-width: 330px;
+    table-layout: auto;
+  }
+
+  .table-grid-matrix tbody th,
+  .table-grid-preview tbody th {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .table-grid-radio em {
+    display: none;
+  }
+
+  .table-grid-cell-input {
+    min-width: 0;
+    width: 100%;
   }
 }
 </style>

@@ -110,11 +110,80 @@ async function main() {
     await teacher.getByRole('heading', { name: 'Current Question Distribution' }).waitFor();
     await teacher.getByText('No response-time data has been recorded for this exam yet.').waitFor();
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-${stamp}.png` });
+    const firstQuestionTile = teacher.getByRole('button', { name: 'Open question 1 details' });
+    await firstQuestionTile.waitFor();
+    const previewAssetUrl = '/uploads/paper-materials/611-3cba11d3-9ce9-40bc-8191-b923c3704736.png';
+    const imageResponse = await teacher.request.get(`${baseUrl}${previewAssetUrl}`);
+    assert.equal(imageResponse.status(), 200, 'the monitor image preview fixture is available');
+    await teacher.route(`**/api/admin/reports/exams/${examId}/monitor/questions/1`, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          question: {
+            id: 1,
+            questionNumber: 1,
+            questionType: 'MULTIPLE_CHOICE',
+            stem: 'Monitor image preview check',
+            options: { A: 'First choice', B: 'Second choice' },
+            correctAnswer: 'A',
+            correctAnswerData: { correctAnswer: 'A' },
+          },
+          material: { assetUrl: previewAssetUrl },
+        },
+      }),
+    }));
+    const questionDetailsResponse = teacher.waitForResponse(response =>
+      response.url().endsWith(`/api/admin/reports/exams/${examId}/monitor/questions/1`));
+    await firstQuestionTile.click();
+    assert.equal((await questionDetailsResponse).status(), 200, 'teachers can open question details from the accuracy heatmap');
+    const questionDrawer = teacher.getByRole('dialog', { name: 'Question details' });
+    await questionDrawer.waitFor();
+    await questionDrawer.locator('.monitor-question-detail').waitFor();
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-question-${stamp}.png` });
+    await questionDrawer.getByRole('button', { name: 'Question material' }).click();
+    const imagePreview = teacher.locator('.question-image-preview');
+    await imagePreview.waitFor();
+    assert.equal(await questionDrawer.getByRole('button', { name: 'Close question details' }).count(), 0,
+      'the drawer close control is hidden while the image preview is open');
+    const previewImage = imagePreview.locator('img');
+    await previewImage.waitFor({ state: 'visible' });
+    await previewImage.evaluate(image => image.decode());
+    assert.equal(await previewImage.getAttribute('src'), previewAssetUrl,
+      'the enlarged monitor image uses the selected material asset');
+    const desktopImageBox = await previewImage.boundingBox();
+    assert.ok(desktopImageBox && desktopImageBox.width > 0 && desktopImageBox.height > 0,
+      'the desktop preview renders a non-empty enlarged image');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-image-preview-${stamp}.png` });
+    await imagePreview.click({ position: { x: 8, y: 8 } });
+    await imagePreview.waitFor({ state: 'detached' });
+    await teacher.locator('.question-detail-backdrop').click({ position: { x: 5, y: 5 } });
+    await questionDrawer.waitFor({ state: 'detached' });
     await teacher.setViewportSize({ width: 390, height: 844 });
     await teacher.evaluate(() => window.scrollTo(0, 0));
     const monitorMobileSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(monitorMobileSize.page <= monitorMobileSize.viewport, 'teacher monitor fits a 390px viewport');
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-mobile-${stamp}.png` });
+    await teacher.getByRole('button', { name: 'Open question 1 details' }).click();
+    await questionDrawer.waitFor();
+    await questionDrawer.locator('.monitor-question-detail').waitFor();
+    const mobileDrawerSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(mobileDrawerSize.page <= mobileDrawerSize.viewport, 'question details drawer fits a 390px viewport');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-question-mobile-${stamp}.png` });
+    await questionDrawer.getByRole('button', { name: 'Question material' }).click();
+    await imagePreview.waitFor();
+    assert.equal(await questionDrawer.getByRole('button', { name: 'Close question details' }).count(), 0,
+      'the mobile image preview has one close control without overlap');
+    await previewImage.evaluate(image => image.decode());
+    const mobileImageBox = await previewImage.boundingBox();
+    assert.ok(mobileImageBox && mobileImageBox.x >= 0 && mobileImageBox.x + mobileImageBox.width <= 390,
+      'the enlarged monitor image fits the mobile viewport');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-image-preview-mobile-${stamp}.png` });
+    await imagePreview.getByRole('button', { name: 'Close image preview' }).click();
+    await imagePreview.waitFor({ state: 'detached' });
+    await teacher.getByRole('button', { name: 'Close question details' }).click();
+    await questionDrawer.waitFor({ state: 'detached' });
     await teacher.locator('.monitor-back-button').click();
     await teacher.waitForURL(url => url.pathname === '/exam-types/SHSAT/admin');
     await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).waitFor();
@@ -142,9 +211,11 @@ async function main() {
       result: 'PASS',
       checks: ['teacher SHSAT tab access', 'shared all-class directory', 'account directory denied',
         'create, publish and unpublish release', 'monitor access, empty analytics and return path',
+        'heatmap question details drawer and backdrop close', 'desktop/mobile monitor image preview and close controls',
         'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
       monitorMobileSize,
+      mobileDrawerSize,
       pageErrors: errors.length,
     }));
   } finally {

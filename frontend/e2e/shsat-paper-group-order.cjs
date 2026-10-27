@@ -13,6 +13,7 @@ async function main() {
   });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
+  let verificationContext;
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   const stamp = Date.now();
@@ -42,6 +43,10 @@ async function main() {
       .filter(title => names.includes(title));
     const initialPanelTitles = await page.locator('.folder-panel__title strong').allTextContents();
     assert.equal(beforeTitles.length, 3, 'all temporary folders appear in the list');
+    assert.equal(initialPanelTitles[0], 'Default Folder', 'the fixed default folder stays first');
+    assert.equal(await panels.first().getAttribute('draggable'), 'false', 'the default folder cannot be dragged');
+    assert.equal(await panels.first().locator('.folder-panel__actions').count(), 0,
+      'the default folder cannot be renamed or deleted');
     async function dragGroup(sourceName, targetName, assertion, expectedNamesBefore) {
       const source = panels.filter({ hasText: sourceName });
       const target = panels.filter({ hasText: targetName });
@@ -101,6 +106,17 @@ async function main() {
     assert.equal(new Set(finalGroupOrder.map(group => Number(group.id))).size, finalGroupOrder.length,
       'all persisted group IDs are unique');
     assert.equal(finalGroupOrder.length, initialOrder.length, 'no group is lost during repeated reorder');
+    verificationContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const verificationPage = await verificationContext.newPage();
+    verificationPage.on('pageerror', error => pageErrors.push(error.message));
+    await login(verificationPage);
+    await verificationPage.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    await verificationPage.getByRole('tab', { name: 'Paper Management', exact: true }).click();
+    const reloginNames = await verificationPage.locator('.folder-panel__title strong').allTextContents();
+    assert.deepEqual(reloginNames, expectedNames, 'complete group order survives a fresh authenticated session');
+    await verificationContext.close();
+    verificationContext = null;
+
     const lastPanel = panels.filter({ hasText: expectedNames[2] });
     await lastPanel.evaluate(element => element.scrollIntoView({ block: 'center' }));
     await page.screenshot({ path: `/tmp/shsat-paper-group-order-desktop-${stamp}.png` });
@@ -126,7 +142,7 @@ async function main() {
     });
     await page.screenshot({ path: `/tmp/shsat-paper-group-order-mobile-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['first-to-last drag', 'last-to-first drag', 'drag to second position', 'order persistence after each reload', 'complete unique group IDs', '390px layout'], dimensions }));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['fixed default folder', 'first-to-last drag', 'last-to-first drag', 'drag to second position', 'order persistence after each reload', 'fresh-session persistence', 'complete unique group IDs', '390px layout'], dimensions }));
   } finally {
     for (const groupId of createdIds) await api(page, `/api/admin/paper-groups/${groupId}`, 'DELETE').catch(() => {});
     if (originalOrder.length) {
@@ -135,6 +151,7 @@ async function main() {
     const remaining = await api(page, '/api/admin/exam-types/SHSAT/paper-groups');
     assert.ok(createdIds.every(id => !remaining.some(group => Number(group.id) === id)), 'temporary groups are removed');
     assert.deepEqual(remaining.map(group => Number(group.id)), originalOrder, 'the original group order is restored');
+    if (verificationContext) await verificationContext.close();
     await browser.close();
   }
 }

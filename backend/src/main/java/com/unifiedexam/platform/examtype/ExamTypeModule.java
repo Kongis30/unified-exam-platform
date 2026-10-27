@@ -18,6 +18,11 @@ public interface ExamTypeModule {
         return grade(questionTypeCode, answerKey, answer);
     }
 
+    /** 依据考试类型的题型结构判断答案是否有实质内容。 */
+    default boolean hasMeaningfulAnswer(JsonNode answer) {
+        return answer != null && !answer.isNull();
+    }
+
     /** 只有已完成最小作答链路的类型才会进入学生可作答列表。 */
     default boolean supportsStudentAttempts() {
         return false;
@@ -26,5 +31,10 @@ public interface ExamTypeModule {
     /** 管理员和教师的练习权限独立于学生正式考试流程，避免未完成的考试类型误入学生端。 */
     default boolean supportsStaffPracticeAttempts() {
         return false;
+    }
+
+    /** 在试卷封存或发布前执行类型专属的内容校验。 */
+    default void validatePaperForPublication(long paperId) {
+        // Most exam types only require the shared READY-state checks.
     }
 }

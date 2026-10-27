@@ -426,7 +426,7 @@ const isExamSessionActive = computed(() => {
 const isExamFullscreenRequired = computed(() => isExamSessionActive.value);
 const canUseFreeQuestionNavigation = computed(() => {
   const role = getUserRole();
-  // Staff and错题练习都使用自由导航，正式学生考试仍保留原有分段边界。
+  // 管理员预览和错题练习使用自由导航，正式学生考试保留分段边界。
   return !isReadOnlyMode.value && (
     isPreviewMode.value
     || isPracticeAttempt.value
@@ -1857,7 +1857,7 @@ async function submitSection() {
   submitLoading.value = true;
   try {
     const progressUpdate = unwrapResponse(
-      await studentApi.submitSection(attemptId.value),
+      await studentApi.submitSection(attemptId.value, currentSectionCode.value),
       'Failed to submit this section'
     );
     applyProgressUpdate(progressUpdate);

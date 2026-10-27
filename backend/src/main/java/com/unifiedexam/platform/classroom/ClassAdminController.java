@@ -165,6 +165,8 @@ public class ClassAdminController {
                        %s AS rw2_raw,
                        %s AS math1_raw,
                        %s AS math2_raw,
+                       shsat.ela_raw AS shsat_ela_raw, shsat.math_raw AS shsat_math_raw,
+                       shsat.ela_scaled AS shsat_ela_scaled, shsat.math_scaled AS shsat_math_scaled,
                        (SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
                         WHERE ps.paper_id = p.id) AS paper_question_count,
                        ROW_NUMBER() OVER (
@@ -178,6 +180,16 @@ public class ClassAdminController {
                 JOIN exams e ON e.id = a.exam_id
                 JOIN papers p ON p.id = e.paper_id
                 LEFT JOIN sat_paper_settings s ON s.paper_id = p.id
+                LEFT JOIN (
+                    SELECT attempt_id,
+                           MAX(CASE WHEN breakdown_code = 'ELA' THEN raw_score END) AS ela_raw,
+                           MAX(CASE WHEN breakdown_code = 'MATH' THEN raw_score END) AS math_raw,
+                           MAX(CASE WHEN breakdown_code = 'ELA' THEN scaled_score END) AS ela_scaled,
+                           MAX(CASE WHEN breakdown_code = 'MATH' THEN scaled_score END) AS math_scaled
+                    FROM attempt_result_breakdowns
+                    WHERE breakdown_code IN ('ELA', 'MATH')
+                    GROUP BY attempt_id
+                ) shsat ON shsat.attempt_id = a.id AND p.exam_type_code = 'SHSAT'
                 WHERE cm.class_id = ?
                   AND a.status IN ('SUBMITTED', 'COMPLETED')
                   AND a.is_practice = FALSE
@@ -206,6 +218,8 @@ public class ClassAdminController {
             firstValue(rs.getBigDecimal("imported_rw2_raw"), rs.getBigDecimal("rw2_raw")),
             firstValue(rs.getBigDecimal("imported_math1_raw"), rs.getBigDecimal("math1_raw")),
             firstValue(rs.getBigDecimal("imported_math2_raw"), rs.getBigDecimal("math2_raw")),
+            rs.getBigDecimal("shsat_ela_raw"), rs.getBigDecimal("shsat_math_raw"),
+            rs.getBigDecimal("shsat_ela_scaled"), rs.getBigDecimal("shsat_math_scaled"),
             rs.getString("scoring_table_code"), rs.getInt("paper_question_count")), parameters);
         java.util.Map<Long, List<TrendAttemptRow>> byExam = attempts.stream()
             .collect(java.util.stream.Collectors.groupingBy(TrendAttemptRow::examId, java.util.LinkedHashMap::new,
@@ -224,18 +238,29 @@ public class ClassAdminController {
             java.math.BigDecimal rw2 = row.rw2Raw();
             java.math.BigDecimal math1 = row.math1Raw();
             java.math.BigDecimal math2 = row.math2Raw();
-            java.math.BigDecimal rwRaw = sum(rw1, rw2);
-            java.math.BigDecimal mathRaw = sum(math1, math2);
-            java.math.BigDecimal raw = sum(rw1, rw2, math1, math2);
+            boolean shsat = "SHSAT".equals(row.examTypeCode());
+            java.math.BigDecimal rwRaw = shsat ? row.shsatElaRaw() : sum(rw1, rw2);
+            java.math.BigDecimal mathRaw = shsat ? row.shsatMathRaw() : sum(math1, math2);
+            java.math.BigDecimal raw = shsat ? sum(rwRaw, mathRaw) : sum(rw1, rw2, math1, math2);
             if (raw == null && legacy.path("correct_questions").isNumber()) raw = legacy.path("correct_questions").decimalValue();
             if (raw == null) raw = row.totalPoints();
             if (raw != null) rawScores.add(raw);
 
-            java.math.BigDecimal scaled = legacy.path("total_score").isNumber()
-                ? legacy.path("total_score").decimalValue()
-                : scaledSubjectTotal(row.scoringTableCode(), "RW", rwRaw, row.paperQuestionCount())
-                    .add(scaledSubjectTotal(row.scoringTableCode(), "Math", mathRaw, row.paperQuestionCount()));
-            if (rwRaw != null && mathRaw != null) scaledScores.add(scaled);
+            java.math.BigDecimal scaled;
+            boolean hasScaled;
+            if (shsat) {
+                hasScaled = row.shsatElaScaled() != null && row.shsatMathScaled() != null;
+                scaled = hasScaled ? row.shsatElaScaled().add(row.shsatMathScaled())
+                    : legacy.path("total_score").isNumber() ? legacy.path("total_score").decimalValue() : null;
+                hasScaled = hasScaled || legacy.path("total_score").isNumber();
+            } else {
+                scaled = legacy.path("total_score").isNumber()
+                    ? legacy.path("total_score").decimalValue()
+                    : scaledSubjectTotal(row.scoringTableCode(), "RW", rwRaw, row.paperQuestionCount())
+                        .add(scaledSubjectTotal(row.scoringTableCode(), "Math", mathRaw, row.paperQuestionCount()));
+                hasScaled = rwRaw != null && mathRaw != null;
+            }
+            if (hasScaled && scaled != null) scaledScores.add(scaled);
         }
         return new ClassExamScoreTrendView(first.examId(), first.examTitle(), first.examTypeCode(), first.examDate(),
             average(rawScores), average(scaledScores), rows.size());
@@ -667,6 +692,8 @@ public class ClassAdminController {
                            java.time.LocalDateTime examDate, java.math.BigDecimal totalPoints,
                            String sourceScoreJson, java.math.BigDecimal rw1Raw, java.math.BigDecimal rw2Raw,
                            java.math.BigDecimal math1Raw, java.math.BigDecimal math2Raw,
+                           java.math.BigDecimal shsatElaRaw, java.math.BigDecimal shsatMathRaw,
+                           java.math.BigDecimal shsatElaScaled, java.math.BigDecimal shsatMathScaled,
                            String scoringTableCode, int paperQuestionCount) { }
     public record ClassExamScoreTrendView(long examId, String examTitle, String examTypeCode,
                                           java.time.LocalDateTime examDate, java.math.BigDecimal averageRawScore,

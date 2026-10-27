@@ -163,6 +163,9 @@ async function loadPaper() {
 async function openPrintDialog() {
   noticeMessage.value = '';
   await document.fonts?.ready;
+  await Promise.all(['math-span', 'math-div'].map((tagName) => customElements.whenDefined(tagName)));
+  const formulas = [...document.querySelectorAll('.paper-export math-span, .paper-export math-div')];
+  await Promise.all(formulas.map((formula) => formula.render?.()));
   const images = [...document.querySelectorAll('.paper-export img')];
   await Promise.all(images.map((image) => image.decode().catch(() => null)));
   const brokenImages = images.filter((image) => !image.complete || image.naturalWidth === 0);
@@ -311,10 +314,6 @@ onBeforeUnmount(() => {
               :question="item.question"
             />
           </template>
-          <footer class="print-running-footer" aria-hidden="true">
-            <span>Jin Best Tutoring | {{ testLabel }}</span>
-            <span>CONTINUE ON TO THE NEXT PAGE &gt;</span>
-          </footer>
         </section>
       </template>
 
@@ -421,7 +420,6 @@ onBeforeUnmount(() => {
 
 .print-section { position: relative; }
 .print-section--new-page { break-before: page; page-break-before: always; }
-.print-running-footer { display: none; }
 .answer-document-heading { width: 8.5in; margin: 0 auto 18px; padding: .1in .72in 0; text-align: center; }
 .answer-document-heading h1 { margin: 0 0 5px; font-size: 18pt; }
 .answer-document-heading p { margin: 0; font-size: 11pt; }
@@ -477,6 +475,5 @@ onBeforeUnmount(() => {
   .print-cover { break-after: page; page-break-after: always; }
   .print-blank-page { min-height: 9.66in; break-after: page; page-break-after: always; }
   .print-section--new-page { break-before: page; page-break-before: always; }
-  .print-running-footer { position: fixed; right: 0; bottom: -.52in; left: 0; display: flex; justify-content: space-between; color: #303840; font-size: 8.5pt; }
 }
 </style>

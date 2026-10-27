@@ -125,6 +125,7 @@ const createExamStructureConfirm = reactive({
 const selectedDeleteExam = ref(null);
 const examDeleteCooldown = ref(0);
 const selectedDeleteClass = ref(null);
+const deleteClassError = ref('');
 const examActionDialog = reactive({
   open: false,
   title: '',
@@ -167,6 +168,7 @@ const loading = reactive({
   deletingExamId: '',
   deletingClassId: '',
   movingPaperId: '',
+  sealingPaperId: '',
   deletingGroupId: '',
   paperDeleteImpactId: '',
   deletingPaperId: '',
@@ -831,6 +833,7 @@ function formatDateTime(value) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 
@@ -1649,6 +1652,12 @@ function validateExamPayload(payload) {
     return 'Select a paper and enter the title, start time, and end time.';
   }
 
+  const opensAt = new Date(payload.startTime).getTime();
+  const closesAt = new Date(payload.endTime).getTime();
+  if (!Number.isFinite(opensAt) || !Number.isFinite(closesAt) || closesAt <= opensAt) {
+    return 'The end time must be after the start time.';
+  }
+
   if (!payload.duration || payload.duration < 1) {
     return 'Duration must be greater than 0.';
   }
@@ -1823,6 +1832,7 @@ async function openPaperDeleteConfirm(paper) {
     return;
   }
 
+  closeActionToast();
   selectedDeletePaper.value = paper;
   paperDeleteImpact.value = null;
   errors.paperDelete = '';
@@ -1957,9 +1967,9 @@ async function movePaperToGroup(paper) {
   }
 }
 
-function openMoveModal(paper) {
-  selectedMovePaper.value = paper;
-  moveForm.paperGroupId = paper.paperGroupId || '';
+function openMoveModal(paper, currentGroupId = paper.paperGroupId) {
+  selectedMovePaper.value = { ...paper, paperGroupId: currentGroupId || null };
+  moveForm.paperGroupId = currentGroupId || '';
   errors.papers = '';
   showMoveModal.value = true;
 }
@@ -2267,6 +2277,10 @@ async function loadPaperStructureStats(paperId) {
 }
 
 async function createExamRelease(payload) {
+  if (loading.submittingExam) {
+    return;
+  }
+
   loading.submittingExam = true;
 
   try {
@@ -2293,6 +2307,10 @@ async function createExamRelease(payload) {
 }
 
 async function submitExam() {
+  if (loading.submittingExam || loading.checkingExamPaperStats) {
+    return;
+  }
+
   const payload = buildExamPayload();
   const validation = validateExamPayload(payload);
   notices.examForm = '';
@@ -2332,6 +2350,10 @@ function closeCreateExamStructureConfirm({ force = false } = {}) {
 }
 
 async function confirmCreateExamStructureRisk() {
+  if (loading.submittingExam) {
+    return;
+  }
+
   const payload = createExamStructureConfirm.payload;
   if (!payload) {
     return;
@@ -2375,6 +2397,16 @@ function getPublishConfirmTitle(exam) {
 
 function getPublishConfirmActionText(exam) {
   return exam?.published ? 'Unpublish Exam' : 'Publish Exam';
+}
+
+function getPublishConfirmNote(exam) {
+  if (!exam?.published) {
+    return 'Students in the selected audience will see this release when the time window allows access.';
+  }
+  if (exam.hasStudentAttempts) {
+    return 'No new attempts can start after unpublishing. Students with an active attempt can continue, and existing results will be kept.';
+  }
+  return 'Students will no longer be able to start attempts after this exam is unpublished.';
 }
 
 function isPublishStructureCheckLoading(exam) {
@@ -2502,7 +2534,7 @@ function closeDeleteExamConfirm() {
 async function confirmPublishChange() {
   const exam = selectedPublishExam.value;
   const examId = exam?.examId;
-  if (!examId) {
+  if (!examId || loading.exams) {
     return;
   }
 
@@ -2689,6 +2721,7 @@ function openDeleteClassConfirm(item) {
   }
 
   errors.classes = '';
+  deleteClassError.value = '';
   selectedDeleteClass.value = item;
 }
 
@@ -2698,6 +2731,7 @@ function closeDeleteClassConfirm() {
   }
 
   selectedDeleteClass.value = null;
+  deleteClassError.value = '';
 }
 
 async function confirmDeleteClass() {
@@ -2708,7 +2742,7 @@ async function confirmDeleteClass() {
   }
 
   loading.deletingClassId = String(classId);
-  errors.classes = '';
+  deleteClassError.value = '';
 
   try {
     await adminApi.deleteClass(classId);
@@ -2726,7 +2760,7 @@ async function confirmDeleteClass() {
       variant: 'success',
     });
   } catch (error) {
-    errors.classes = error.message || 'Failed to delete class';
+    deleteClassError.value = error.message || 'Failed to delete class';
   } finally {
     loading.deletingClassId = '';
   }
@@ -2915,6 +2949,29 @@ function closePaperActionMenu() {
 function handlePaperAction(action) {
   closePaperActionMenu();
   action();
+}
+
+async function sealPaper(paper) {
+  if (!paper?.paperId || loading.sealingPaperId) return;
+
+  loading.sealingPaperId = String(paper.paperId);
+  try {
+    await adminApi.sealPaper(paper.paperId);
+    await loadPapers();
+    showActionToast({
+      title: 'Paper ready',
+      message: 'Paper sealed and ready for exam releases.',
+      variant: 'success',
+    });
+  } catch (error) {
+    showActionToast({
+      title: 'Unable to seal paper',
+      message: error.message || 'Review the paper before sealing it.',
+      variant: 'error',
+    });
+  } finally {
+    loading.sealingPaperId = '';
+  }
 }
 
 function openPaperEditor(paper) {
@@ -3151,22 +3208,20 @@ onBeforeUnmount(() => {
             <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
+        <button
+          class="admin-refresh-button dashboard-review-refresh-button"
+          :class="{ 'admin-refresh-button--loading': wrongAnswerTaskLoading }"
+          type="button"
+          :disabled="wrongAnswerTaskLoading"
+          aria-label="Refresh review assignments"
+          title="Refresh review assignments"
+          @click="loadWrongAnswerTasks"
+        >
+          <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <template v-if="!assignedReviewCollapsed">
-        <div class="dashboard-review-toolbar">
-          <button
-            class="admin-refresh-button"
-            :class="{ 'admin-refresh-button--loading': wrongAnswerTaskLoading }"
-            type="button"
-            :disabled="wrongAnswerTaskLoading"
-            aria-label="Refresh review assignments"
-            title="Refresh review assignments"
-            @click="loadWrongAnswerTasks"
-          >
-            <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-        </div>
         <div v-if="wrongAnswerTaskLoading" class="admin-state">Loading review assignments...</div>
         <div v-else-if="wrongAnswerTaskError" class="admin-state admin-state--error">
           <p>{{ wrongAnswerTaskError }}</p>
@@ -3350,10 +3405,18 @@ onBeforeUnmount(() => {
                             :open="openPaperActionMenuId === paper.paperId"
                             @update:open="setPaperActionMenuOpen(paper.paperId, $event)"
                           >
-                            <button type="button" @click="handlePaperAction(() => openMoveModal(paper))">Move</button>
+                            <button type="button" @click="handlePaperAction(() => openMoveModal(paper, group.groupId))">Move</button>
                             <button type="button" @click="handlePaperAction(() => loadPaperDetail(paper.paperId))">Detail</button>
                             <button type="button" @click="handlePaperAction(() => openPaperEditModal(paper))">Edit Info</button>
                             <button type="button" @click="handlePaperAction(() => openPaperEditor(paper))">Edit Paper</button>
+                            <button
+                              v-if="paper.status === 'DRAFT'"
+                              type="button"
+                              :disabled="loading.sealingPaperId === String(paper.paperId)"
+                              @click="handlePaperAction(() => sealPaper(paper))"
+                            >
+                              {{ loading.sealingPaperId === String(paper.paperId) ? 'Sealing...' : 'Seal' }}
+                            </button>
                             <button type="button" @click="handlePaperAction(() => openPaperPreview(paper))">Preview</button>
                             <button type="button" @click="handlePaperAction(() => openPaperExport(paper))">Export PDF</button>
                             <button
@@ -3842,7 +3905,7 @@ onBeforeUnmount(() => {
 
           <p v-if="notices.examForm" class="success-text admin-toolbar__message">{{ notices.examForm }}</p>
           <div v-if="loading.exams" class="admin-state">Loading exams...</div>
-          <div v-else-if="errors.exams" class="admin-state admin-state--error">{{ errors.exams }}</div>
+          <div v-else-if="errors.exams && !selectedPublishExam" class="admin-state admin-state--error">{{ errors.exams }}</div>
           <div v-else-if="exams.length === 0" class="admin-state">No exam releases yet.</div>
           <div v-else-if="filteredExamReleases.length === 0" class="admin-state">No active or upcoming releases match the current filters.</div>
           <div v-else class="table-wrap exam-release-table-wrap">
@@ -3949,7 +4012,6 @@ onBeforeUnmount(() => {
 
           <template v-if="!historicalExamsCollapsed">
           <div v-if="loading.exams" class="admin-state">Loading historical exams...</div>
-          <div v-else-if="errors.exams" class="admin-state admin-state--error">{{ errors.exams }}</div>
           <div v-else-if="historicalExamReleases.length === 0" class="admin-state">No ended exams yet.</div>
           <div v-else class="table-wrap exam-release-table-wrap">
             <AdminDataTable class="exam-release-table exam-release-table--history">
@@ -4096,10 +4158,9 @@ onBeforeUnmount(() => {
               </div>
 
               <p class="publish-confirm-note">
-                {{ selectedPublishExam.published
-                  ? 'Students will no longer be able to start new attempts after this exam is unpublished.'
-                  : 'Students in the selected audience will see this release when the time window allows access.' }}
+                {{ getPublishConfirmNote(selectedPublishExam) }}
               </p>
+              <p v-if="errors.exams" class="publish-confirm-error" role="alert">{{ errors.exams }}</p>
 
               <footer class="modal-card__footer">
                 <AppButton variant="secondary" type="button" :disabled="loading.exams" @click="closePublishConfirm">Cancel</AppButton>
@@ -4978,6 +5039,7 @@ onBeforeUnmount(() => {
                 <p class="publish-confirm-note publish-confirm-note--danger">
                   Only classes without students can be deleted. This cannot be undone.
                 </p>
+                <p v-if="deleteClassError" class="error-text" role="alert">{{ deleteClassError }}</p>
                 <footer class="modal-card__footer">
                   <AppButton variant="secondary" type="button" :disabled="Boolean(loading.deletingClassId)" @click="closeDeleteClassConfirm">Cancel</AppButton>
                   <AppButton type="button" :disabled="Boolean(loading.deletingClassId)" @click="confirmDeleteClass">
@@ -5032,6 +5094,12 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 22px;
   right: clamp(20px, 3vw, 28px);
+}
+
+.dashboard-review-card > .dashboard-review-refresh-button {
+  position: absolute;
+  top: 22px;
+  right: calc(clamp(20px, 3vw, 28px) + 42px);
 }
 
 .card-top-actions {
@@ -5328,13 +5396,6 @@ onBeforeUnmount(() => {
 .admin-state--error {
   color: var(--color-danger);
   background: #fff5f6;
-}
-
-.dashboard-review-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: -4px 0 14px;
 }
 
 .dashboard-review-grid {
@@ -5944,7 +6005,7 @@ onBeforeUnmount(() => {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 1300;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -5987,6 +6048,8 @@ onBeforeUnmount(() => {
 
 .publish-confirm-modal {
   width: min(540px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
   gap: 14px;
   padding: 20px;
 }
@@ -6142,6 +6205,20 @@ onBeforeUnmount(() => {
   opacity: 0.74;
 }
 
+@media (max-width: 600px) {
+  .paper-delete-confirm .modal-card__footer {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .paper-delete-confirm .modal-card__footer .app-button {
+    flex: 0 0 auto;
+    padding: 0 10px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+}
+
 .publish-confirm-details {
   display: grid;
   gap: 8px;
@@ -6182,6 +6259,17 @@ onBeforeUnmount(() => {
 .publish-confirm-note--danger {
   color: #8a1f11;
   background: #fff1ed;
+}
+
+.publish-confirm-error {
+  margin: 0;
+  border: 1px solid rgba(199, 55, 71, 0.28);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #8a1f11;
+  background: #fff1f2;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .publish-structure-warning {
@@ -6821,6 +6909,14 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .table-pagination__actions {
+    flex-wrap: wrap;
+    max-width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 .table-pagination__page-size {

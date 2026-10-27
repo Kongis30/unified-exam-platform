@@ -11,7 +11,9 @@ final class StudentReportSanitizer {
         if (!scoreVisible) {
             for (String field : List.of("totalScore", "totalMaxScore", "rawTotalScore", "elaRawScore", "mathRawScore",
                     "elaScaledScore", "mathScaledScore", "elaRawMaxScore", "mathRawMaxScore", "section1Score",
-                    "section2Score", "correctCount", "wrongCount", "accuracy", "estimated", "scoringMode")) {
+                    "section2Score", "section1ScaledScore", "section2ScaledScore", "elaScaledMaxScore",
+                    "mathScaledMaxScore", "compositeScore", "compositeMaxScore", "totalScaledScore",
+                    "totalScaledMaxScore", "correctCount", "wrongCount", "accuracy", "estimated", "scoringMode")) {
                 report.put(field, null);
             }
             removeQuestionFields(report, List.of("score", "maxScore"));

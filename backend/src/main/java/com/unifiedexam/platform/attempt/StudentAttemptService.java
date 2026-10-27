@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.unifiedexam.platform.examtype.ExamTypeModule;
 import com.unifiedexam.platform.examtype.ExamTypeRegistry;
+import com.unifiedexam.platform.examtype.shsat.ShsatScoreScaleService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
 
 /** 学生作答生命周期：由学生 API 调用，公共服务处理资格和状态，类型模块负责题型评分。 */
 @Service
@@ -30,12 +33,14 @@ public class StudentAttemptService {
     private final JdbcTemplate jdbcTemplate;
     private final ExamTypeRegistry examTypeRegistry;
     private final ObjectMapper objectMapper;
+    private final ShsatScoreScaleService shsatScoreScaleService;
 
     public StudentAttemptService(JdbcTemplate jdbcTemplate, ExamTypeRegistry examTypeRegistry,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper, ShsatScoreScaleService shsatScoreScaleService) {
         this.jdbcTemplate = jdbcTemplate;
         this.examTypeRegistry = examTypeRegistry;
         this.objectMapper = objectMapper;
+        this.shsatScoreScaleService = shsatScoreScaleService;
     }
 
     /** 锁定考试行，串行化同一场考试的并发开考请求并创建固定题目顺序。 */
@@ -359,8 +364,9 @@ public class StudentAttemptService {
         return getOwnedAttempt(attemptId, account(username).id());
     }
 
+    /** 按客户端正在提交的科目推进分段；旧请求重试时拒绝误推进到下一科。 */
     @Transactional
-    public AttemptView submitSection(long attemptId, String username) {
+    public AttemptView submitSection(long attemptId, String expectedSection, String username) {
         long studentId = account(username).id();
         AttemptState attempt = lockOwnedAttempt(attemptId, studentId);
         requireInProgress(attempt);
@@ -370,6 +376,10 @@ public class StudentAttemptService {
         JsonNode state = jdbcTemplate.query("SELECT flow_json FROM shsat_attempt_state WHERE attempt_id = ? FOR UPDATE",
             rs -> rs.next() ? parseNullable(rs.getString(1)) : null, attemptId);
         String current = state == null ? "ELA" : state.path("currentSection").asText("ELA");
+        if (!current.equalsIgnoreCase(expectedSection)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "This section has changed. Refresh the exam before submitting again.");
+        }
         ArrayNode order = state != null && state.path("selectedSectionOrder").isArray()
             ? (ArrayNode) state.path("selectedSectionOrder") : objectMapper.createArrayNode().add("ELA").add("MATH");
         int index = -1;
@@ -378,18 +388,33 @@ public class StudentAttemptService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "There is no remaining section to open.");
         }
         String next = order.get(index + 1).asText();
-        Integer unanswered = jdbcTemplate.queryForObject("""
-            SELECT COUNT(*) FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+        List<SectionAnswer> sectionAnswers = jdbcTemplate.query("""
+            SELECT pi.display_number, aa.answer_json
+            FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
             JOIN paper_sections section ON section.id = pi.section_id
             LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
-            WHERE ai.attempt_id = ? AND COALESCE(parent.section_code, section.section_code) = ? AND aa.paper_item_id IS NULL
-            """, Integer.class, attemptId, current);
-        if (unanswered != null && unanswered > 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Complete this section before submitting.");
+            WHERE ai.attempt_id = ? AND COALESCE(parent.section_code, section.section_code) = ?
+            ORDER BY pi.display_number
+            """, (rs, rowNum) -> new SectionAnswer(rs.getInt("display_number"),
+                parseNullable(rs.getString("answer_json"))), attemptId, current);
+        if (!attempt.practice()) {
+            ExamTypeModule module = registeredModule(attempt.examTypeCode());
+            List<Integer> unanswered = sectionAnswers.stream()
+                .filter(answer -> !module.hasMeaningfulAnswer(answer.answer()))
+                .map(SectionAnswer::questionNumber)
+                .toList();
+            if (!unanswered.isEmpty()) {
+                String numbers = unanswered.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", "));
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Complete this section before submitting. Unanswered questions: " + numbers + ".");
+            }
         }
         ObjectNode updated = objectMapper.createObjectNode();
         updated.set("selectedSectionOrder", order);
+        if (state != null && state.path("markedQuestionIds").isArray()) {
+            updated.set("markedQuestionIds", state.path("markedQuestionIds").deepCopy());
+        }
         ArrayNode completed = state != null && state.path("completedSections").isArray()
             ? (ArrayNode) state.path("completedSections") : objectMapper.createArrayNode();
         if (!completed.toString().contains("\"" + current + "\"")) completed.add(current);
@@ -398,6 +423,9 @@ public class StudentAttemptService {
         updated.set("currentOpenGroup", objectMapper.createObjectNode());
         updated.set("lockedGroups", objectMapper.createArrayNode());
         updated.set("lockedQuestions", objectMapper.createArrayNode());
+        if (state != null && state.has("focusViolationCount")) {
+            updated.set("focusViolationCount", state.get("focusViolationCount"));
+        }
         jdbcTemplate.update("UPDATE shsat_attempt_state SET active_section_code = ?, flow_json = CAST(? AS JSON) WHERE attempt_id = ?",
             next, json(updated), attemptId);
         return getOwnedAttempt(attemptId, studentId);
@@ -433,9 +461,10 @@ public class StudentAttemptService {
             """, Integer.class, attemptId);
     }
 
-    /** 只接收本次考试快照中的题目 ID；答题内容按 JSON 原样保存。 */
+    /** 只接收本次考试快照中的题目 ID；答题记录不包含独立的书签状态。 */
     @Transactional
-    public AttemptView saveAnswer(long attemptId, long paperItemId, JsonNode answer, Integer timeSpentSeconds, String username) {
+    public AttemptView saveAnswer(long attemptId, long paperItemId, JsonNode answer, Integer timeSpentSeconds,
+                                  String username) {
         long studentId = account(username).id();
         AttemptState attempt = lockOwnedAttempt(attemptId, studentId);
         requireInProgress(attempt);
@@ -481,6 +510,34 @@ public class StudentAttemptService {
                 answered_at = CURRENT_TIMESTAMP(6)
             """, attemptId, paperItemId, json(answer), timeSpentSeconds == null ? 0 : timeSpentSeconds);
         if ("SHSAT".equals(attempt.examTypeCode())) updateShsatAttemptState(attemptId, paperItemId);
+        return getOwnedAttempt(attemptId, studentId);
+    }
+
+    /** 单独保存 SHSAT 书签，避免空答案被错误写成已答题记录。 */
+    @Transactional
+    public AttemptView setBookmark(long attemptId, long paperItemId, Boolean marked, String username) {
+        long studentId = account(username).id();
+        AttemptState attempt = lockOwnedAttempt(attemptId, studentId);
+        requireInProgress(attempt);
+        if (!"SHSAT".equals(attempt.examTypeCode())) throw notFound("Question not found in this attempt.");
+        Boolean belongs = jdbcTemplate.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM attempt_items WHERE attempt_id = ? AND paper_item_id = ?)",
+            Boolean.class, attemptId, paperItemId);
+        if (!Boolean.TRUE.equals(belongs)) throw notFound("Question not found in this attempt.");
+
+        JsonNode currentState = jdbcTemplate.query("SELECT flow_json FROM shsat_attempt_state WHERE attempt_id = ? FOR UPDATE",
+            rs -> rs.next() ? parseNullable(rs.getString(1)) : null, attemptId);
+        ObjectNode flow = currentState != null && currentState.isObject()
+            ? ((ObjectNode) currentState).deepCopy() : objectMapper.createObjectNode();
+        ArrayNode marks = flow.path("markedQuestionIds").isArray()
+            ? ((ArrayNode) flow.path("markedQuestionIds")).deepCopy() : objectMapper.createArrayNode();
+        for (int index = marks.size() - 1; index >= 0; index--) {
+            if (marks.get(index).asLong() == paperItemId) marks.remove(index);
+        }
+        if (Boolean.TRUE.equals(marked)) marks.add(paperItemId);
+        flow.set("markedQuestionIds", marks);
+        jdbcTemplate.update("UPDATE shsat_attempt_state SET flow_json = CAST(? AS JSON) WHERE attempt_id = ?",
+            json(flow), attemptId);
         return getOwnedAttempt(attemptId, studentId);
     }
 
@@ -545,13 +602,28 @@ public class StudentAttemptService {
                 points, item.maxPoints(), correct);
         }
         ResultProfile profile = loadResultProfile(attemptId);
+        ShsatScoreScaleService.Result scaledResult = null;
+        if ("SHSAT".equals(attempt.examTypeCode())) {
+            Map<String, BigDecimal> sectionRawScores = new LinkedHashMap<>();
+            for (String code : List.of("ELA", "MATH")) {
+                BreakdownAccumulator section = resultBreakdowns.get(code);
+                sectionRawScores.put(code, section == null ? BigDecimal.ZERO : section.score);
+            }
+            scaledResult = shsatScoreScaleService.calculate(profile.id(), sectionRawScores);
+            applyScaledSections(resultBreakdowns, scaledResult);
+        }
+        Long scoringProfileId = scaledResult != null && scaledResult.scoringProfileId() != null
+            ? scaledResult.scoringProfileId() : profile.id();
+        String algorithmVersion = scaledResult != null && scaledResult.algorithmVersion() != null
+            ? scaledResult.algorithmVersion() : profile.version();
+        boolean estimated = scaledResult == null ? profile.estimated() : scaledResult.estimated();
         jdbcTemplate.update("""
             INSERT INTO attempt_results
                 (attempt_id, scoring_profile_id, algorithm_version, total_points, max_points,
                  ungraded_count, breakdown_schema_version, is_estimated, breakdown_json)
             VALUES (?, ?, ?, ?, ?, ?, 1, ?, CAST(? AS JSON))
-            """, attemptId, profile.id(), profile.version(), total, maximum, ungradedCount,
-            profile.estimated(), json(breakdown));
+            """, attemptId, scoringProfileId, algorithmVersion, total, maximum, ungradedCount,
+            estimated, json(breakdown));
         persistResultBreakdowns(attemptId, sections, resultBreakdowns);
         jdbcTemplate.update("UPDATE attempts SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP(6) WHERE id = ?", attemptId);
         updateWrongAnswerAssignmentStatus(attemptId);
@@ -625,20 +697,35 @@ public class StudentAttemptService {
         if ("SUBMITTED".equals(summary.status()) && !owned.allowReview()) {
             return summary;
         }
+        Set<Long> markedQuestionIds = readMarkedQuestionIds(summary.progressState());
         List<AttemptQuestion> questions = jdbcTemplate.query("""
             SELECT ai.paper_item_id, q.question_type_code, q.payload_schema_version, q.stem, q.render_json,
                    pi.display_number, pi.max_points, section.section_code, section.title AS section_title,
                    parent.section_code AS parent_section_code, parent.title AS parent_section_title,
-                   aa.answer_json, sm.id AS sat_material_id, sm.title AS sat_material_title,
+                   aa.answer_json, COALESCE(aa.is_marked_for_review, FALSE) AS is_marked_for_review,
+                   sm.id AS sat_material_id, sm.title AS sat_material_title,
                    sm.material_type AS sat_material_type, sm.content AS sat_material_content,
-                   sm.file_url AS sat_material_file_url
+                   sm.file_url AS sat_material_file_url,
+                   COALESCE(shsm.id, shpm.id) AS shsat_material_id,
+                   COALESCE(shsm.title, shpm.title) AS shsat_material_title,
+                   COALESCE(shsm.material_type, shpm.material_type) AS shsat_material_type,
+                   COALESCE(shsm.category, shpm.category) AS shsat_material_category,
+                   COALESCE(shsm.content, shpm.content) AS shsat_material_content,
+                   COALESCE(shsm.asset_key, shpm.asset_key) AS shsat_material_asset_key
             FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
             JOIN questions q ON q.id = pi.question_id
             JOIN paper_sections section ON section.id = pi.section_id
+            JOIN papers p ON p.id = section.paper_id
             LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
             LEFT JOIN sat_question_materials sqm ON sqm.question_id = q.id
             LEFT JOIN sat_materials sm ON sm.id = sqm.material_id
+            LEFT JOIN shsat_section_materials shsm ON p.exam_type_code = 'SHSAT'
+                AND shsm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+                AND (shsm.section_id = section.id OR shsm.section_id = parent.id)
+            LEFT JOIN shsat_paper_materials shpm ON p.exam_type_code = 'SHSAT' AND shsm.id IS NULL
+                AND shpm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+                AND shpm.paper_id = p.id
             WHERE ai.attempt_id = ? ORDER BY ai.served_order
             """, (rs, rowNum) -> {
                 JsonNode display = parseNullable(rs.getString("render_json"));
@@ -652,16 +739,42 @@ public class StudentAttemptService {
                     material.put("assetUrl", rs.getString("sat_material_file_url"));
                     enrichedDisplay.set("material", material);
                     display = enrichedDisplay;
+                } else if (rs.getObject("shsat_material_id") != null) {
+                    ObjectNode enrichedDisplay = display != null && display.isObject()
+                        ? ((ObjectNode) display).deepCopy() : objectMapper.createObjectNode();
+                    ObjectNode material = objectMapper.createObjectNode();
+                    material.put("title", rs.getString("shsat_material_title"));
+                    material.put("type", rs.getString("shsat_material_type"));
+                    material.put("category", rs.getString("shsat_material_category"));
+                    material.put("content", rs.getString("shsat_material_content"));
+                    material.put("assetUrl", shsatMaterialAssetUrl(rs.getString("shsat_material_asset_key")));
+                    enrichedDisplay.set("material", material);
+                    display = enrichedDisplay;
                 }
                 return new AttemptQuestion(rs.getLong("paper_item_id"), rs.getString("question_type_code"),
                     rs.getInt("payload_schema_version"), rs.getString("stem"), display,
                     (Integer) rs.getObject("display_number"), rs.getString("section_code"), rs.getString("section_title"),
                     rs.getString("parent_section_code"), rs.getString("parent_section_title"),
-                    rs.getBigDecimal("max_points"), parseNullable(rs.getString("answer_json")));
+                    rs.getBigDecimal("max_points"), parseNullable(rs.getString("answer_json")),
+                    rs.getBoolean("is_marked_for_review") || markedQuestionIds.contains(rs.getLong("paper_item_id")));
             }, attemptId);
         return new AttemptView(summary.id(), summary.examId(), summary.paperId(), summary.examTitle(), summary.examTypeCode(), summary.status(),
             summary.autoSubmit(), summary.practice(), summary.startedAt(), summary.expiresAt(), summary.submittedAt(), questions,
             summary.result(), summary.progressState());
+    }
+
+    private String shsatMaterialAssetUrl(String assetKey) {
+        if (assetKey == null || assetKey.isBlank()) return null;
+        if (assetKey.startsWith("http://") || assetKey.startsWith("https://") || assetKey.startsWith("/")) return assetKey;
+        return "/uploads/paper-materials/" + assetKey;
+    }
+
+    /** 从 SHSAT 流程状态提取独立保存的书签题目 ID。 */
+    private Set<Long> readMarkedQuestionIds(JsonNode progressState) {
+        Set<Long> ids = new HashSet<>();
+        JsonNode marks = progressState == null ? null : progressState.path("markedQuestionIds");
+        if (marks != null && marks.isArray()) marks.forEach(value -> ids.add(value.asLong()));
+        return ids;
     }
 
     private AttemptState lockOwnedAttempt(long attemptId, long studentId) {
@@ -827,11 +940,22 @@ public class StudentAttemptService {
             jdbcTemplate.update("""
                 INSERT INTO attempt_result_breakdowns
                     (attempt_id, breakdown_code, parent_breakdown_code, dimension_kind, display_name,
-                     sort_order, raw_score, raw_max_score, metrics_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON))
+                     sort_order, raw_score, raw_max_score, scaled_score, scaled_max_score, metrics_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON))
                 """, attemptId, value.code, value.parentCode, value.kind, value.name, value.sortOrder,
-                value.score, value.maximum, json(metrics));
+                value.score, value.maximum, value.scaledScore, value.scaledMaximum, json(metrics));
         }
+    }
+
+    private void applyScaledSections(Map<String, BreakdownAccumulator> breakdowns,
+                                     ShsatScoreScaleService.Result result) {
+        result.sections().forEach((code, scaled) -> {
+            BreakdownAccumulator section = breakdowns.get(code);
+            if (section != null) {
+                section.scaledScore = BigDecimal.valueOf(scaled.scaledScore());
+                section.scaledMaximum = BigDecimal.valueOf(scaled.scaledMaxScore());
+            }
+        });
     }
 
     private int breakdownDepth(BreakdownAccumulator value, Map<Long, PaperSection> sections) {
@@ -903,6 +1027,8 @@ public class StudentAttemptService {
         private final int sortOrder;
         private BigDecimal score = BigDecimal.ZERO;
         private BigDecimal maximum = BigDecimal.ZERO;
+        private BigDecimal scaledScore;
+        private BigDecimal scaledMaximum;
         private int correctCount;
         private int incorrectCount;
         private int ungradedCount;
@@ -926,10 +1052,11 @@ public class StudentAttemptService {
     public record AttemptQuestion(long paperItemId, String questionTypeCode, int payloadSchemaVersion,
                                   String stem, JsonNode display, Integer displayNumber,
                                   String sectionCode, String sectionTitle, String parentSectionCode,
-                                  String parentSectionTitle, BigDecimal maxPoints, JsonNode answer) { }
+                                  String parentSectionTitle, BigDecimal maxPoints, JsonNode answer, boolean marked) { }
     public record AttemptView(long id, long examId, long paperId, String examTitle, String examTypeCode, String status,
                               boolean autoSubmit, boolean practice,
                               String startedAt, String expiresAt, String submittedAt,
                               List<AttemptQuestion> questions, AttemptResultView result, JsonNode progressState) { }
     public record AttemptResultView(BigDecimal totalPoints, BigDecimal maxPoints, String gradedAt) { }
+    private record SectionAnswer(int questionNumber, JsonNode answer) { }
 }

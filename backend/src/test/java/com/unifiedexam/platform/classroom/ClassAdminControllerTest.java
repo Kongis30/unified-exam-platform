@@ -298,4 +298,35 @@ class ClassAdminControllerTest {
         assertEquals(new java.math.BigDecimal("20.00"), result.get(0).averageRawScore());
         assertEquals(new java.math.BigDecimal("660.00"), result.get(0).averageScaledScore());
     }
+
+    @Test
+    void classScoreTrendUsesShsatSectionRawAndScaledBreakdowns() throws Exception {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            RowMapper<ClassAdminController.TrendAttemptRow> mapper = invocation.getArgument(1);
+            ResultSet row = mock(ResultSet.class);
+            when(row.getLong("exam_id")).thenReturn(43L);
+            when(row.getString("exam_title")).thenReturn("SHSAT Exam");
+            when(row.getString("exam_type_code")).thenReturn("SHSAT");
+            when(row.getTimestamp("exam_date")).thenReturn(Timestamp.valueOf(LocalDateTime.of(2026, 10, 21, 9, 0)));
+            when(row.getBigDecimal("total_points")).thenReturn(new java.math.BigDecimal("11"));
+            when(row.getBigDecimal("shsat_ela_raw")).thenReturn(new java.math.BigDecimal("4"));
+            when(row.getBigDecimal("shsat_math_raw")).thenReturn(new java.math.BigDecimal("7"));
+            when(row.getBigDecimal("shsat_ela_scaled")).thenReturn(new java.math.BigDecimal("40"));
+            when(row.getBigDecimal("shsat_math_scaled")).thenReturn(new java.math.BigDecimal("120"));
+            when(row.getInt("paper_question_count")).thenReturn(100);
+            return List.of(mapper.mapRow(row, 0));
+        });
+
+        var result = new ClassAdminController(jdbcTemplate).classExamScoreTrend(12L, List.of("SHSAT"));
+
+        assertEquals(new java.math.BigDecimal("11.00"), result.get(0).averageRawScore());
+        assertEquals(new java.math.BigDecimal("160.00"), result.get(0).averageScaledScore());
+        verify(jdbcTemplate).query(org.mockito.ArgumentMatchers.argThat(sql ->
+                sql.contains("attempt_result_breakdowns") && sql.contains("shsat_ela_scaled")
+                    && sql.contains("p.exam_type_code = 'SHSAT'")),
+            any(RowMapper.class), org.mockito.ArgumentMatchers.any(Object[].class));
+    }
 }

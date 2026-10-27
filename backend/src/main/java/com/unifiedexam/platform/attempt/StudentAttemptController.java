@@ -50,8 +50,9 @@ public class StudentAttemptController {
     }
 
     @PostMapping("/attempts/{attemptId}/sections/submit")
-    public StudentAttemptService.AttemptView submitSection(@PathVariable long attemptId, Authentication authentication) {
-        return attemptService.submitSection(attemptId, authentication.getName());
+    public StudentAttemptService.AttemptView submitSection(@PathVariable long attemptId,
+            @Valid @RequestBody SectionSubmissionRequest request, Authentication authentication) {
+        return attemptService.submitSection(attemptId, request.sectionCode(), authentication.getName());
     }
 
     @PostMapping("/attempts/{attemptId}/presence")
@@ -69,7 +70,15 @@ public class StudentAttemptController {
     public StudentAttemptService.AttemptView saveAnswer(@PathVariable long attemptId,
             @PathVariable long paperItemId, @Valid @RequestBody AnswerRequest request,
             Authentication authentication) {
-        return attemptService.saveAnswer(attemptId, paperItemId, request.answer(), request.timeSpentSeconds(), authentication.getName());
+        return attemptService.saveAnswer(attemptId, paperItemId, request.answer(), request.timeSpentSeconds(),
+            authentication.getName());
+    }
+
+    @PutMapping("/attempts/{attemptId}/bookmarks/{paperItemId}")
+    public StudentAttemptService.AttemptView setBookmark(@PathVariable long attemptId,
+            @PathVariable long paperItemId, @Valid @RequestBody BookmarkRequest request,
+            Authentication authentication) {
+        return attemptService.setBookmark(attemptId, paperItemId, request.marked(), authentication.getName());
     }
 
     @PostMapping("/attempts/{attemptId}/submit")
@@ -78,6 +87,8 @@ public class StudentAttemptController {
     }
 
     public record AnswerRequest(@NotNull JsonNode answer, @PositiveOrZero Integer timeSpentSeconds) { }
+    public record BookmarkRequest(@NotNull Boolean marked) { }
     public record StartRequest(@Pattern(regexp = "(?i)ELA|MATH") String firstSection) { }
+    public record SectionSubmissionRequest(@NotNull @Pattern(regexp = "(?i)ELA|MATH") String sectionCode) { }
     public record PresenceRequest(@Positive int questionNumber) { }
 }

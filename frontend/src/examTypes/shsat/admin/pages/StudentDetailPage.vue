@@ -130,7 +130,9 @@ function getAvailableScore(attempt) {
 }
 
 function getAvailableScoreMax(attempt) {
-  const value = hasScaledScoring(attempt) ? Number(attempt.compositeMaxScore) : SHSAT_TOTAL_RAW_MAX;
+  const value = hasScaledScoring(attempt)
+    ? Number(attempt.compositeMaxScore)
+    : Number(attempt.rawTotalMaxScore ?? attempt.totalRawMaxScore ?? SHSAT_TOTAL_RAW_MAX);
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
@@ -258,6 +260,22 @@ function formatScore(value) {
   return value === null || value === undefined || value === '' ? '-' : Number(value).toString();
 }
 
+// 依据当前成绩跨度选取易读的纵轴刻度，避免单次记录时出现长小数标签。
+function getScoreAxisBounds(minimum, maximum) {
+  const range = Math.max(maximum - minimum, 1);
+  const roughInterval = range / 5;
+  const magnitude = 10 ** Math.floor(Math.log10(roughInterval));
+  const normalizedInterval = roughInterval / magnitude;
+  const intervalFactor = normalizedInterval <= 1 ? 1 : normalizedInterval <= 2 ? 2 : normalizedInterval <= 5 ? 5 : 10;
+  const interval = intervalFactor * magnitude;
+
+  return {
+    interval,
+    min: Math.max(0, Math.floor(minimum / interval) * interval),
+    max: Math.ceil(maximum / interval) * interval,
+  };
+}
+
 function getScaledScore(attempt) {
   if (!hasScaledScoring(attempt)) {
     return null;
@@ -278,14 +296,18 @@ function formatScaledScore(attempt) {
 }
 
 function formatRawScore(attempt) {
-  return formatScoreWithMax(attempt.rawTotalScore ?? attempt.totalScore, SHSAT_TOTAL_RAW_MAX);
+  return formatScoreWithMax(attempt.rawTotalScore ?? attempt.totalScore,
+    attempt.rawTotalMaxScore ?? attempt.totalRawMaxScore ?? SHSAT_TOTAL_RAW_MAX);
 }
 
 function getSectionRawScore(attempt, sectionCode) {
   const value = sectionCode === 'ELA'
     ? attempt.elaRawScore ?? attempt.section1Score
     : attempt.mathRawScore ?? attempt.section2Score;
-  return formatScoreWithMax(value, SHSAT_SECTION_RAW_MAX);
+  const maxScore = sectionCode === 'ELA'
+    ? attempt.elaRawMaxScore ?? SHSAT_SECTION_RAW_MAX
+    : attempt.mathRawMaxScore ?? SHSAT_SECTION_RAW_MAX;
+  return formatScoreWithMax(value, maxScore);
 }
 
 function getSectionScaledScore(attempt, sectionCode) {
@@ -418,7 +440,8 @@ async function renderTrendChart() {
     .map(Number);
   const scoreMin = Math.min(...chartScores);
   const scoreMax = Math.max(...chartScores);
-  const constantScorePadding = Math.max(1, Math.abs(scoreMin) * 0.05);
+  const scorePadding = Math.max(1, (scoreMax - scoreMin) * 0.08, Math.abs(scoreMin) * 0.02);
+  const scoreAxis = getScoreAxisBounds(Math.max(0, scoreMin - scorePadding), scoreMax + scorePadding);
   trendChart.setOption({
     title: {
       text: 'Score Trend Over Time',
@@ -447,20 +470,25 @@ async function renderTrendChart() {
     },
     yAxis: {
       type: 'value',
-      name: scaled ? 'Scaled Score' : 'Raw Score',
-      min: scoreMin === scoreMax ? Math.max(0, scoreMin - constantScorePadding) : scoreMin,
-      max: scoreMin === scoreMax ? scoreMax + constantScorePadding : scoreMax,
+      name: trendChart.getWidth() < 480 ? '' : scaled ? 'Scaled Score' : 'Raw Score',
+      min: scoreAxis.min,
+      max: scoreAxis.max,
+      interval: scoreAxis.interval,
+      axisLabel: {
+        formatter: (value) => Number.isInteger(value) ? String(value) : Number(value.toFixed(1)).toString(),
+      },
     },
     series: [
-      { name: 'Total Score', type: 'line', data: rows.map((item) => item.total), itemStyle: { color: '#409EFF' }, lineStyle: { width: 3 }, symbol: 'circle', symbolSize: 7, connectNulls: false },
-      { name: 'ELA', type: 'line', data: rows.map((item) => item.ela), itemStyle: { color: '#67C23A' }, lineStyle: { width: 2 }, symbol: 'circle', symbolSize: 6, connectNulls: false },
-      { name: 'Math', type: 'line', data: rows.map((item) => item.math), itemStyle: { color: '#E6A23C' }, lineStyle: { width: 2 }, symbol: 'circle', symbolSize: 6, connectNulls: false },
+      { name: 'Total Score', type: 'line', data: rows.map((item) => item.total), itemStyle: { color: '#409EFF' }, lineStyle: { width: 3 }, symbol: 'circle', symbolSize: rows.length === 1 ? 10 : 7, showSymbol: true, label: { show: rows.length === 1, position: 'top', color: '#409EFF', fontWeight: 600 }, connectNulls: false },
+      { name: 'ELA', type: 'line', data: rows.map((item) => item.ela), itemStyle: { color: '#67C23A' }, lineStyle: { width: 2 }, symbol: 'circle', symbolSize: rows.length === 1 ? 9 : 6, showSymbol: true, label: { show: rows.length === 1, position: 'top', color: '#67C23A', fontWeight: 600 }, connectNulls: false },
+      { name: 'Math', type: 'line', data: rows.map((item) => item.math), itemStyle: { color: '#E6A23C' }, lineStyle: { width: 2 }, symbol: 'circle', symbolSize: rows.length === 1 ? 9 : 6, showSymbol: true, label: { show: rows.length === 1, position: 'top', color: '#E6A23C', fontWeight: 600 }, connectNulls: false },
     ],
   }, true);
 }
 
 function resizeTrendChart() {
   trendChart?.resize();
+  void renderTrendChart();
 }
 
 watch([attempts, trendScoreMode], async () => {
@@ -616,7 +644,7 @@ onBeforeUnmount(() => {
                       'history-table__row--attention': needsAttention(attempt),
                     }"
                   >
-                    <td class="history-table__exam-cell">
+                    <td class="history-table__exam-cell" data-label="Exam">
                       <span class="history-exam">{{ attempt.examTitle || 'Exam' }}</span>
                       <span v-if="attempt.paperName" class="history-paper">{{ attempt.paperName }}</span>
                       <div class="history-meta">
@@ -630,7 +658,7 @@ onBeforeUnmount(() => {
                         </span>
                       </div>
                     </td>
-                    <td>
+                    <td data-label="Status">
                       <span
                         class="status-pill"
                         :class="{ 'status-pill--done': isCompleted(attempt) }"
@@ -638,23 +666,23 @@ onBeforeUnmount(() => {
                         {{ formatStatus(attempt.status) }}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Raw score">
                       <div class="history-score-summary">
                         <strong>{{ formatRawScore(attempt) }}</strong>
                         <span>{{ formatSectionBreakdown(attempt, 'RAW') }}</span>
                       </div>
                     </td>
-                    <td>
+                    <td data-label="Scaled score">
                       <div v-if="hasScaledScores(attempt)" class="history-score-summary">
                         <strong>{{ getScaledScore(attempt) === null ? 'Total unavailable' : formatScaledScore(attempt) }}</strong>
                         <span>{{ formatSectionBreakdown(attempt, 'SCALED') }}</span>
                       </div>
                       <span v-else class="history-score-unavailable">Not available</span>
                     </td>
-                    <td>
+                    <td data-label="Submitted">
                       <span class="history-submitted">{{ formatDateTime(attempt.submittedAt) }}</span>
                     </td>
-                    <td class="history-table__actions-cell">
+                    <td class="history-table__actions-cell" data-label="Actions">
                       <AppButton
                         v-if="canOpenAttemptReport(attempt)"
                         class="history-report-button"
@@ -1070,5 +1098,86 @@ onBeforeUnmount(() => {
 @media (max-width: 420px) {
   .summary-grid { grid-template-columns: 1fr; }
   .student-detail :deep(.app-card) { padding: 16px; }
+}
+
+@media (max-width: 640px) {
+  .history-table,
+  .history-table tbody {
+    display: block;
+    min-width: 0;
+  }
+
+  .history-table colgroup,
+  .history-table thead {
+    display: none;
+  }
+
+  .history-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .history-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+  }
+
+  .history-table td,
+  .history-table td:first-child {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    align-items: start;
+    justify-content: initial;
+    gap: 4px;
+    padding: 10px;
+    text-align: left;
+  }
+
+  .history-table td::before {
+    color: var(--color-muted);
+    content: attr(data-label);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-align: left;
+    text-transform: uppercase;
+  }
+
+  .history-table .history-table__exam-cell {
+    display: block;
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .history-table .history-table__exam-cell::before {
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  .history-score-summary {
+    justify-items: start;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .history-score-summary span {
+    white-space: normal;
+  }
+
+  .history-submitted {
+    white-space: normal;
+  }
+
+  .history-table__actions-cell {
+    display: flex !important;
+    grid-column: 1 / -1;
+    align-items: center;
+    justify-content: space-between;
+  }
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
@@ -41,6 +41,11 @@ const examKeyword = ref('');
 let classToastTimer = null;
 
 const classId = computed(() => route.params.classId);
+let restoringClassExamState = false;
+
+function classExamStateKey() {
+  return `shsat-class-exams:${classId.value}`;
+}
 
 const examFilters = reactive({
   sortBy: 'start-desc',
@@ -214,6 +219,37 @@ function goBack() {
 
 function resetClassExamPage() {
   examFilters.page = 1;
+}
+
+// 班级详情跳转成绩或监考页时保存列表条件，返回后由同一班级恢复。
+function saveClassExamState() {
+  try {
+    window.sessionStorage.setItem(classExamStateKey(), JSON.stringify({
+      keyword: examKeyword.value,
+      sortBy: examFilters.sortBy,
+      page: examFilters.page,
+      pageSize: examFilters.pageSize,
+    }));
+  } catch {
+    // 隐私浏览或存储空间受限时仍允许正常导航。
+  }
+}
+
+function restoreClassExamState() {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(classExamStateKey()) || 'null');
+    if (!saved || typeof saved !== 'object') return;
+
+    restoringClassExamState = true;
+    examKeyword.value = typeof saved.keyword === 'string' ? saved.keyword.slice(0, 200) : '';
+    examFilters.sortBy = ['start-asc', 'start-desc'].includes(saved.sortBy) ? saved.sortBy : 'start-desc';
+    examFilters.page = Number.isInteger(saved.page) && saved.page > 0 ? saved.page : 1;
+    examFilters.pageSize = [5, 10, 20].includes(saved.pageSize) ? saved.pageSize : 10;
+  } catch {
+    // 损坏或不可读的旧状态按默认列表显示。
+  } finally {
+    restoringClassExamState = false;
+  }
 }
 
 function goClassExamPage(page) {
@@ -711,7 +747,10 @@ watch(
     examFilters.sortBy,
     examFilters.pageSize,
   ],
-  resetClassExamPage,
+  () => {
+    if (!restoringClassExamState) resetClassExamPage();
+  },
+  { flush: 'sync' },
 );
 
 watch(classExamTotalPages, (totalPages) => {
@@ -720,8 +759,20 @@ watch(classExamTotalPages, (totalPages) => {
   }
 });
 
-onMounted(loadPage);
-onBeforeUnmount(closeClassToast);
+onMounted(() => {
+  restoreClassExamState();
+  loadPage();
+});
+onBeforeRouteUpdate(saveClassExamState);
+onBeforeRouteLeave(saveClassExamState);
+watch(classId, () => {
+  restoreClassExamState();
+  loadPage();
+});
+onBeforeUnmount(() => {
+  saveClassExamState();
+  closeClassToast();
+});
 </script>
 
 <template>
@@ -877,14 +928,14 @@ onBeforeUnmount(closeClassToast);
                       </span>
                     </div>
                   </td>
-                  <td class="class-exam-table__time-cell">{{ formatDateTime(exam.startTime) }}</td>
-                  <td class="class-exam-table__time-cell">{{ formatDateTime(exam.endTime) }}</td>
-                  <td>
+                  <td class="class-exam-table__time-cell class-exam-table__meta-cell class-exam-table__opens-cell">{{ formatDateTime(exam.startTime) }}</td>
+                  <td class="class-exam-table__time-cell class-exam-table__meta-cell class-exam-table__closes-cell">{{ formatDateTime(exam.endTime) }}</td>
+                  <td class="class-exam-table__status-cell">
                     <span class="exam-status-pill" :class="getClassExamStatus(exam).className">
                       {{ getClassExamStatus(exam).label }}
                     </span>
                   </td>
-                  <td class="class-exam-table__actions-cell">
+                  <td class="class-exam-table__actions-cell class-exam-table__meta-cell">
                     <div class="class-exam-table__actions">
                       <AppButton class="class-exam-result-button" @click="viewClassExamScores(exam)">View Results</AppButton>
                       <AppButton class="class-exam-monitor-button" variant="secondary" @click="openExamMonitor(exam)">Monitor</AppButton>
@@ -1956,12 +2007,112 @@ onBeforeUnmount(closeClassToast);
     flex-direction: column;
   }
 
+  .class-exams-toolbar__search {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
   .admin-toolbar__filters {
     justify-content: flex-start;
+  }
+
+  .class-exams-toolbar .admin-toolbar__filters {
+    width: 100%;
   }
 }
 
 @media (max-width: 640px) {
+  .class-exam-table-wrap {
+    overflow: visible;
+  }
+
+  .class-exam-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .class-exam-table colgroup {
+    display: none;
+  }
+
+  .class-exam-table thead {
+    display: none;
+  }
+
+  .class-exam-table tbody {
+    display: grid;
+    width: 100%;
+    gap: 10px;
+  }
+
+  .class-exam-table tbody tr {
+    display: grid;
+    box-sizing: border-box;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    width: 100%;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(30, 64, 120, 0.04);
+  }
+
+  .class-exam-table tbody tr:hover {
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(30, 64, 120, 0.04);
+  }
+
+  .class-exam-table tbody td {
+    min-width: 0;
+    padding: 9px 11px;
+    border: 0;
+    text-align: left !important;
+    white-space: normal;
+  }
+
+  .class-exam-table__exam-cell,
+  .class-exam-table__status-cell,
+  .class-exam-table__actions-cell {
+    grid-column: 1 / -1;
+  }
+
+  .class-exam-table td .class-exam-table__exam-title {
+    font-size: 14px;
+  }
+
+  .class-exam-table__meta-cell::before {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--color-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .class-exam-table__opens-cell::before { content: 'Opens'; }
+  .class-exam-table__closes-cell::before { content: 'Closes'; }
+  .class-exam-table__status-cell::before { content: 'Status'; }
+  .class-exam-table__actions-cell::before { content: 'Actions'; }
+
+  .class-exam-table__time-cell {
+    font-size: 13px;
+    white-space: normal;
+  }
+
+  .class-exam-table__actions-cell {
+    min-width: 0;
+    padding-top: 2px !important;
+  }
+
+  .class-exam-table__actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
   .add-students-table {
     min-width: 100%;
     table-layout: fixed;

@@ -428,7 +428,7 @@ const isExamSessionActive = computed(() => {
 const isExamFullscreenRequired = computed(() => isExamSessionActive.value);
 const canUseFreeQuestionNavigation = computed(() => {
   const role = getUserRole();
-  // Staff and错题练习都使用自由导航，正式学生考试仍保留原有分段边界。
+  // 管理员预览和错题练习使用自由导航，正式学生考试保留分段边界。
   return !isReadOnlyMode.value && (
     isPreviewMode.value
     || isPracticeAttempt.value
@@ -1039,10 +1039,65 @@ function setAnswer(questionNumber, value) {
     ...answers.value,
     [questionNumber]: value,
   };
+  persistLocalAnswerDraft(questionNumber, value);
   const nextSaved = new Set(savedQuestionNumbers.value);
   nextSaved.delete(questionNumber);
   savedQuestionNumbers.value = nextSaved;
   saveMessage.value = '';
+}
+
+// Keep unsaved answers local to this attempt so a refresh during a brief outage can restore them.
+function answerDraftStorageKey() {
+  return attemptId.value ? `shsat-exam:answer-drafts:${attemptId.value}` : '';
+}
+
+function readLocalAnswerDrafts() {
+  const key = answerDraftStorageKey();
+  if (!key) return {};
+  try {
+    const drafts = JSON.parse(localStorage.getItem(key) || '{}');
+    return drafts && typeof drafts === 'object' && !Array.isArray(drafts) ? drafts : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistLocalAnswerDraft(questionNumber, value) {
+  const key = answerDraftStorageKey();
+  if (!key) return;
+  try {
+    const drafts = readLocalAnswerDrafts();
+    drafts[questionNumber] = value;
+    localStorage.setItem(key, JSON.stringify(drafts));
+  } catch {
+    // Storage can be disabled or full; in-memory answers remain available for the current page.
+  }
+}
+
+function clearLocalAnswerDraft(questionNumber) {
+  const key = answerDraftStorageKey();
+  if (!key) return;
+  try {
+    const drafts = readLocalAnswerDrafts();
+    delete drafts[questionNumber];
+    if (Object.keys(drafts).length) {
+      localStorage.setItem(key, JSON.stringify(drafts));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Keep exam flow usable when local storage is unavailable.
+  }
+}
+
+function clearLocalAnswerDrafts() {
+  const key = answerDraftStorageKey();
+  if (!key) return;
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Keep exam flow usable when local storage is unavailable.
+  }
 }
 
 function setAnswerField(questionNumber, fieldName, value) {
@@ -1623,8 +1678,6 @@ function buildAnswerPayload(question) {
     answerData: JSON.stringify(answerData),
     selectedAnswer: choiceQuestion ? answerText : '',
     timeSpent: timeSpentByQuestion.value[question.questionNumber] || 0,
-    bookmarked: false,
-    marked: isMarked(question.questionNumber),
     answerNotes: '',
   };
 }
@@ -1870,7 +1923,7 @@ async function submitSection() {
   submitLoading.value = true;
   try {
     const progressUpdate = unwrapResponse(
-      await studentApi.submitSection(attemptId.value),
+      await studentApi.submitSection(attemptId.value, currentSectionCode.value),
       'Failed to submit this section'
     );
     applyProgressUpdate(progressUpdate);
@@ -1975,19 +2028,27 @@ async function handleReviewQuestionClick(question) {
   await goQuestionByNumber(question.questionNumber);
 }
 
-function toggleMark() {
+// 书签独立保存，避免未作答题因标记而被当成已回答。
+async function toggleMark() {
   if (!currentQuestion.value || isCurrentQuestionReadOnly.value) {
     return;
   }
 
   const questionNumber = currentQuestion.value.questionNumber;
+  const wasMarked = isMarked(questionNumber);
   const nextMarked = new Set(markedQuestionNumbers.value);
-  if (nextMarked.has(questionNumber)) {
-    nextMarked.delete(questionNumber);
-  } else {
-    nextMarked.add(questionNumber);
-  }
+  if (wasMarked) nextMarked.delete(questionNumber);
+  else nextMarked.add(questionNumber);
   markedQuestionNumbers.value = nextMarked;
+
+  try {
+    await studentApi.setQuestionMarked(attemptId.value, currentQuestion.value.questionId, !wasMarked);
+  } catch {
+    const restoredMarks = new Set(markedQuestionNumbers.value);
+    if (wasMarked) restoredMarks.add(questionNumber);
+    else restoredMarks.delete(questionNumber);
+    markedQuestionNumbers.value = restoredMarks;
+  }
 }
 
 async function clearCurrentAnswer() {
@@ -3139,11 +3200,28 @@ function initializeAnswers(attemptData) {
       nextMarked.add(answer.questionNumber);
     }
   });
+  (attemptData.questions || []).forEach((question) => {
+    if (question.marked) nextMarked.add(question.questionNumber);
+  });
+
+  const pendingCleared = new Set();
+  for (const [rawQuestionNumber, draftValue] of Object.entries(readLocalAnswerDrafts())) {
+    const questionNumber = Number(rawQuestionNumber);
+    if (!questions.value.some((question) => question.questionNumber === questionNumber)) continue;
+    const restoredValue = normalizeRestoredAnswerValue(findQuestionByNumber(questionNumber), draftValue);
+    nextAnswers[questionNumber] = restoredValue;
+    nextSaved.delete(questionNumber);
+    if (hasMeaningfulAnswerValue(restoredValue)) {
+      pendingCleared.delete(questionNumber);
+    } else if (nextPersisted.has(questionNumber)) {
+      pendingCleared.add(questionNumber);
+    }
+  }
 
   answers.value = nextAnswers;
   savedQuestionNumbers.value = nextSaved;
   persistedQuestionNumbers.value = nextPersisted;
-  pendingClearedQuestionNumbers.value = new Set();
+  pendingClearedQuestionNumbers.value = pendingCleared;
   markedQuestionNumbers.value = nextMarked;
 }
 
@@ -3227,6 +3305,9 @@ async function saveCurrentAnswer() {
     errorMessage.value = 'This question is locked for the current attempt.';
     return false;
   }
+  if (!buildCurrentAnswerPayload()) {
+    return true;
+  }
   if (isQuestionSaved(currentQuestion.value.questionNumber)) {
     return true;
   }
@@ -3255,6 +3336,7 @@ async function saveAnswer(question) {
     const nextPendingCleared = new Set(pendingClearedQuestionNumbers.value);
     nextPendingCleared.delete(question.questionNumber);
     pendingClearedQuestionNumbers.value = nextPendingCleared;
+    clearLocalAnswerDraft(question.questionNumber);
     savedQuestionNumbers.value = new Set([...savedQuestionNumbers.value, question.questionNumber]);
     persistedQuestionNumbers.value = new Set([...persistedQuestionNumbers.value, question.questionNumber]);
     saveMessage.value = `Question ${question.questionNumber} saved`;
@@ -3348,6 +3430,7 @@ async function submitExam({ autoSubmitted = false, skipConfirm = false } = {}) {
       }),
       'Failed to submit the exam'
     );
+    clearLocalAnswerDrafts();
     attempt.value = {
       ...attempt.value,
       status: result.value.status,

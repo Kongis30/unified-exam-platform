@@ -125,11 +125,12 @@ class ExamReleaseServiceTest {
         assertEquals(1, exams.size());
         assertEquals(55L, exams.get(0).activeAttemptId());
 
-        verify(jdbc).query(argThat(sql -> sql.contains("e.status IN ('PUBLISHED', 'CLOSED')")
+        verify(jdbc).query(argThat(sql -> sql.contains("e.status IN ('PUBLISHED', 'CLOSED', 'DRAFT')")
                 && sql.contains("e.status = 'PUBLISHED' AND e.closes_at > CURRENT_TIMESTAMP(6)")
                 && sql.contains("OR EXISTS (")
                 && sql.contains("a.student_user_id = ep.student_user_id")
                 && sql.contains("a.is_practice = FALSE")
+                && sql.contains("e.status = 'DRAFT' AND a.status = 'IN_PROGRESS'")
                 && sql.contains("a.status = 'IN_PROGRESS' AND a.expires_at <= CURRENT_TIMESTAMP(6)")
                 && sql.contains("a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP(6)")
                 && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED') AND a.is_practice = FALSE) AS latest_attempt_id")),
@@ -156,7 +157,7 @@ class ExamReleaseServiceTest {
         ExamReleaseService.ExamDetail result = service.close(41L);
 
         assertEquals("CLOSED", result.summary().status());
-        verify(jdbc).update("UPDATE exams SET status = 'CLOSED' WHERE id = ?", 41L);
+        verify(jdbc).update("UPDATE exams SET status = 'CLOSED', closes_at = CURRENT_TIMESTAMP(6) WHERE id = ?", 41L);
     }
 
     @Test
@@ -173,18 +174,26 @@ class ExamReleaseServiceTest {
     }
 
     @Test
-    void unpublishRejectsExamAfterStudentsHaveStartedAttempts() {
+    void unpublishPreservesExistingAttemptsAndKeepsTheirActiveParticipants() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
         when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(41L))).thenReturn(false);
         when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq(41L))).thenReturn("PUBLISHED");
         when(jdbc.queryForObject(any(String.class), eq(Integer.class), eq(41L))).thenReturn(1);
+        ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(41L, "SHSAT", 12L,
+            "Practice Paper", "Saturday Test", null, "DRAFT", "SELECTED", "2026-10-24T09:00:00Z",
+            "2026-10-24T12:00:00Z", 7200, 1, true, true, true,
+            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z", null, "No students selected");
+        when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
+            invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
 
-        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.unpublish(41L));
+        ExamReleaseService.ExamDetail result = service.unpublish(41L);
 
-        assertEquals(409, error.getStatusCode().value());
-        verify(jdbc).queryForObject(argThat(sql -> sql.contains("is_practice = FALSE")), eq(Integer.class), eq(41L));
-        verify(jdbc, never()).update(any(String.class), eq(41L));
+        assertEquals("DRAFT", result.summary().status());
+        assertTrue(result.summary().hasStudentAttempts());
+        verify(jdbc).update(argThat(sql -> sql.contains("DELETE FROM exam_participants ep")
+            && sql.contains("NOT EXISTS") && sql.contains("a.is_practice = FALSE")), eq(41L));
+        verify(jdbc).update("UPDATE exams SET status = 'DRAFT', published_at = NULL WHERE id = ?", 41L);
     }
 
     @Test
@@ -213,5 +222,20 @@ class ExamReleaseServiceTest {
 
         assertEquals(404, error.getStatusCode().value());
         verify(jdbc, never()).update(any(String.class), eq(41L));
+    }
+
+    @Test
+    void targetChangesLockExamAndRejectAfterPublishing() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq(41L))).thenReturn("PUBLISHED");
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+            () -> service.saveTargets(41L, new ExamReleaseService.TargetRequest(List.of(7L), List.of())));
+
+        assertEquals(409, error.getStatusCode().value());
+        verify(jdbc).query(argThat(sql -> sql.contains("SELECT status FROM exams WHERE id = ? FOR UPDATE")),
+            any(ResultSetExtractor.class), eq(41L));
+        verify(jdbc, never()).update(any(String.class), any(Object[].class));
     }
 }

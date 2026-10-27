@@ -397,27 +397,28 @@ function formatSectionScore(score, sectionCode) {
     return formatResultNumber(scaledScore);
   }
 
-  const rawScore = sectionCode === 'ELA'
-    ? score?.elaRawScore ?? score?.section1Score
-    : score?.mathRawScore ?? score?.section2Score;
-  return formatRawSection(rawScore);
+  return formatRawSection(score, sectionCode);
 }
 
 function formatSectionDetail(score, sectionCode) {
-  const rawScore = sectionCode === 'ELA'
-    ? score?.elaRawScore ?? score?.section1Score
-    : score?.mathRawScore ?? score?.section2Score;
   return hasScaledScoring(score)
-    ? `Raw ${formatRawSection(rawScore)}`
+    ? `Raw ${formatRawSection(score, sectionCode)}`
     : 'Raw score';
 }
 
 function formatRawTotal(score) {
-  return formatScoreWithMax(score?.rawTotalScore ?? score?.totalScore, SHSAT_TOTAL_RAW_MAX);
+  return formatScoreWithMax(score?.rawTotalScore ?? score?.totalScore,
+    score?.rawTotalMaxScore ?? score?.totalRawMaxScore ?? SHSAT_TOTAL_RAW_MAX);
 }
 
-function formatRawSection(value) {
-  return formatScoreWithMax(value, SHSAT_SECTION_RAW_MAX);
+function formatRawSection(score, sectionCode) {
+  const value = sectionCode === 'ELA'
+    ? score?.elaRawScore ?? score?.section1Score
+    : score?.mathRawScore ?? score?.section2Score;
+  const maxScore = sectionCode === 'ELA'
+    ? score?.elaRawMaxScore ?? SHSAT_SECTION_RAW_MAX
+    : score?.mathRawMaxScore ?? SHSAT_SECTION_RAW_MAX;
+  return formatScoreWithMax(value, maxScore);
 }
 
 function formatScoreWithMax(value, maxScore) {
@@ -466,6 +467,7 @@ function formatDateTime(value) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 
@@ -499,6 +501,7 @@ function formatTimePart(value) {
   return new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 
@@ -664,8 +667,8 @@ onBeforeUnmount(() => {
                         <span
                           class="result-table__th-help"
                           tabindex="0"
-                          data-tooltip="Main number = scaled score when available, otherwise raw x/50."
-                          aria-label="Main number is scaled score when available, otherwise raw out of 50."
+                          data-tooltip="Main number uses the scaled score when available; the raw score is shown otherwise."
+                          aria-label="Main number uses the scaled score when available; the raw score is shown otherwise."
                         >
                           ?
                         </span>
@@ -693,8 +696,8 @@ onBeforeUnmount(() => {
                         <span
                           class="result-table__th-help"
                           tabindex="0"
-                          data-tooltip="Main number = scaled score when available, otherwise raw x/50."
-                          aria-label="Main number is scaled score when available, otherwise raw out of 50."
+                          data-tooltip="Main number uses the scaled score when available; the raw score is shown otherwise."
+                          aria-label="Main number uses the scaled score when available; the raw score is shown otherwise."
                         >
                           ?
                         </span>

@@ -96,8 +96,42 @@ async function main() {
     await page.reload();
     await page.waitForLoadState('networkidle');
     folder = page.locator('.folder-panel').filter({ hasText: renamedFolder });
-    assert.equal(await folder.getByLabel('Delete empty folder').count(), 0,
-      'a non-empty folder cannot expose the empty-folder delete action');
+    await folder.locator('.folder-panel__main-button').click();
+    const paperRow = folder.locator('.paper-table tbody tr').filter({ hasText: `Folder Test Paper ${suffix}` });
+    await paperRow.getByRole('button', { name: 'Paper actions' }).click();
+    await page.getByRole('button', { name: 'Move', exact: true }).click();
+    await page.getByRole('heading', { name: 'Move Paper', exact: true }).waitFor();
+    let moveDialog = page.locator('.modal-card').filter({ has: page.getByRole('heading', { name: 'Move Paper', exact: true }) });
+    assert.equal(await moveDialog.locator('select').inputValue(), String(groupId),
+      'the move dialog selects the paper’s current folder');
+    await moveDialog.locator('select').selectOption('');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).summary.groupId, groupId,
+      'cancelling a paper move keeps the stored folder unchanged');
+
+    await paperRow.getByRole('button', { name: 'Paper actions' }).click();
+    await page.getByRole('button', { name: 'Move', exact: true }).click();
+    await page.getByRole('heading', { name: 'Move Paper', exact: true }).waitFor();
+    moveDialog = page.locator('.modal-card').filter({ has: page.getByRole('heading', { name: 'Move Paper', exact: true }) });
+    await moveDialog.locator('select').selectOption('');
+    await page.screenshot({ path: `/tmp/shsat-folder-move-dialog-${suffix}.png` });
+    const moveResponsePromise = page.waitForResponse(response => response.request().method() === 'PATCH'
+      && new URL(response.url()).pathname.endsWith(`/papers/${paperId}/group`));
+    await page.getByRole('button', { name: 'Move Paper', exact: true }).click();
+    const moveResponse = await moveResponsePromise;
+    assert.equal(moveResponse.status(), 200, 'the paper move request succeeds');
+    await page.getByRole('heading', { name: 'Move Paper', exact: true }).waitFor({ state: 'detached' });
+    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).summary.groupId, null,
+      'moving to Default Folder persists a null group association');
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    const defaultFolder = page.locator('.folder-panel').filter({ has: page.locator('.folder-panel__title').getByText('Default Folder', { exact: true }) });
+    await defaultFolder.locator('.folder-panel__main-button').click();
+    assert.equal(await defaultFolder.locator('.paper-table tbody tr').filter({ hasText: `Folder Test Paper ${suffix}` }).count(), 1,
+      'a moved paper appears in the Default Folder after reload');
+
+    assert.equal(await folder.getByLabel('Delete empty folder').count(), 1,
+      'moving the paper out updates the folder to its empty state');
 
     await api(page, `/api/admin/papers/${paperId}`, 'DELETE');
     paperId = undefined;
@@ -131,11 +165,12 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['required/duplicate validation', 'create/cancel and reload', 'empty-folder state and default collapse', 'rename cancel and save',
-        'non-empty folder delete protection', 'delete cancel and confirm', '390px layout'],
+        'paper move cancel and persistence', 'non-empty folder delete protection', 'delete cancel and confirm', '390px layout'],
       mobileWidth,
       paperSearchHeight,
       pageErrors: pageErrors.length,
-      screenshots: [`/tmp/shsat-folder-delete-confirm-${suffix}.png`, `/tmp/shsat-folder-management-mobile-${suffix}.png`],
+      screenshots: [`/tmp/shsat-folder-move-dialog-${suffix}.png`, `/tmp/shsat-folder-delete-confirm-${suffix}.png`,
+        `/tmp/shsat-folder-management-mobile-${suffix}.png`],
     }));
   } finally {
     if (paperId) await api(page, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});

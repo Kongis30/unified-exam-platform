@@ -89,6 +89,30 @@ async function main() {
     await api(admin, `/api/admin/exams/${examId}/publish`, 'POST');
     return { id: examId, ...release.summary };
   };
+  const createCrossTypeShsatExam = async () => {
+    const classes = await api(admin, '/api/admin/classes?examTypeCodes=SHSAT');
+    assert.ok(classes.some(row => Number(row.id) === Number(classId)),
+      'the same unified class is available in the SHSAT module');
+    const shsatPapers = await api(admin, '/api/admin/exam-types/SHSAT/papers');
+    const shsatPaper = shsatPapers.find(row => row.status === 'READY' && row.questionCount > 0);
+    assert.ok(shsatPaper, 'a ready SHSAT paper is available for cross-type targeting');
+    const release = await api(admin, `/api/admin/papers/${shsatPaper.id}/exams`, 'POST', {
+      title: `SHSAT cross-type class ${Date.now()}`,
+      description: 'Temporary cross-type class eligibility verification',
+      opensAt: new Date(Date.now() - 60_000).toISOString(),
+      closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      durationSeconds: 3600,
+      attemptLimit: 1,
+      targetScope: 'SELECTED',
+    });
+    const examId = release.summary.id;
+    examIds.push(examId);
+    await api(admin, `/api/admin/exams/${examId}/targets`, 'PUT', {
+      classIds: [classId], studentUserIds: [],
+    });
+    await api(admin, `/api/admin/exams/${examId}/publish`, 'POST');
+    return { id: examId, ...release.summary };
+  };
   const finishAllModules = async attemptId => {
     let state = await api(student, `/api/student/sat-attempts/${attemptId}`);
     for (let index = 0; index < state.modules.length; index++) {
@@ -209,6 +233,7 @@ async function main() {
     assert.deepEqual(teacherPageErrors, [], `teacher route-guard errors: ${teacherPageErrors.join('; ')}`);
 
     const formalExam = await createExam(`SAT parity flow ${Date.now()}`, Date.now() + 60 * 60_000, 2);
+    const crossTypeShsatExam = await createCrossTypeShsatExam();
     const filteredExamList = `/exam-types/SAT/admin?tab=exams&examSearch=${encodeURIComponent(formalExam.title)}&examPageSize=20`;
     await admin.goto(`${baseUrl}${filteredExamList}`);
     await admin.getByRole('heading', { name: 'Exam Releases' }).waitFor();
@@ -226,6 +251,14 @@ async function main() {
       'returning from results restores the selected admin tab');
 
     await login(student, username, password);
+    const unifiedStudentExams = await api(student, '/api/student/exams');
+    assert.ok(unifiedStudentExams.some(row => Number(row.id) === Number(formalExam.id) && row.examTypeCode === 'SAT'),
+      'class membership makes the SAT exam available to the student');
+    assert.ok(unifiedStudentExams.some(row => Number(row.id) === Number(crossTypeShsatExam.id) && row.examTypeCode === 'SHSAT'),
+      'the same class membership also makes the SHSAT exam available to the student');
+    await student.goto(`${baseUrl}/student/systems/SHSAT`);
+    await student.getByRole('heading', { name: 'Your exams' }).waitFor();
+    await student.getByText(crossTypeShsatExam.title, { exact: true }).waitFor();
     await student.goto(`${baseUrl}/student/systems/SAT`);
     await student.getByRole('heading', { name: 'Your exams' }).waitFor();
     await student.getByText(formalExam.title, { exact: true }).waitFor();
@@ -593,6 +626,7 @@ async function main() {
         'administrator and teacher denial for student practice APIs and student workspace route',
         'teacher can manage all SAT classes and add students through the searchable enrollment table',
         'teacher cannot access SAT attempt deletion in UI or API; duplicate admin delete is safe',
+        'one shared class can target SAT and SHSAT releases and both appear in the student\'s matching exam modules',
         'empty student score and class trend states on mobile',
         'per-type student statistics, score filter, and fallback when a type has no attempts',
         'SAT/PSAT class score trend aggregation, type display, tooltip, and mobile layout',

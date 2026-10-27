@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router';
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
 import AdminLayout from '@/components/admin/AdminLayout.vue';
-import { getQuestionTypeDefinition } from '@shsat/questionTypes';
+import { getQuestionTypeDefinition, getQuestionTypeLabel } from '@shsat/questionTypes';
 import { normalizeQuestionType, parseJson } from '@shsat/questionTypes/utils';
 import { adminApi } from '@shsat/admin/services/adminApi';
 import { studentApi } from '@shsat/admin/services/studentApi';
@@ -529,8 +529,8 @@ const visibilityNotes = computed(() => {
     notes.push(scoringStatusText.value);
   }
 
-  if (!report.value.answersVisible) {
-    notes.push('Detailed correctness status is hidden, but correct answers are listed for review.');
+  if (!report.value.answersVisible && !useAdminReportApi.value) {
+    notes.push('Answer details and skill-level results will be available after the exam closes.');
   }
 
   return notes;
@@ -660,6 +660,7 @@ function formatDateTime(value) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 
@@ -1035,12 +1036,7 @@ function prettifyQuestionTypeLabel(questionType) {
 }
 
 function formatQuestionTypeLabel(questionType) {
-  const definition = getQuestionTypeDefinition(questionType);
-  const label = String(definition?.label || questionType || '').trim();
-  if (!label) {
-    return 'Question';
-  }
-  return /^[A-Z0-9_]+$/.test(label) ? prettifyQuestionTypeLabel(label) : label;
+  return getQuestionTypeLabel(questionType);
 }
 
 function formatAnswerValue(value, emptyText = 'Not answered') {
@@ -1232,6 +1228,9 @@ onMounted(loadReport);
             <div v-if="!report.scoreVisible" class="analysis-empty">
               Knowledge breakdown is hidden because score visibility is disabled for this attempt.
             </div>
+            <div v-else-if="!useAdminReportApi && !report.answersVisible" class="analysis-empty">
+              Skill-level results will be available after the exam closes.
+            </div>
             <div v-else-if="!knowledgeBreakdown.hasTaggedQuestions" class="analysis-empty">
               No tagged questions were found for this attempt yet.
             </div>
@@ -1280,7 +1279,8 @@ onMounted(loadReport);
               </div>
 
               <p v-if="knowledgeBreakdown.unlabeledTotal > 0" class="analysis-muted">
-                {{ knowledgeBreakdown.unlabeledTotal }} questions do not have a knowledge tag yet.
+                {{ knowledgeBreakdown.unlabeledTotal }} question{{ knowledgeBreakdown.unlabeledTotal === 1 ? '' : 's' }}
+                {{ knowledgeBreakdown.unlabeledTotal === 1 ? 'does' : 'do' }} not have a knowledge tag yet.
               </p>
             </div>
           </AppCard>
@@ -2201,6 +2201,116 @@ onMounted(loadReport);
 
   .knowledge-score-item__footer span:last-child {
     max-width: 46%;
+  }
+
+  .question-table-wrap {
+    overflow: visible;
+  }
+
+  .question-table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .question-table thead {
+    display: none;
+  }
+
+  .question-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .question-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "question status score"
+      "type status score"
+      "your your your"
+      "correct correct correct";
+    gap: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+
+  .question-table tbody td {
+    display: block;
+    width: auto;
+    min-width: 0 !important;
+    border: 0;
+    padding: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .question-table__question { grid-area: question; }
+  .question-table tbody td:nth-child(2) { grid-area: type; }
+  .question-table tbody td:nth-child(3) { grid-area: your; }
+  .question-table tbody td:nth-child(4) { grid-area: correct; }
+  .question-table tbody td:nth-child(5) { grid-area: status; }
+  .question-table tbody td:nth-child(6) { grid-area: score; }
+
+  .question-table tbody td:nth-child(3),
+  .question-table tbody td:nth-child(4) {
+    border-top: 1px solid var(--color-border);
+    padding-top: 8px;
+  }
+
+  .question-table tbody td:nth-child(3)::before,
+  .question-table tbody td:nth-child(4)::before {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--color-muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .question-table tbody td:nth-child(3)::before { content: "Your Answer"; }
+  .question-table tbody td:nth-child(4)::before { content: "Correct Answer"; }
+
+  .question-table__answer,
+  .question-table__answer-component {
+    width: auto;
+    max-width: 100%;
+    min-width: 0 !important;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .question-table__answer-component { display: block; }
+  .question-table__answer :deep(.inline-choice-report),
+  .question-table__answer :deep(.drag-report),
+  .question-table__answer :deep(.table-grid-report),
+  .question-table__answer :deep(.formula-text),
+  .question-table__answer :deep(.mixed-content) {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: visible !important;
+    white-space: normal !important;
+  }
+
+  .question-table__answer :deep(.drag-report__choices),
+  .question-table__answer :deep(.drag-report__choice) {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .question-table__answer :deep(.table-grid-report) { table-layout: auto; }
+  .question-table__answer :deep(.table-grid-report th),
+  .question-table__answer :deep(.table-grid-report td) {
+    min-width: 0;
+    max-width: 100%;
+    padding: 4px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 
