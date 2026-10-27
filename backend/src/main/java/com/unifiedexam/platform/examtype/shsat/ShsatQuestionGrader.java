@@ -72,9 +72,11 @@ final class ShsatQuestionGrader {
 
     private Boolean selection(String type, JsonNode key, JsonNode answer, JsonNode render,
                               JsonNode config, JsonNode grading) {
-        JsonNode expected = first(key, "correct", "answers", "selectedAnswers", "answer", "value");
+        JsonNode expected = first(key, "correct", "answers", "selectedAnswers", "selectedIds", "regions",
+            "selectedAnswer", "answer", "value");
         if (expected == null && key != null && !key.isObject()) expected = key;
-        JsonNode actual = first(answer, "value", "answers", "selectedAnswers", "answer");
+        JsonNode actual = first(answer, "value", "answers", "selectedAnswers", "selectedIds", "regions",
+            "selectedAnswer", "answer");
         if (actual == null && answer != null && !answer.isObject()) actual = answer;
         Set<String> validOptions = optionKeys(render == null ? null : render.path("options"));
         Set<String> expectedTokens = tokens(expected);
@@ -576,6 +578,15 @@ final class ShsatQuestionGrader {
     }
 
     private String text(JsonNode node) { return node == null || node.isNull() ? "" : node.asText(""); }
-    private String normalize(String value) { return value == null ? "" : value.trim().toUpperCase(Locale.ROOT); }
+    private String normalize(String value) {
+        String type = value == null ? "" : value.trim().toUpperCase(Locale.ROOT)
+            .replaceAll("[^A-Z0-9]+", "_").replaceAll("^_+|_+$", "");
+        return switch (type) {
+            case "MULTIPLE_SELECT", "MULTIPLE_SELECTION" -> "MULTI_SELECT";
+            case "FIXED_MULTI_SELECT", "MULTISELECT_FIXED" -> "MULTI_SELECT_FIXED";
+            case "FILL_IN_THE_BLANK", "FILL_BLANK" -> "FILL_IN_BLANK";
+            default -> type;
+        };
+    }
     private String token(String value) { return value == null ? "" : value.trim().replaceAll("\\s+", "").toUpperCase(Locale.ROOT); }
 }

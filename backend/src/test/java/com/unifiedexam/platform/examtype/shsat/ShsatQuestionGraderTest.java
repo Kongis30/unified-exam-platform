@@ -37,6 +37,8 @@ class ShsatQuestionGraderTest {
     @Test
     void gradesSingleAndMultipleSelectionAsExactSets() throws Exception {
         assertTrue(grade("MULTIPLE_CHOICE", "{\"answers\":[\"B\"]}", "{\"value\":\"b\"}"));
+        assertTrue(grade("MULTIPLE_CHOICE", "{\"selectedAnswer\":\"B\"}", "{\"selectedAnswer\":\"b\"}"));
+        assertTrue(grade("MULTI_SELECT", "{\"selectedIds\":[\"A\",\"C\"]}", "{\"regions\":[\"C\",\"A\"]}"));
         assertFalse(grade("MULTI_SELECT", "{\"answers\":[\"A\",\"C\"]}", "{\"answers\":[\"A\"]}"));
         assertFalse(grade("MULTIPLE_CHOICE", "{\"answers\":[\"A\"]}", "{\"answers\":[\"A\",\"A\"]}"));
         assertFalse(grade("MULTIPLE_CHOICE", "{\"answers\":[\"A\",\"A\"]}", "{\"answers\":[\"A\"]}"));
@@ -55,6 +57,13 @@ class ShsatQuestionGraderTest {
         JsonNode fixedConfig = json("{\"questionConfig\":{\"selectionLimit\":2}}");
         assertFalse(grader.grade("MULTI_SELECT_FIXED", json("{\"answers\":[\"A\"]}"),
             json("{\"answers\":[\"A\"]}"), fixedConfig, null));
+    }
+
+    @Test
+    void normalizesLegacyQuestionTypeNamesLikeStandaloneShsat() throws Exception {
+        assertTrue(grade("MULTIPLE_SELECT", "{\"answers\":[\"A\",\"B\"]}", "{\"answers\":[\"B\",\"A\"]}"));
+        assertTrue(grade("MULTISELECT_FIXED", "{\"answers\":[\"A\"]}", "{\"answers\":[\"A\"]}"));
+        assertTrue(grade("FILL_IN_THE_BLANK", "{\"answers\":[\"4\"]}", "{\"value\":\"4\"}"));
     }
 
     @Test
