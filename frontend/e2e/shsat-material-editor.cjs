@@ -335,14 +335,74 @@ async function main() {
     questions = readQuestions(stored);
     assert.equal(questions[1].render.material.type, 'IMAGE');
     assert.match(questions[1].render.material.assetUrl, /replacement-material\.png|paper-materials/);
-    await secondEditor.getByRole('button', { name: 'Clear Image', exact: true }).click();
-    await secondEditor.locator('.image-preview-button').waitFor({ state: 'hidden' });
-    assert.equal(await secondEditor.locator('.image-preview-panel .empty-inline').innerText(), 'No image uploaded yet.');
+
+    await page.locator('.question-item').filter({ hasText: groupedQuestionStem }).click();
+    const sharedImageEditor = page.locator('.material-editor');
+    await sharedImageEditor.locator('.material-type select').selectOption('image');
+    const sharedImageSelect = sharedImageEditor.locator('.material-topline select');
+    const sharedImageOption = await sharedImageSelect.locator('option').evaluateAll((options, title) => (
+      options.find(option => option.textContent.includes(title))?.value || ''
+    ), 'standalone-material.png');
+    assert.ok(sharedImageOption, 'a saved standalone image material is available to another question');
+    await sharedImageSelect.selectOption(sharedImageOption);
+    assert.match(await sharedImageEditor.locator('.material-usage-note').innerText(), /editing it here updates Q2, Q3/,
+      'the editor identifies all questions linked to the shared image material');
     await savePaperChanges(page, paperId);
     stored = await api(page, `/api/admin/papers/${paperId}`);
     questions = readQuestions(stored);
-    assert.equal(questions[1].render.material.type, 'IMAGE', 'Clear Image keeps the image material type');
-    assert.equal(questions[1].render.material.assetUrl, null, 'cleared image path is not persisted');
+    assert.equal(questions[1].render.material.materialId, questions[2].render.material.materialId,
+      'both questions reference the same standalone image material');
+    assert.equal(questions[1].render.material.assetUrl, questions[2].render.material.assetUrl,
+      'both linked questions resolve the same image after saving');
+
+    const sharedImageBase64 = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 320;
+      canvas.height = 120;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#e8f7ed';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#1d6236';
+      context.font = '20px sans-serif';
+      context.fillText('Shared replacement image', 20, 68);
+      return canvas.toDataURL('image/png').split(',')[1];
+    });
+    const sharedImageReplacement = page.waitForResponse(response => (
+      response.url().includes(`/api/admin/papers/${paperId}/materials/images`)
+      && response.request().method() === 'POST'
+    ));
+    await sharedImageEditor.locator('input[type="file"]').setInputFiles({
+      name: 'shared-replacement.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(sharedImageBase64, 'base64'),
+    });
+    assert.equal((await sharedImageReplacement).status(), 200);
+    await savePaperChanges(page, paperId);
+    stored = await api(page, `/api/admin/papers/${paperId}`);
+    questions = readQuestions(stored);
+    assert.equal(questions[1].render.material.assetUrl, questions[2].render.material.assetUrl,
+      'replacing a shared image keeps all question references synchronized');
+    assert.match(questions[1].render.material.assetUrl, /shared-replacement\.png|paper-materials/);
+
+    await page.reload();
+    await page.locator('.question-item').filter({ hasText: secondStem }).click();
+    assert.equal(await page.locator('.material-editor .image-preview-button img').getAttribute('src'),
+      questions[1].render.material.assetUrl,
+      'the replacement image remains synchronized after reloading the editor');
+
+    await page.locator('.question-item').filter({ hasText: groupedQuestionStem }).click();
+    await secondEditor.getByRole('button', { name: 'Clear Image', exact: true }).click();
+    assert.equal(await page.locator('.material-editor .image-preview-button img').count(), 0,
+      'clearing the shared image removes its preview from every linked question');
+    await savePaperChanges(page, paperId);
+    stored = await api(page, `/api/admin/papers/${paperId}`);
+    questions = readQuestions(stored);
+    assert.equal(questions[1].render.material.type, 'IMAGE', 'Clear Image keeps the shared image material type');
+    assert.equal(questions[2].render.material.type, 'IMAGE', 'Clear Image keeps the image type for every linked question');
+    assert.equal(questions[1].render.material.assetUrl, null);
+    assert.equal(questions[2].render.material.assetUrl, null);
+
+    await page.locator('.question-item').filter({ hasText: secondStem }).click();
     await secondEditor.getByRole('button', { name: 'Clear', exact: true }).click();
     await savePaperChanges(page, paperId);
     stored = await api(page, `/api/admin/papers/${paperId}`);

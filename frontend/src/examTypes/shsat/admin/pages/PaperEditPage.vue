@@ -2933,7 +2933,7 @@ async function uploadImageMaterial(event, question = currentQuestion.value) {
 
     question.imageUploadName = file.name;
     applyMaterialToQuestion(saved, question);
-    markQuestionDirty(question);
+    updateMaterialDraft(question);
     showNotice('Image uploaded. Save changes to attach it to this question.', 'success');
   } catch (error) {
     showNotice(error.message || 'Failed to upload material image.', 'error');
