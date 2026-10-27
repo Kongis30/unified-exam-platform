@@ -456,6 +456,11 @@
 - [x] **试卷筛选与班级批量加入复测（2026-10-27）**：`paper-filters` 对账文件夹、Online/Offline、名称组合过滤与 API 摘要值，操作菜单打开正确试卷详情，空结果提示、清除筛选和刷新恢复通过，脚本错误为 0；桌面过滤结果和空状态截图 `/tmp/shsat-paper-filter-online-20261027.png`、`/tmp/shsat-paper-filter-offline-20261027.png`、`/tmp/shsat-paper-filter-no-results-20261027.png` 已检查。`unassigned-bulk` 覆盖 800px 最大高度和内部滚动、全选/取消、多选刷新保留、取消无副作用、确认加入和共享账户保留；390px 页面及表格无横向溢出，错误数 0，临时数据清理。截图 `/tmp/shsat-unassigned-bulk-desktop-1793104807929.png`、`/tmp/shsat-unassigned-bulk-mobile-1793104807929.png`、`/tmp/shsat-admin-toast-mobile-1793104807929.png` 已目视检查。
 - [ ] 仍未达到本清单的整体完成门槛：需继续逐题型核对独立版的原始样题/内容与提交后计分报告、补齐报告和学生详情边界组合、逐页并排检查未覆盖的菜单/弹窗/空错状态，以及解决四张源 Hot Spot 图片缺失后再验原题作答。不能用本轮关键路径回归替代这些未测项。
 
+### 本轮追加复测（2026-10-27）
+
+- [x] **Hot Spot 合成样题作答/评分/报告复测**：`npm run test:e2e:shsat:hotspot-flow` 通过，学生真实点选目标区域、保存并交卷，报告按答案键评分为 2 分；桌面及 390px 考试/报告页面无整页横向溢出，`pageErrors=0`。截图 `/tmp/shsat-hotspot-active-1793105434004.png`、`/tmp/shsat-hotspot-active-mobile-1793105434004.png`、`/tmp/shsat-hotspot-report-1793105434004.png`、`/tmp/shsat-hotspot-report-mobile-1793105434004.png` 已检查。**此项证明 Hot Spot 交互链路正常，不覆盖 4 道源题缺失的原图；原题视觉和目标区域含义仍待恢复素材后验收。**
+- [x] **正式 100 题考试与报告流程复测**：`npm run test:e2e:shsat:full-length-navigation` 通过，验证 ELA→Math 分段交卷、旧分段写入拒绝、重复最终交卷幂等、书签/Review 受限导航、画笔实际绘制与清除、100 题成绩及师生报告题数一致。390px 根页面无横向溢出，`pageErrors=0`；桌面/手机真实考试界面截图 `/tmp/shsat-exam-drawing-desktop-1793105439924.png`、`/tmp/shsat-exam-drawing-mobile-1793105439924.png` 已检查。该流程证明考试主链路，不替代 12 种题型分别按迁移原题数据逐项对账。
+
 ## 9. 建议执行顺序与完成门槛
 
 1. **P0 学生主链路**：补齐 G1/G2；用真实学生跑完整考试、两种 section 顺序、12 题型答案保存与报告；这是切换独立 SHSAT 的门槛。
