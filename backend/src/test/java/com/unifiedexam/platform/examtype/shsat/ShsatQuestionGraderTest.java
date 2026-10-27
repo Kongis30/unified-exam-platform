@@ -82,6 +82,12 @@ class ShsatQuestionGraderTest {
         assertFalse(grader.grade("HOT_SPOT", json("{\"selectedRegionIds\":[\"r1\"]}"),
             json("{\"selectedRegionIds\":[\"r1\",\"r1\"]}"),
             json("{\"questionConfig\":{\"regions\":[{\"id\":\"r1\"}]}}"), null));
+        assertFalse(grader.grade("HOT_SPOT", json("{\"selectedRegionIds\":[\"r2\"]}"),
+            json("{\"selectedRegionIds\":[\"r2\"]}"),
+            json("{\"questionConfig\":{\"hotSpots\":[{\"id\":\"r1\"}]}}"), null));
+        assertTrue(grader.grade("HOT_SPOT", json("{\"selectedRegionIds\":[\"r1\"]}"),
+            json("{\"selectedRegionIds\":[\"r1\"]}"),
+            json("{\"questionConfig\":{\"hotSpots\":[{\"id\":\"r1\"}]}}"), null));
     }
 
     @Test

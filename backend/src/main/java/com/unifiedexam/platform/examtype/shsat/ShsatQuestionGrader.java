@@ -175,7 +175,7 @@ final class ShsatQuestionGrader {
                 }
             }
         } else {
-            allowed = ids(array(config, "regions", "hotSpotRegions"));
+            allowed = ids(array(config, "regions", "hotSpotRegions", "hotSpots"));
         }
         return allowed.isEmpty() || allowed.containsAll(expected);
     }
