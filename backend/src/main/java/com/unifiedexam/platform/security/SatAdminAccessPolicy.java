@@ -20,19 +20,9 @@ public class SatAdminAccessPolicy {
         if (isSatType(examTypeCode) && !isAdmin(authentication)) deny();
     }
 
-    public void requireAdminForWorkspace(String workspaceCode, Authentication authentication) {
-        if ("SAT".equals(workspaceCode) && !isAdmin(authentication)) deny();
-    }
-
     public void requireAdminForPaper(long paperId, Authentication authentication) {
         String examTypeCode = jdbc.query("SELECT exam_type_code FROM papers WHERE id = ?",
             rs -> rs.next() ? rs.getString(1) : null, paperId);
-        requireAdminForType(examTypeCode, authentication);
-    }
-
-    public void requireAdminForGroup(long groupId, Authentication authentication) {
-        String examTypeCode = jdbc.query("SELECT exam_type_code FROM paper_groups WHERE id = ?",
-            rs -> rs.next() ? rs.getString(1) : null, groupId);
         requireAdminForType(examTypeCode, authentication);
     }
 

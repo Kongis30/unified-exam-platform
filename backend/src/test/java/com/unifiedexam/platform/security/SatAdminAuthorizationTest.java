@@ -18,6 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.userdetails.User;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -29,10 +30,12 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest({ ExamReleaseController.class, PaperController.class, UserAdminController.class, ClassAdminController.class })
-@Import({ SecurityConfiguration.class, SatAdminAccessPolicy.class, SatAdminAuthorizationTest.TestBeans.class })
+@Import({ SecurityConfiguration.class, SatAdminAccessPolicy.class, PaperManagementAccessPolicy.class,
+    SatAdminAuthorizationTest.TestBeans.class })
 class SatAdminAuthorizationTest {
 
     @Autowired
@@ -104,6 +107,25 @@ class SatAdminAuthorizationTest {
                 .with(user("teacher").roles("TEACHER")))
             .andExpect(status().isForbidden());
         org.mockito.Mockito.verifyNoMoreInteractions(paperService);
+    }
+
+    @Test
+    void shsatPaperDetailsAndAuthoringAreAdministratorOnly() throws Exception {
+        when(userDetailsService.loadUserByUsername("teacher"))
+            .thenReturn(User.withUsername("teacher").password("unused").roles("TEACHER").build());
+
+        mockMvc.perform(get("/api/admin/papers/247")
+                .with(user("teacher").roles("TEACHER")))
+            .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/admin/papers/247/structure")
+                .with(user("teacher").roles("TEACHER"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sections\":[]}"))
+            .andExpect(status().isForbidden());
+
+        org.mockito.Mockito.verifyNoInteractions(paperService);
     }
 
     @Test

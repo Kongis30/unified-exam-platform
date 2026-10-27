@@ -1,8 +1,8 @@
 package com.unifiedexam.platform.paper;
 
 import jakarta.validation.Valid;
+import com.unifiedexam.platform.security.PaperManagementAccessPolicy;
 import com.unifiedexam.platform.security.SatAdminAccessPolicy;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,11 +23,14 @@ public class PaperController {
 
     private final PaperService paperService;
     private final SatAdminAccessPolicy satAccess;
+    private final PaperManagementAccessPolicy paperAccess;
 
     public PaperController(PaperService paperService,
-                           SatAdminAccessPolicy satAccess) {
+                           SatAdminAccessPolicy satAccess,
+                           PaperManagementAccessPolicy paperAccess) {
         this.paperService = paperService;
         this.satAccess = satAccess;
+        this.paperAccess = paperAccess;
     }
 
     @GetMapping("/exam-types/{examTypeCode}/paper-groups")
@@ -40,7 +43,7 @@ public class PaperController {
     public PaperService.PaperGroupView createGroup(@PathVariable String examTypeCode,
                                                     @Valid @RequestBody PaperService.SaveGroupRequest request,
                                                     Authentication authentication) {
-        satAccess.requireAdminForType(examTypeCode, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.createGroup(examTypeCode, request);
     }
 
@@ -48,27 +51,27 @@ public class PaperController {
     public PaperService.PaperGroupView updateGroup(@PathVariable long groupId,
                                                     @Valid @RequestBody PaperService.SaveGroupRequest request,
                                                     Authentication authentication) {
-        satAccess.requireAdminForGroup(groupId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.updateGroup(groupId, request);
     }
 
     @DeleteMapping("/paper-groups/{groupId}")
     public void deleteGroup(@PathVariable long groupId, Authentication authentication) {
-        satAccess.requireAdminForGroup(groupId, authentication);
+        paperAccess.requireAdministrator(authentication);
         paperService.deleteGroup(groupId);
     }
 
     @PutMapping("/exam-types/{examTypeCode}/paper-groups/order")
     public List<PaperService.PaperGroupView> reorderGroups(@PathVariable String examTypeCode,
             @Valid @RequestBody PaperService.ReorderGroupsRequest request, Authentication authentication) {
-        satAccess.requireAdminForType(examTypeCode, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.reorderGroups(examTypeCode, request);
     }
 
     @PutMapping("/workspaces/{workspaceCode}/paper-groups/order")
     public void reorderWorkspaceGroups(@PathVariable String workspaceCode,
             @Valid @RequestBody PaperService.ReorderWorkspaceGroupsRequest request, Authentication authentication) {
-        satAccess.requireAdminForWorkspace(workspaceCode, authentication);
+        paperAccess.requireAdministrator(authentication);
         paperService.reorderWorkspaceGroups(workspaceCode, request);
     }
 
@@ -82,25 +85,32 @@ public class PaperController {
     public PaperService.PaperDetail createPaper(@PathVariable String examTypeCode,
                                                  @Valid @RequestBody PaperService.CreatePaperRequest request,
                                                  Authentication authentication) {
-        satAccess.requireAdminForType(examTypeCode, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.create(examTypeCode, request, authentication.getName());
     }
 
     @GetMapping("/papers/{paperId}")
     public PaperService.PaperDetail getPaper(@PathVariable long paperId, Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.get(paperId);
+    }
+
+    @GetMapping("/papers/{paperId}/structure-stats")
+    public PaperService.PaperStructureStats getPaperStructureStats(@PathVariable long paperId,
+                                                                    Authentication authentication) {
+        satAccess.requireAdminForPaper(paperId, authentication);
+        return paperService.structureStats(paperId);
     }
 
     @GetMapping("/papers/{paperId}/delete-impact")
     public PaperService.PaperDeleteImpact getDeleteImpact(@PathVariable long paperId, Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.deleteImpact(paperId);
     }
 
     @DeleteMapping("/papers/{paperId}")
     public void deletePaper(@PathVariable long paperId, Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         paperService.delete(paperId);
     }
 
@@ -108,14 +118,14 @@ public class PaperController {
     public PaperService.PaperDetail updatePaper(@PathVariable long paperId,
                                                  @Valid @RequestBody PaperService.UpdatePaperRequest request,
                                                  Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.update(paperId, request);
     }
 
     @PatchMapping("/papers/{paperId}/group")
     public PaperService.PaperSummary movePaper(@PathVariable long paperId, @RequestBody MovePaperRequest request,
                                                Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.moveToGroup(paperId, request.paperGroupId());
     }
 
@@ -123,14 +133,14 @@ public class PaperController {
     public PaperService.PaperSummary setPaperArchived(@PathVariable long paperId,
                                                        @RequestBody ArchivePaperRequest request,
                                                        Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.setArchived(paperId, request.archived());
     }
 
     @PostMapping("/papers/{paperId}/questions/import-from-exam")
     public List<PaperService.QuestionView> importQuestions(@PathVariable long paperId,
             @Valid @RequestBody PaperService.ImportQuestionsRequest request, Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.importQuestions(paperId, request);
     }
 
@@ -138,7 +148,7 @@ public class PaperController {
     public PaperService.PaperDetail updateScoringProfile(@PathVariable long paperId,
                                                           @RequestBody ScoringProfileRequest request,
                                                           Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.updateScoringProfile(paperId, request.scoringProfileCode());
     }
 
@@ -146,19 +156,19 @@ public class PaperController {
     public PaperService.PaperDetail savePaperStructure(@PathVariable long paperId,
                                                         @Valid @RequestBody PaperService.SaveStructureRequest request,
                                                         Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.saveStructure(paperId, request);
     }
 
     @PostMapping("/papers/{paperId}/versions")
     public PaperService.PaperDetail createVersion(@PathVariable long paperId, Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.createVersion(paperId, authentication.getName());
     }
 
     @PostMapping("/papers/{paperId}/seal")
     public PaperService.PaperDetail sealPaper(@PathVariable long paperId, Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         return paperService.seal(paperId);
     }
 

@@ -64,6 +64,20 @@ async function main() {
       'teachers can view every SHSAT class');
     assert.equal((await raw(teacher, '/api/admin/users')).status, 403,
       'teachers cannot access the platform account directory');
+    assert.equal((await raw(teacher, '/api/admin/papers/247')).status, 403,
+      'teachers cannot read answer-bearing paper details');
+    const safeStatsResponse = await raw(teacher, '/api/admin/papers/247/structure-stats');
+    assert.equal(safeStatsResponse.status, 200,
+      'teachers can read the question counts needed to create an exam release');
+    const safeStats = JSON.parse(safeStatsResponse.text);
+    assert.deepEqual(Object.keys(safeStats).sort(), ['ela', 'math', 'total'],
+      'the teacher-safe response contains counts only, without question or answer data');
+    assert.ok(Number(safeStats.total) > 0 && Number(safeStats.ela) > 0 && Number(safeStats.math) > 0,
+      'the teacher-safe response reports the selected paper structure counts');
+    assert.ok(Number(safeStats.total) >= Number(safeStats.ela) + Number(safeStats.math),
+      'the total count includes at least the scored ELA and Math questions');
+    assert.equal((await raw(teacher, '/api/admin/papers/247/structure', 'PUT', { sections: [] })).status, 403,
+      'teachers cannot modify SHSAT paper structure through the API');
     await teacher.screenshot({ path: `/tmp/shsat-teacher-classes-${stamp}.png` });
 
     await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).click();
@@ -402,6 +416,7 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['teacher SHSAT tab access', 'shared all-class directory', 'account directory denied',
+        'paper answer details and editing API denied to teachers',
         'create, publish and unpublish release', 'empty and populated monitoring charts from a real student attempt',
         'in-progress attempt with stale presence has an accurate empty chart state',
         'monitor accuracy updates after a scored response', 'ended exam preserves completed totals and accuracy analytics',

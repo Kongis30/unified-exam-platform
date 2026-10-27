@@ -910,69 +910,6 @@ function getNumber(...values) {
   return Number.isFinite(number) ? number : null;
 }
 
-function parseJsonObject(value, fallbackValue = {}) {
-  if (!value || typeof value !== 'string') {
-    return value && !Array.isArray(value) && typeof value === 'object' ? value : fallbackValue;
-  }
-
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && !Array.isArray(parsed) && typeof parsed === 'object' ? parsed : fallbackValue;
-  } catch {
-    return fallbackValue;
-  }
-}
-
-function isScoredQuestion(question) {
-  const scoringRules = parseJsonObject(question?.scoringRules);
-  const isScored = scoringRules.isScored;
-
-  return !(isScored === false || String(isScored).toLowerCase() === 'false');
-}
-
-function getOfficialPartSubject(part) {
-  const label = `${part?.partCode || ''} ${part?.partName || ''}`.toUpperCase();
-
-  if (/\bELA\b|ENGLISH|READING|LANGUAGE/.test(label)) {
-    return 'ELA';
-  }
-  if (/\bMATH\b|MATHEMATICS/.test(label)) {
-    return 'MATH';
-  }
-
-  return '';
-}
-
-function buildPaperStructureStats(paper) {
-  const questions = Array.isArray(paper?.questions) ? paper.questions : [];
-  const partSubjectById = new Map(
-    (paper?.parts || [])
-      .map((part) => [String(part.partId), getOfficialPartSubject(part)])
-      .filter(([, subject]) => subject),
-  );
-
-  const total = Array.isArray(paper?.questions) ? questions.length : Number(paper?.totalQuestions || 0);
-
-  return questions.reduce((stats, question) => {
-    if (!isScoredQuestion(question)) {
-      return stats;
-    }
-
-    const subject = partSubjectById.get(String(question.partId));
-    if (subject === 'ELA') {
-      stats.ela += 1;
-    } else if (subject === 'MATH') {
-      stats.math += 1;
-    }
-
-    return stats;
-  }, {
-    total,
-    ela: 0,
-    math: 0,
-  });
-}
-
 function hasPublishStructureRisk(stats) {
   if (!stats) {
     return false;
@@ -2272,8 +2209,7 @@ function openWrongAnswerTaskProgress(task) {
 }
 
 async function loadPaperStructureStats(paperId) {
-  const detail = unwrapResponse(await adminApi.getPaper(paperId));
-  return buildPaperStructureStats(detail);
+  return unwrapResponse(await adminApi.getPaperStructureStats(paperId));
 }
 
 async function createExamRelease(payload) {

@@ -312,6 +312,10 @@ export const adminApi = {
     return apiRequest(`/api/admin/papers/${paperId}`).then(mapPaperDetail);
   },
 
+  getPaperStructureStats(paperId) {
+    return apiRequest(`/api/admin/papers/${paperId}/structure-stats`);
+  },
+
   savePaperStructure(paperId, structure) {
     const sections = [...structure.parts]
       .sort((a, b) => Number(a.displayOrder || a.partNumber || 0) - Number(b.displayOrder || b.partNumber || 0))

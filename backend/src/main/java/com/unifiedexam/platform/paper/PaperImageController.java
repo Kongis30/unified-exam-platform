@@ -1,7 +1,7 @@
 package com.unifiedexam.platform.paper;
 
 import jakarta.validation.constraints.Positive;
-import com.unifiedexam.platform.security.SatAdminAccessPolicy;
+import com.unifiedexam.platform.security.PaperManagementAccessPolicy;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
@@ -23,20 +23,20 @@ public class PaperImageController {
 
     private final JdbcTemplate jdbcTemplate;
     private final PaperImageStorage imageStorage;
-    private final SatAdminAccessPolicy satAccess;
+    private final PaperManagementAccessPolicy paperAccess;
 
     public PaperImageController(JdbcTemplate jdbcTemplate, PaperImageStorage imageStorage,
-                                SatAdminAccessPolicy satAccess) {
+                                PaperManagementAccessPolicy paperAccess) {
         this.jdbcTemplate = jdbcTemplate;
         this.imageStorage = imageStorage;
-        this.satAccess = satAccess;
+        this.paperAccess = paperAccess;
     }
 
     @PostMapping("/question-images")
     public PaperImageStorage.StoredImage uploadQuestionImage(@PathVariable @Positive long paperId,
                                                               @RequestPart("file") MultipartFile file,
                                                               Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         requireDraftPaper(paperId);
         return imageStorage.store(paperId, file);
     }
@@ -51,7 +51,7 @@ public class PaperImageController {
             @RequestParam(required = false) String materialCategory,
             @RequestParam(required = false, defaultValue = "0") Integer displayOrder,
             Authentication authentication) {
-        satAccess.requireAdminForPaper(paperId, authentication);
+        paperAccess.requireAdministrator(authentication);
         requireDraftPaper(paperId);
         PaperImageStorage.StoredImage image = imageStorage.store(paperId, file);
         return new MaterialImageView(materialId, paperId, partId, subTypeId, "image",

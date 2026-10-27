@@ -121,6 +121,36 @@ public class PaperService {
         return new PaperDetail(summary, description, groupId, scoringProfileCode, sections, materials, solutionCount);
     }
 
+    /** Returns only publish-warning counts so teachers never need answer-bearing paper details. */
+    public PaperStructureStats structureStats(long paperId) {
+        typeCode(paperId);
+        return jdbcTemplate.queryForObject("""
+            SELECT COUNT(*) AS total,
+                   COALESCE(SUM(CASE WHEN scored.is_scored = 1 AND scored.subject = 'ELA' THEN 1 ELSE 0 END), 0) AS ela,
+                   COALESCE(SUM(CASE WHEN scored.is_scored = 1 AND scored.subject = 'MATH' THEN 1 ELSE 0 END), 0) AS math
+            FROM (
+                SELECT question.id,
+                       CASE
+                           WHEN UPPER(CONCAT(COALESCE(part.section_code, ''), ' ', COALESCE(part.title, '')))
+                                REGEXP '(^|[^A-Z])(ELA|ENGLISH|READING|LANGUAGE)([^A-Z]|$)' THEN 'ELA'
+                           WHEN UPPER(CONCAT(COALESCE(part.section_code, ''), ' ', COALESCE(part.title, '')))
+                                REGEXP '(^|[^A-Z])(MATH|MATHEMATICS)([^A-Z]|$)' THEN 'MATH'
+                           ELSE ''
+                       END AS subject,
+                       CASE WHEN LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(question.grading_json, '$.isScored')), 'true')) = 'false'
+                            THEN 0 ELSE 1 END AS is_scored
+                FROM paper_items item
+                JOIN paper_sections section ON section.id = item.section_id
+                LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
+                LEFT JOIN paper_sections part ON part.id = CASE
+                    WHEN section.section_kind = 'PART' THEN section.id ELSE parent.id END
+                JOIN questions question ON question.id = item.question_id
+                WHERE section.paper_id = ?
+            ) scored
+            """, (rs, rowNum) -> new PaperStructureStats(
+                rs.getLong("total"), rs.getLong("ela"), rs.getLong("math")), paperId);
+    }
+
     @Transactional
     public PaperDetail update(long paperId, UpdatePaperRequest request) {
         String examTypeCode = typeCode(paperId);
@@ -1166,6 +1196,7 @@ public class PaperService {
                                BigDecimal totalScore, String createdAt, String updatedAt) { }
     public record PaperDetail(PaperSummary summary, String description, Long groupId, String scoringProfileCode,
                               List<SectionView> sections, List<MaterialView> materials, long solutionCount) { }
+    public record PaperStructureStats(long total, long ela, long math) { }
     public record MaterialView(long id, String partCode, String subTypeCode, String materialType,
                                String category, String title, String content, String assetUrl, int sortOrder) { }
     public record SectionView(long id, String sectionCode, String sectionKind, String title, int sortOrder,
