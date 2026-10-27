@@ -155,6 +155,17 @@ async function main() {
     await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 38s' }).waitFor({ state: 'attached' });
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-${stamp}.png` });
 
+    await teacher.waitForTimeout(31_000);
+    const staleLiveMonitor = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/live`);
+    assert.equal(Number(staleLiveMonitor.summary?.inProgressStudents), 1,
+      'an unfinished attempt remains in progress while its student is away');
+    assert.equal(staleLiveMonitor.currentQuestionDistribution.length, 0,
+      'a stale presence does not leave a student on the live question chart');
+    await teacher.reload();
+    await teacher.getByText('No live question positions are available. In-progress students may be away from the exam.', { exact: true }).waitFor();
+    await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 38s' }).waitFor({ state: 'attached' });
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-stale-presence-${stamp}.png` });
+
     const submittedAttempt = await api(student, `/api/student/attempts/${attemptId}/submit`, 'POST');
     assert.equal(submittedAttempt.status, 'SUBMITTED', 'submitting the attempt finalizes the saved answer for scoring');
     const submittedReport = await api(admin, `/api/admin/reports/attempts/${attemptId}/result`);
@@ -268,6 +279,30 @@ async function main() {
     await imagePreview.waitFor({ state: 'detached' });
     await teacher.getByRole('button', { name: 'Close question details' }).click();
     await questionDrawer.waitFor({ state: 'detached' });
+
+    const questionApiPattern = `**/api/admin/reports/exams/${examId}/monitor/questions/1`;
+    const missingAssetUrl = '/uploads/paper-materials/missing-monitor-image.png';
+    await teacher.unroute(questionApiPattern);
+    await teacher.route(questionApiPattern, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          question: { id: 1, questionNumber: 1, questionType: 'MULTIPLE_CHOICE', stem: 'Missing image check', options: { A: 'First choice' } },
+          material: { assetUrl: missingAssetUrl },
+        },
+      }),
+    }));
+    await teacher.route(`**${missingAssetUrl}`, route => route.fulfill({ status: 404, contentType: 'text/plain', body: '' }));
+    await teacher.getByRole('button', { name: 'Open question 1 details' }).click();
+    await questionDrawer.waitFor();
+    await questionDrawer.getByText('Question image is unavailable.', { exact: true }).waitFor();
+    assert.equal(await questionDrawer.locator('.monitor-question-image-button').count(), 0,
+      'an unavailable source image is not offered as an enlargeable broken image');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-image-unavailable-mobile-${stamp}.png` });
+    await questionDrawer.getByRole('button', { name: 'Close question details' }).click();
+    await questionDrawer.waitFor({ state: 'detached' });
     await teacher.locator('.monitor-back-button').click();
     await teacher.waitForURL(url => url.pathname === '/exam-types/SHSAT/admin');
     await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).waitFor();
@@ -287,6 +322,33 @@ async function main() {
     assert.equal(unpublished.find(item => Number(item.id) === examId)?.status, 'DRAFT',
       'a teacher can unpublish a release');
 
+    await api(admin, `/api/admin/exams/${examId}/publish`, 'POST');
+    const closedExam = await api(admin, `/api/admin/exams/${examId}/close`, 'POST');
+    assert.equal(closedExam.summary?.status, 'CLOSED', 'an administrator can end a published exam');
+    const endedRelease = (await api(admin, '/api/admin/exam-types/SHSAT/exams'))
+      .find(item => Number(item.id) === examId);
+    assert.equal(endedRelease.status, 'CLOSED', 'the ended state is persisted in the release list');
+    const endedLiveMonitor = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/live`);
+    assert.equal(Number(endedLiveMonitor.summary?.completedStudents), 1,
+      'completed student totals remain available after the exam ends');
+    assert.equal(Number(endedLiveMonitor.summary?.inProgressStudents), 0,
+      'a submitted attempt is not counted as in progress after the exam ends');
+    const endedAnalytics = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`);
+    const endedQuestionOne = endedAnalytics.questionAnalytics.find(item => Number(item.questionNumber) === 1);
+    assert.equal(Number(endedQuestionOne?.accuracy), 100,
+      'scored question accuracy remains available after the exam ends');
+    await teacher.goto(`${baseUrl}/exam-types/SHSAT/admin/exams/${examId}/monitor`);
+    await teacher.getByRole('heading', { name: 'Accuracy Heatmap' }).waitFor();
+    await teacher.getByText('No students are currently taking this exam.', { exact: true }).waitFor();
+    await teacher.getByRole('button', { name: 'Open question 1 details' }).waitFor();
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-ended-${stamp}.png` });
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    const endedMonitorSize = await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(endedMonitorSize.page <= endedMonitorSize.viewport, 'ended monitor fits a 390px viewport');
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-ended-mobile-${stamp}.png` });
+
+    await teacher.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).waitFor();
     await teacher.setViewportSize({ width: 390, height: 844 });
     await teacher.getByRole('tab', { name: 'Exam Release', exact: true }).click();
     await teacher.evaluate(() => window.scrollTo(0, 0));
@@ -299,14 +361,18 @@ async function main() {
       result: 'PASS',
       checks: ['teacher SHSAT tab access', 'shared all-class directory', 'account directory denied',
         'create, publish and unpublish release', 'empty and populated monitoring charts from a real student attempt',
-        'monitor accuracy updates after a scored response', 'monitor analytics and return path',
+        'in-progress attempt with stale presence has an accurate empty chart state',
+        'monitor accuracy updates after a scored response', 'ended exam preserves completed totals and accuracy analytics',
+        'monitor analytics and return path',
         'heatmap question details drawer and backdrop close', 'desktop/mobile monitor image preview and close controls',
+        'unavailable source image gets a readable fallback',
         'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
       monitorMobileSize,
       mobileChartScroll,
       mobileDrawerSize,
       accuracyMobileSize,
+      endedMonitorSize,
       pageErrors: errors.length,
     }));
   } finally {

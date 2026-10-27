@@ -323,10 +323,12 @@ public class ShsatAdminReportService {
                 result.put("lastSeenAt", iso(rs.getTimestamp("last_seen")));
                 return result;
             }, examId);
+        // 学生每 10 秒同步一次答题状态；只把最近 30 秒有状态更新的尝试视为在线。
         List<Map<String, Object>> distribution = jdbcTemplate.query("""
             SELECT s.active_question_number AS question_number, COUNT(*) AS students
             FROM shsat_attempt_state s JOIN attempts a ON a.id = s.attempt_id
             WHERE a.exam_id = ? AND a.status = 'IN_PROGRESS' AND a.is_practice = FALSE AND s.active_question_number IS NOT NULL
+              AND s.updated_at >= CURRENT_TIMESTAMP(6) - INTERVAL 30 SECOND
             GROUP BY s.active_question_number ORDER BY s.active_question_number
             """, (rs, rowNum) -> Map.of("questionNumber", rs.getInt("question_number"), "students", rs.getLong("students")), examId);
         Map<String, Object> result = new LinkedHashMap<>();

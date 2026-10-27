@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 import MixedContent from '@shsat/components/MixedContent.vue';
 import SafeMarkdownText from '@shsat/components/SafeMarkdownText.vue';
@@ -18,6 +18,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['preview-image']);
+const unavailableImageUrls = ref(new Set());
 
 const normalizedQuestion = computed(() => normalizeQuestion(props.question));
 const answerComponent = computed(() => getQuestionTypeDefinition(normalizedQuestion.value.questionType).components.answer);
@@ -57,6 +58,10 @@ function previewQuestionImage(item) {
   emit('preview-image', item.src);
 }
 
+function markImageUnavailable(url) {
+  unavailableImageUrls.value = new Set([...unavailableImageUrls.value, url]);
+}
+
 // 侧边详情使用标准答案作为只读预览值；公式编辑器需要 `{ value }`，不能直接接收 acceptedAnswers 对象。
 function buildCorrectAnswerValue(question) {
   if (question.questionType === 'EQUATION_EDITOR') {
@@ -86,14 +91,15 @@ function formatCorrectAnswer(question) {
     <section v-if="material" class="monitor-question-section">
       <h3>Material</h3>
       <button
-        v-if="material.assetUrl"
+        v-if="material.assetUrl && !unavailableImageUrls.has(material.assetUrl)"
         type="button"
         class="monitor-question-image-button"
         title="Click to enlarge image"
         @click="previewMaterialImage({ src: material.assetUrl })"
       >
-        <img :src="material.assetUrl" alt="Question material" />
+        <img :src="material.assetUrl" alt="Question material" @error="markImageUnavailable(material.assetUrl)" />
       </button>
+      <p v-else-if="material.assetUrl" class="monitor-image-unavailable" role="status">Question image is unavailable.</p>
 
       <div v-else-if="materialDisplay" class="monitor-material-display">
         <p v-if="materialDisplay.hasIntroduction" class="monitor-material-introduction">
@@ -107,14 +113,15 @@ function formatCorrectAnswer(question) {
         <div v-if="materialDisplay.hasBody" class="monitor-material-body">
           <template v-for="item in materialDisplay.bodyItems" :key="item.key">
             <button
-              v-if="item.type === 'image'"
+              v-if="item.type === 'image' && !unavailableImageUrls.has(item.src)"
               type="button"
               class="monitor-question-image-button monitor-question-image-button--inline"
               title="Click to enlarge image"
               @click="previewMaterialImage(item)"
             >
-              <img :src="item.src" :alt="item.alt" />
+              <img :src="item.src" :alt="item.alt" @error="markImageUnavailable(item.src)" />
             </button>
+            <p v-else-if="item.type === 'image'" class="monitor-image-unavailable" role="status">Question image is unavailable.</p>
             <div v-else class="monitor-material-line" :class="{ 'monitor-material-line--empty': item.isEmpty }">
               <SafeMarkdownText :content="item.text" />
             </div>
@@ -178,6 +185,7 @@ function formatCorrectAnswer(question) {
 .monitor-question-image-button { display: block; width: 100%; border: 0; padding: 0; background: transparent; cursor: zoom-in; }
 .monitor-question-image-button img { display: block; width: auto; max-width: 100%; max-height: 360px; margin: 0 auto; border: 1px solid #d8e2ee; border-radius: 8px; object-fit: contain; }
 .monitor-question-image-button--inline { margin: 8px 0; }
+.monitor-image-unavailable { margin: 0; border: 1px dashed #cbd8e8; border-radius: 8px; padding: 14px; color: #65758f; background: #f6f9fd; text-align: center; }
 .monitor-fallback-options { display: grid; gap: 8px; }
 .monitor-fallback-option { display: flex; gap: 10px; border: 1px solid #d8e2ee; border-radius: 8px; padding: 10px; background: #fff; color: #24314a; }
 .monitor-fallback-option strong { color: #2f6fed; }
