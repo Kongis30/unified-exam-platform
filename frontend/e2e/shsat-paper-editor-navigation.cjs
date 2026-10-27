@@ -381,6 +381,8 @@ async function main() {
     assert.equal(await previousQuestion.isDisabled(), false, 'Previous is enabled when another question exists');
     await previousQuestion.click();
     await page.getByRole('heading', { name: 'Question 1 · Multiple Choice', exact: true }).waitFor();
+    assert.equal(await previousQuestion.isDisabled(), true, 'Previous is disabled on the first question');
+    assert.equal(await nextQuestion.isDisabled(), false, 'Next is enabled when a following question exists');
     await nextQuestion.click();
     await page.getByRole('heading', { name: 'Question 2 · Multiple Choice', exact: true }).waitFor();
 
