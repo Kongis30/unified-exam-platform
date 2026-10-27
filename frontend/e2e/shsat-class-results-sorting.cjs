@@ -54,6 +54,40 @@ async function main() {
       await assertSortOrder(page, selected.scores, sort, firstDirection === 'desc' ? 'asc' : 'desc');
     }
 
+    const viewedStudent = selected.scores.find(row => row.studentId && row.studentName);
+    assert.ok(viewedStudent, 'class results include a student with a detail page');
+    const viewedStudentRow = page.locator('.result-table tbody tr').filter({ hasText: viewedStudent.studentName });
+    await page.evaluate(() => window.scrollTo(0, 240));
+    const studentDetailButton = viewedStudentRow.getByRole('button', { name: 'View', exact: true });
+    await studentDetailButton.scrollIntoViewIfNeeded();
+    const resultsScrollY = await page.evaluate(() => window.scrollY);
+    await studentDetailButton.click();
+    await page.waitForURL(url => url.pathname.endsWith(`/students/${viewedStudent.studentId}`));
+    await page.getByRole('heading', { name: viewedStudent.studentName, exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Back to Class Results', exact: true }).click();
+    await page.waitForURL(url => url.pathname.endsWith(`/classes/${selected.classId}/exams/${selected.examId}/results`));
+    await page.locator('.result-table tbody tr').first().waitFor();
+    await page.getByText('Sorted by submitted time, oldest first.', { exact: true }).waitFor();
+    await assertSortOrder(page, selected.scores, sortControls.at(-1), 'asc');
+    const returnedScrollY = await page.evaluate(() => window.scrollY);
+    assert.ok(Math.abs(returnedScrollY - resultsScrollY) <= 2,
+      `student detail return preserves class results scroll position (${resultsScrollY} -> ${returnedScrollY})`);
+
+    const monitorButton = page.getByRole('button', { name: 'Monitor', exact: true });
+    await monitorButton.scrollIntoViewIfNeeded();
+    const monitorReturnScrollY = await page.evaluate(() => window.scrollY);
+    await monitorButton.click();
+    await page.waitForURL(url => url.pathname.endsWith(`/exams/${selected.examId}/monitor`));
+    await page.getByRole('heading').first().waitFor();
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.waitForURL(url => url.pathname.endsWith(`/classes/${selected.classId}/exams/${selected.examId}/results`));
+    await page.locator('.result-table tbody tr').first().waitFor();
+    await page.getByText('Sorted by submitted time, oldest first.', { exact: true }).waitFor();
+    await assertSortOrder(page, selected.scores, sortControls.at(-1), 'asc');
+    const monitorReturnedScrollY = await page.evaluate(() => window.scrollY);
+    assert.ok(Math.abs(monitorReturnedScrollY - monitorReturnScrollY) <= 2,
+      `monitor return preserves class results scroll position (${monitorReturnScrollY} -> ${monitorReturnedScrollY})`);
+
     const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(dimensions.page <= dimensions.viewport, 'class results page fits desktop viewport');
     await scrollBelowFixedNavigation(page, '.result-table-wrap');
@@ -64,7 +98,7 @@ async function main() {
     await scrollBelowFixedNavigation(page, '.result-table-wrap');
     await page.screenshot({ path: `/tmp/shsat-class-results-sorting-mobile-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ result: 'PASS', checks: ['total/ELA/Math/accuracy/submitted sort in both directions', 'data ordering matches score API', 'desktop and 390px fit', 'no page errors'], rows: selected.scores.length, dimensions, mobileDimensions }));
+    console.log(JSON.stringify({ result: 'PASS', checks: ['total/ELA/Math/accuracy/submitted sort in both directions', 'data ordering matches score API', 'student detail and monitor return preserve active sort and vertical position', 'desktop and 390px fit', 'no page errors'], rows: selected.scores.length, dimensions, mobileDimensions }));
   } finally {
     await browser.close();
   }

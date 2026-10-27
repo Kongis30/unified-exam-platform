@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
@@ -36,6 +36,49 @@ const sortLabels = {
 
 const classId = computed(() => route.params.classId);
 const examId = computed(() => route.params.examId);
+const resultSortKeys = ['totalScore', 'elaScore', 'mathScore', 'accuracy', 'submittedAt'];
+
+function resultViewStateKey() {
+  return `shsat-class-results:${classId.value}:${examId.value}`;
+}
+
+// 查看学生详情或监考后返回成绩页时保留当前排序与滚动位置。
+function saveResultViewState() {
+  try {
+    window.sessionStorage.setItem(resultViewStateKey(), JSON.stringify({
+      sortKey: sortState.value.key,
+      sortDirection: sortState.value.direction,
+      scrollY: window.scrollY,
+      tableScrollLeft: resultTableWrap.value?.scrollLeft || 0,
+    }));
+  } catch {
+    // 存储不可用时不影响成绩页导航。
+  }
+}
+
+async function restoreResultViewState() {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(resultViewStateKey()) || 'null');
+    if (!saved || typeof saved !== 'object') return;
+
+    if (resultSortKeys.includes(saved.sortKey)
+      && ['asc', 'desc'].includes(saved.sortDirection)) {
+      sortState.value = { key: saved.sortKey, direction: saved.sortDirection };
+    }
+
+    await nextTick();
+    if (resultTableWrap.value && Number.isFinite(saved.tableScrollLeft)) {
+      const maxScroll = Math.max(0, resultTableWrap.value.scrollWidth - resultTableWrap.value.clientWidth);
+      resultTableWrap.value.scrollLeft = Math.min(Math.max(0, saved.tableScrollLeft), maxScroll);
+      syncResultTableScrollMetrics();
+    }
+    if (Number.isFinite(saved.scrollY) && saved.scrollY >= 0) {
+      window.scrollTo(0, saved.scrollY);
+    }
+  } catch {
+    // 损坏或不可读的状态按默认成绩页显示。
+  }
+}
 
 const sortedScores = computed(() => {
   return [...scores.value].sort((left, right) => {
@@ -511,8 +554,10 @@ onMounted(async () => {
     resultTableResizeObserver = new ResizeObserver(syncResultTableScrollMetrics);
     resultTableResizeObserver.observe(resultTableWrap.value);
   }
+  await restoreResultViewState();
 });
 
+onBeforeRouteLeave(saveResultViewState);
 onBeforeUnmount(() => {
   resultTableResizeObserver?.disconnect();
 });
