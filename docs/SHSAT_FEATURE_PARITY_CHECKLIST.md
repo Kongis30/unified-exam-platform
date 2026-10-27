@@ -464,6 +464,7 @@
 - [x] **核心试卷编辑、题型与学生交卷/报告专项复跑（2026-10-27）**：Paper Management 筛选/创建/编辑/重排、11 种特殊题型编辑保存预览、材料增删/上传失败恢复、Student/Answer Key PDF、13 题真实报告、100 题分科交卷和合成 Hot Spot 流程全部通过；未发现需修复的业务逻辑问题。逐题考试结果与 raw/scaled 分数、ELA/Math 归属、已答/错答/未答报告一致；PDF 有效，桌面/390px 关键截图无页面溢出、脚本错误 0。相关截图见本节前述 Paper/Report 条目及 `/tmp/shsat-paper-export-desktop-1793107979100.png`、`/tmp/shsat-exam-drawing-mobile-1793108032023.png`、`/tmp/shsat-hotspot-report-mobile-1793108076697.png`。原始 Hot Spot 图片仍因源文件丢失无法进行原题级验证。
 - [x] **本轮代码质量门禁（2026-10-27）**：Java 17 执行 `mvn -q clean test`，22 个测试套件、109 项全部通过（失败/错误/跳过均为 0）；前端 `npm run build` 成功。构建仍显示既有多个大于 500 kB 的分包提示，本轮没有为 SHSAT 功能回归引入新的构建错误。
 - [x] **考试续做、清空答案、截止行为与工具栏复跑（2026-10-27）**：`clear-answer` 通过；继续进行中的考试恢复答案，已有答案清空在断网失败后可重试并刷新持久化，刷新后服务器剩余倒计时恢复；自动交卷开启时到期生成报告、关闭时给出英文提示，窄屏考试工具栏可滚动触达提交操作。390px 页面无横向溢出，`pageErrors=0`；桌面考试与到期提示截图 `/tmp/shsat-exam-timer-desktop-1793108159537.png`、`/tmp/shsat-exam-timer-manual-submit-1793108159537.png` 已复核。
+- [x] **班级成绩结果与重试复跑（2026-10-27）**：`class-results-statuses`、`class-results-sorting`、`class-results-retry` 均通过。Not Started/In Progress/Completed 与 API 相符，摘要只算完成记录；18 行 Total/ELA/Math/Accuracy/Submitted 双向排序与 API 顺序一致；注入加载失败后 Retry 能恢复结果/空状态。桌面/390px 页面宽度正确、`pageErrors=0`；排序表手机视图 `/tmp/shsat-class-results-sorting-mobile-1793108228057.png` 已目视检查。
 - [ ] 仍未达到本清单的整体完成门槛：需继续逐题型核对独立版的原始样题/内容与提交后计分报告、补齐报告和学生详情边界组合、逐页并排检查未覆盖的菜单/弹窗/空错状态，以及解决四张源 Hot Spot 图片缺失后再验原题作答。不能用本轮关键路径回归替代这些未测项。
 
 ### 本轮追加复测（2026-10-27）
