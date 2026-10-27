@@ -203,6 +203,9 @@
 
 ## 7. Report、监考与输出
 
+- [x] **班级考试成绩状态与完成率回归（2026-10-27）**：创建测试班级及三名学生，分别覆盖未开始、进行中和已完成；API、成绩行状态和参与人数一致，平均分只统计已提交结果，完成率为 33%。桌面/390px 页面无脚本错误和根页面横向溢出；窄屏表格在自身容器内横向滚动，学生名与状态可辨。桌面及手机截图 `/tmp/shsat-class-results-states-desktop-1793090208840.png`、`/tmp/shsat-class-results-states-mobile-1793090208840.png` 已目视检查。`E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=1 npm run test:e2e:shsat:class-results-statuses` 通过，测试班级、学生和考试已清理。成绩筛选/排序/分页的独立专项仍待本轮复核。
+- [x] **班级成绩排序和窄屏布局回归（2026-10-27）**：对 18 条真实结果分别按总分、ELA、Math、正确率、提交时间做升/降序切换，逐项与 API 排序值核对；排序图标与当前方向同步。桌面列完整可见，390px 页面根宽不溢出，窄屏保留学生和状态主要信息；无浏览器错误。截图 `/tmp/shsat-class-results-sorting-desktop-1793090248099.png`、`/tmp/shsat-class-results-sorting-mobile-1793090248099.png` 已目视检查。`npm run test:e2e:shsat:class-results-sorting` 通过。筛选和分页仍待独立复核。
+- [x] **班级成绩请求失败恢复回归（2026-10-27）**：注入一次成绩接口网络失败，页面展示错误状态；点击 `Retry` 后重新请求，汇总与结果表/空状态恢复。390px 下根页面宽度等于视口，浏览器错误为 0。恢复态截图 `/tmp/shsat-class-results-retry-1793090266133.png`、`/tmp/shsat-class-results-retry-mobile-1793090266133.png` 已目视检查；`npm run test:e2e:shsat:class-results-retry` 通过。错误态本身已由脚本断言，但本轮没有保存错误态截图。
 - [x] 学生/管理员报告入口回归（2026-10-27）：学生提交后查看本人报告、`Print Report` 生成有效 Letter PDF、`Back to Dashboard` 返回 SHSAT 工作区；管理员从学生历史进入报告，标题、学生/考试/试卷和提交时间与 API 记录一致，注入 503 后 Retry 恢复，`Monitor` 进入对应考试且 Back 返回原报告，`Back to Student Detail` 返回发起学生详情。桌面与 390px 报告及错误态截图 `/tmp/shsat-equation-report-1793080447890.png`、`/tmp/shsat-equation-report-mobile-1793080447890.png`、`/tmp/shsat-admin-report-error-1793080447890.png`、`/tmp/shsat-admin-report-1793080447890.png`、`/tmp/shsat-admin-report-mobile-1793080447890.png` 已目视检查；PDF 935,780 bytes，页面无横向溢出、脚本错误为 0。学生/管理员从其它入口进入时的全部返回链仍需汇总核验。
 - [x] **学生报告计时数据闭环**：报告 API 返回新考试的 `startedAt`、正的总用时以及已保存的逐题用时；修复计时起点丢失和报告查询将逐题用时固定返回空值的问题。全链路样本的报告总用时为 7 秒、逐题累计为 117 秒；后者由测试脚本逐题写入 1 秒构造，不能用于比较两种计时统计的一致性。
 - [ ] Result Summary：13 题真实答卷已逐项核对 raw 总分、ELA/Math raw、折算分、答对/答错/未答、正确率、完成率和用时；答案可见前正确/错误数量与准确率被隐藏，考试结束后再显示，题目作答和报告分数一致。离开考试页面计数、其它空答案结构和计时极限边界仍待覆盖。
