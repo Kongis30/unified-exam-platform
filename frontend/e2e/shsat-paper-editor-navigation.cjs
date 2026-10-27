@@ -433,8 +433,28 @@ async function main() {
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.route(`**/api/admin/papers/${paperId}`, async route => {
+      const response = await route.fetch();
+      const detail = await response.json();
+      const clearQuestionStem = value => {
+        if (Array.isArray(value)) {
+          value.forEach(clearQuestionStem);
+        } else if (value && typeof value === 'object') {
+          if (value.stem === mathStem) value.stem = '';
+          Object.values(value).forEach(clearQuestionStem);
+        }
+      };
+      clearQuestionStem(detail);
+      await route.fulfill({ response, body: JSON.stringify(detail) });
+    }, { times: 1 });
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.getByText(questionStem, { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByText('Question stem is not available', { exact: true }).waitFor();
+    await page.getByText('Question image is unavailable.', { exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-paper-preview-empty-stem-mobile-${stamp}.png` });
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
     await page.getByText(questionStem, { exact: true }).waitFor();
     const previewMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(previewMobileSize.page <= previewMobileSize.viewport, 'the paper preview fits a 390px viewport');
