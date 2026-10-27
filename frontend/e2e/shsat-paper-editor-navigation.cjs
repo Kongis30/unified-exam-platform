@@ -255,6 +255,59 @@ async function main() {
     assert.deepEqual(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).map(question => question.stem),
       [questionStem, mathStem], 'questions added from separate parts persist in the expected order');
 
+    const previewMaterialRef = `preview-material-${stamp}`;
+    const previewPaperDetail = await api(page, `/api/admin/papers/${paperId}`);
+    let previewMaterialAttached = false;
+    const mapSectionForSave = section => ({
+      sectionCode: section.sectionCode,
+      sectionKind: section.sectionKind,
+      title: section.title,
+      sortOrder: section.sortOrder,
+      instructions: section.instructions,
+      settings: section.settings,
+      questions: (section.questions || []).map(question => {
+        const render = question.render || {};
+        if (question.stem === questionStem) {
+          render.materialRef = previewMaterialRef;
+          previewMaterialAttached = true;
+        }
+        return {
+          questionTypeCode: question.questionTypeCode,
+          payloadSchemaVersion: question.payloadSchemaVersion,
+          stem: question.stem,
+          render,
+          answerKey: question.answerKey,
+          grading: question.grading,
+          explanation: question.explanation,
+          categoryId: question.categoryId,
+          sortOrder: question.sortOrder,
+          displayNumber: question.displayNumber,
+          maxPoints: question.maxPoints,
+          scoringSectionCode: question.scoringSectionCode,
+        };
+      }),
+      children: (section.children || []).map(mapSectionForSave),
+    });
+    assert.ok(previewPaperDetail.sections.some(section => JSON.stringify(section).includes(questionStem)),
+      'the ELA preview question is present in the saved paper structure');
+    const savedSections = previewPaperDetail.sections.map(mapSectionForSave);
+    assert.equal(previewMaterialAttached, true, 'the preview test question receives a temporary reading material');
+    const materialWrites = (previewPaperDetail.materials || []).map(material => ({
+      materialId: String(material.id), clientRef: null, partCode: material.partCode,
+      subTypeCode: material.subTypeCode, materialType: material.materialType,
+      category: material.category, title: material.title, content: material.content,
+      assetUrl: material.assetUrl, sortOrder: material.sortOrder,
+    }));
+    materialWrites.push({
+      materialId: null, clientRef: previewMaterialRef, partCode: 'ELA', subTypeCode: null,
+      materialType: 'TEXT', category: 'Reading Passage', title: `Preview Drawing Material ${stamp}`,
+      content: 'A short passage used to verify the preview drawing pen.', assetUrl: null,
+      sortOrder: materialWrites.length,
+    });
+    await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', {
+      sections: savedSections, materials: materialWrites,
+    });
+
     const nextQuestion = page.getByRole('button', { name: 'Next →', exact: true });
     assert.equal(await nextQuestion.isDisabled(), true, 'Next is disabled on the last question');
     const previousQuestion = page.getByRole('button', { name: '← Previous', exact: true });
@@ -308,10 +361,53 @@ async function main() {
     await page.getByRole('button', { name: 'Highlighter', exact: true }).click();
     assert.ok((await page.getByRole('button', { name: 'Highlighter', exact: true }).getAttribute('class')).includes('active'),
       'the highlighter tool can be enabled in preview mode');
+    await page.getByRole('button', { name: 'Answer Eliminator', exact: true }).click();
+    assert.ok((await page.getByRole('button', { name: 'Answer Eliminator', exact: true }).getAttribute('class')).includes('active'),
+      'the answer eliminator can be enabled in preview mode');
+    const optionToEliminate = page.locator('.choice-answer__option').first();
+    await optionToEliminate.getByRole('button', { name: 'Cross out this option', exact: true }).click();
+    assert.ok((await optionToEliminate.getAttribute('class')).includes('eliminated'),
+      'the answer eliminator strikes through an option');
+    await optionToEliminate.getByRole('button', { name: 'Restore this option', exact: true }).click();
+    assert.equal((await optionToEliminate.getAttribute('class')).includes('eliminated'), false,
+      'the answer eliminator can restore a crossed-out option');
+    await page.getByRole('button', { name: 'Answer Eliminator', exact: true }).click();
+    await page.getByRole('button', { name: 'Drawing Pen', exact: true }).click();
+    assert.ok((await page.getByRole('button', { name: 'Drawing Pen', exact: true }).getAttribute('class')).includes('active'),
+      'the drawing tool can be enabled in preview mode');
+    await page.getByRole('button', { name: 'Pen Color', exact: true }).click();
+    await page.getByRole('button', { name: 'Blue', exact: true }).click();
+    assert.equal(await page.locator('.tool-icon--pen').evaluate(element => getComputedStyle(element).getPropertyValue('--pen-color').trim()), '#2266c7',
+      'the drawing pen color selection is applied');
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    await page.getByText(questionStem, { exact: true }).waitFor();
+    const drawingLayer = page.locator('.drawing-layer');
+    const drawingBounds = await drawingLayer.boundingBox();
+    assert.ok(drawingBounds && drawingBounds.width > 40 && drawingBounds.height > 40,
+      'the material question exposes a usable drawing surface');
+    await page.mouse.move(drawingBounds.x + 20, drawingBounds.y + 20);
+    await page.mouse.down();
+    await page.mouse.move(drawingBounds.x + 90, drawingBounds.y + 50, { steps: 4 });
+    await page.mouse.up();
+    assert.equal(await drawingLayer.locator('path.drawing-stroke').count(), 1,
+      'the pen draws a stroke over the preview material');
+    await page.screenshot({ path: `/tmp/shsat-paper-preview-drawing-desktop-${stamp}.png` });
+    await page.getByRole('button', { name: 'Pen Color', exact: true }).click();
+    await page.getByRole('button', { name: 'Clear Drawing', exact: true }).click();
+    assert.equal(await drawingLayer.locator('path.drawing-stroke').count(), 0,
+      'Clear Drawing removes the current preview stroke');
     await page.getByRole('button', { name: 'Line Reader', exact: true }).click();
     await page.locator('.line-reader').waitFor();
     await page.getByRole('button', { name: 'Line Reader', exact: true }).click();
     await page.locator('.line-reader').waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Fullscreen', exact: true }).click();
+    await page.waitForFunction(() => Boolean(document.fullscreenElement));
+    assert.ok((await page.getByRole('button', { name: 'Fullscreen', exact: true }).getAttribute('class')).includes('active'),
+      'the preview fullscreen control enters fullscreen mode');
+    await page.getByRole('button', { name: 'Fullscreen', exact: true }).click();
+    await page.waitForFunction(() => !document.fullscreenElement);
+    assert.equal((await page.getByRole('button', { name: 'Fullscreen', exact: true }).getAttribute('class')).includes('active'), false,
+      'the preview fullscreen control exits fullscreen mode');
     assert.deepEqual(previewWriteRequests, [],
       `preview interactions do not write student attempts: ${previewWriteRequests.join(', ')}`);
     await page.getByRole('button', { name: 'Back', exact: true }).click();
