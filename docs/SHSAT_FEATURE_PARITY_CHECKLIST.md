@@ -466,6 +466,7 @@
 - [x] **正式 100 题考试与报告流程复测**：`npm run test:e2e:shsat:full-length-navigation` 通过，验证 ELA→Math 分段交卷、旧分段写入拒绝、重复最终交卷幂等、书签/Review 受限导航、画笔实际绘制与清除、100 题成绩及师生报告题数一致。390px 根页面无横向溢出，`pageErrors=0`；桌面/手机真实考试界面截图 `/tmp/shsat-exam-drawing-desktop-1793105439924.png`、`/tmp/shsat-exam-drawing-mobile-1793105439924.png` 已检查。该流程证明考试主链路，不替代 12 种题型分别按迁移原题数据逐项对账。
 
 - [x] **Paper Detail 答案 PDF 计数恢复（2026-10-27）**：对照独立版确认其详情响应包含答案 PDF 记录并在详情弹窗显示数量；统一版原先详情 DTO 未返回数量，适配层又固定 `solutions: []`，导致已迁移记录始终显示 0。现由详情 API 返回 SHSAT 答案 PDF 记录数，前端直接展示；SAT 类型返回 0。扩展 `paper-filters`，逐卷核对详情计数与删除影响预览计数一致，并要求已有迁移答案 PDF 的试卷在 UI 弹窗显示正确数值；桌面和 390px 下均验证弹窗尺寸与页面无横向溢出。`npm run test:e2e:shsat:paper-filters`、`npm run build` 及 Java 17 `mvn test -q` 通过；无浏览器错误。截图 `/tmp/shsat-paper-answer-pdf-count-20261027.png`、`/tmp/shsat-paper-answer-pdf-count-mobile-20261027.png` 已目视检查，信息层级清楚、手机排版正常。该修复仅恢复现有详情数量，不新增源版 UI 未提供的上传/下载操作。
+- [x] **Paper Detail 接口相关页面回归（2026-10-27）**：修复详情响应后依次复跑 `paper-create`、`paper-editor-navigation`、`materials`、`paper-export`。覆盖纸卷创建/编辑/删除影响预览、题目编辑保存和预览、材料库写入/复制、Student/Answer Key 导出与返回；四项均通过，临时数据由各脚本清理，`pageErrors=0`。导出桌面/390px 截图 `/tmp/shsat-paper-export-desktop-1793106203941.png`、`/tmp/shsat-paper-export-mobile-1793106203941.png` 已目视检查；手机纸张在独立横向滚动区中展示，根页面没有被 Letter 页面撑宽。PDF 非空和各模式内容断言通过。
 
 ## 9. 建议执行顺序与完成门槛
 
