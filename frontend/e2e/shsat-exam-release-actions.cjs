@@ -571,10 +571,13 @@ async function main() {
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     await Promise.all(extraExamIds.map(id => api(admin, `/api/admin/exams/${id}`, 'DELETE').catch(() => {})));
-    if (classId) await api(admin, `/api/admin/classes/${classId}`, 'DELETE').catch(() => {});
-    if (targetRaceClassId) await api(admin, `/api/admin/classes/${targetRaceClassId}`, 'DELETE').catch(() => {});
     if (studentId) await api(admin, `/api/admin/users/${studentId}`, 'DELETE').catch(() => {});
     if (targetRaceStudentId) await api(admin, `/api/admin/users/${targetRaceStudentId}`, 'DELETE').catch(() => {});
+    for (const id of [classId, targetRaceClassId].filter(Boolean)) {
+      await api(admin, `/api/admin/classes/${id}`, 'DELETE').catch(() => {});
+      const remainingClass = await api(admin, `/api/admin/classes/${id}`).then(() => '', error => error.message);
+      assert.match(remainingClass, /404/, 'the temporary class is removed after its student membership is deleted');
+    }
     await studentContext?.close();
     await targetRaceStudentContext?.close();
     await targetRaceOriginalStudentContext?.close();

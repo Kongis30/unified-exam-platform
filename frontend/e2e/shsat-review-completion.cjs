@@ -177,8 +177,12 @@ async function main() {
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (paperId) await api(admin, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
-    if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});
+    if (classId) {
+      await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
+      const remainingClass = await api(admin, `/api/admin/classes/${classId}`).then(() => '', error => error.message);
+      assert.match(remainingClass, /404/, 'the temporary class is removed after its student membership is deleted');
+    }
     await studentContext.close();
     await adminContext.close();
     await browser.close();
