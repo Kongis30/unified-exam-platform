@@ -493,3 +493,9 @@
 4. **P1 视觉验收**：修复 V1/V2 和首轮截图问题，逐页桌面/窄屏截图复核；所有用户提示英文，整体保持独立新 SHSAT 的简约、清晰风格。
 
 **完成条件：** 本清单全部必需项附可复查证据、无未处理 P0/P1 差异；管理员/教师/学生真实浏览器端到端通过，导出/报告文件实测，独立版与统一版逐页截图检查通过。未测项不得改写为“已完成”。
+
+### 最新增量复测（2026-10-27）
+
+- `paper-editor-navigation` 使用真实学生提交成绩验证 Import from Exam 的 0%/25%/50%/75%/100% 正确率分桶、No answers、ELA/Math 分组与折叠、筛选间批量选择和重复切换、取消、导入题目答案/标签及材料复制。发现监考分析未返回 SHSAT 科目导致分组失效；现已修复并在 `ShsatAdminReportServiceTest` 验证。桌面和 390px 弹窗截图 `/tmp/shsat-paper-editor-import-1793111523285.png`、`/tmp/shsat-paper-editor-import-mobile-1793111523285.png` 已检查。
+- Monitor 接口变更后再次以教师账号运行 `teacher-workspace`，准确率、结束场次汇总、题目详情/缺图状态、权限拒绝等全部通过，`pageErrors=0`、390px 无页面溢出。手机热图和题目详情截图 `/tmp/shsat-teacher-monitor-accuracy-mobile-1793111633499.png`、`/tmp/shsat-teacher-monitor-image-unavailable-mobile-1793111633499.png` 已检查。
+- Java 17 `mvn -q clean test`：113 项通过，失败/错误/跳过均为 0；`npm run build` 成功。当前增量已提交 `980fa37`。整体目标继续进行，不能视作清单全部完成。
