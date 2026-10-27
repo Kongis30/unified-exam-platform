@@ -11,6 +11,7 @@
     "test:e2e:shsat:paper-filters": "node e2e/shsat-paper-filters.cjs",
     "test:e2e:shsat:paper-create": "node e2e/shsat-paper-create.cjs",
     "test:e2e:shsat:paper-editor-navigation": "node e2e/shsat-paper-editor-navigation.cjs",
+    "test:e2e:shsat:import-image-material": "node e2e/shsat-import-image-material.cjs",
     "test:e2e:shsat:paper-question-reorder": "node e2e/shsat-paper-question-reorder.cjs",
     "test:e2e:shsat:question-type-editor": "node e2e/shsat-question-type-editor.cjs",
     "test:e2e:shsat:materials": "node e2e/shsat-material-editor.cjs",
