@@ -452,6 +452,7 @@
 - [x] **学生考试状态、权限和历史报告复测（2026-10-27）**：`student-states` 覆盖 Upcoming/Available/Closed 按时间窗变化、开始考试权限、三次尝试上限与最近尝试优先、已提交答卷只读、Exam History 刷新及报告返回后保留 tab/滚动位置；错误密码、空凭证、禁用账户和另一学生访问报告均拒绝；390px 首页、答卷详情、历史、报告无横向溢出，浏览器错误为 0，临时用户/考试/尝试清理。桌面及窄屏截图 `/tmp/shsat-student-exam-states-1793104650120.png`、`/tmp/shsat-student-exam-states-mobile-1793104650120.png`、`/tmp/shsat-student-view-attempt-mobile-1793104650120.png`、`/tmp/shsat-student-history-report-mobile-1793104650120.png` 已目视检查。
 - [x] **教师复习任务和进度操作已有真实角色覆盖（2026-10-27）**：此前 `review-assignment-flow` 以教师会话创建复习任务、校验开始/截止时间、查看学生进度及返回 Review Assignments，并与学生提交的源考试记录和任务/API 数据对账；管理员账户目录对教师返回 403。该行为与独立版的管理员后台任务流程权限一致。
 - [x] **全量后端单元/控制器测试重跑（2026-10-27）**：使用 Java 17 清理并重编译后运行 `mvn -q clean test`，22 个测试套件共 109 项，失败 0、错误 0、跳过 0。系统默认 Java 11 运行时无法执行目录里残留的 Java 17 测试类；清理产物并切换至已安装的 Java 17 后测试通过。
+- [x] **试卷筛选与班级批量加入复测（2026-10-27）**：`paper-filters` 对账文件夹、Online/Offline、名称组合过滤与 API 摘要值，操作菜单打开正确试卷详情，空结果提示、清除筛选和刷新恢复通过，脚本错误为 0；桌面过滤结果和空状态截图 `/tmp/shsat-paper-filter-online-20261027.png`、`/tmp/shsat-paper-filter-offline-20261027.png`、`/tmp/shsat-paper-filter-no-results-20261027.png` 已检查。`unassigned-bulk` 覆盖 800px 最大高度和内部滚动、全选/取消、多选刷新保留、取消无副作用、确认加入和共享账户保留；390px 页面及表格无横向溢出，错误数 0，临时数据清理。截图 `/tmp/shsat-unassigned-bulk-desktop-1793104807929.png`、`/tmp/shsat-unassigned-bulk-mobile-1793104807929.png`、`/tmp/shsat-admin-toast-mobile-1793104807929.png` 已目视检查。
 - [ ] 仍未达到本清单的整体完成门槛：需继续逐题型核对独立版的原始样题/内容与提交后计分报告、补齐报告和学生详情边界组合、逐页并排检查未覆盖的菜单/弹窗/空错状态，以及解决四张源 Hot Spot 图片缺失后再验原题作答。不能用本轮关键路径回归替代这些未测项。
 
 ## 9. 建议执行顺序与完成门槛
