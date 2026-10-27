@@ -1584,9 +1584,26 @@ function buildExamPayload() {
   };
 }
 
+function isValidLocalDateTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return false;
+  }
+
+  // datetime-local 不带时区；往返校验可识别夏令时跳时期间浏览器自动改写的不存在时间。
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  const [hour, minute] = value.slice(11, 16).split(':').map(Number);
+  return date.getFullYear() === year && date.getMonth() + 1 === month && date.getDate() === day
+    && date.getHours() === hour && date.getMinutes() === minute;
+}
+
 function validateExamPayload(payload) {
   if (!payload.paperId || !payload.examTitle || !payload.startTime || !payload.endTime) {
     return 'Select a paper and enter the title, start time, and end time.';
+  }
+
+  if (!isValidLocalDateTime(payload.startTime) || !isValidLocalDateTime(payload.endTime)) {
+    return 'The selected time does not exist in your local time zone because of a clock change. Choose another time.';
   }
 
   const opensAt = new Date(payload.startTime).getTime();
@@ -6950,6 +6967,21 @@ onBeforeUnmount(() => {
 
   .class-detail-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .exam-target-toggle,
+  .exam-option-list,
+  .exam-class-picker__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .exam-target-option,
+  .exam-option-line,
+  .exam-class-option,
+  .exam-target-option > span,
+  .exam-option-line > span,
+  .exam-class-option__main {
+    min-width: 0;
   }
 
   .meta-grid--wide,

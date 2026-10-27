@@ -11,7 +11,7 @@ async function main() {
     headless: true,
     ...(process.env.E2E_CHROMIUM_PATH ? { executablePath: process.env.E2E_CHROMIUM_PATH } : {}),
   });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/New_York' });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -55,7 +55,18 @@ async function main() {
     await modal.getByText('The end time must be after the start time.', { exact: true }).waitFor();
     assert.deepEqual((await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id),
       examsBeforeInvalidWindow.map(item => item.id), 'invalid time ordering does not create an exam');
+
+    await startTime.fill('2026-03-08T02:30');
+    await endTime.fill('2026-03-08T03:15');
+    const examsBeforeMissingLocalTime = await api(page, '/api/admin/exam-types/SHSAT/exams');
+    await modal.getByRole('button', { name: 'Create Release', exact: true }).click();
+    await modal.getByText('The selected time does not exist in your local time zone because of a clock change. Choose another time.', { exact: true }).waitFor();
+    await modal.locator('.error-text').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/shsat-exam-release-dst-validation-${stamp}.png` });
+    assert.deepEqual((await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id),
+      examsBeforeMissingLocalTime.map(item => item.id), 'a nonexistent local time does not create an exam');
     await endTime.fill(originalEndTime);
+    await startTime.fill(originalStartTime);
 
     const examsBeforeInvalidDuration = await api(page, '/api/admin/exam-types/SHSAT/exams');
     await durationInput.fill('0');
@@ -181,7 +192,7 @@ async function main() {
     assert.equal(await durationInput.evaluate(input => input.checkValidity()), true,
       'one minute is the minimum valid attempt duration');
 
-    const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId: 'America/New_York' });
     const mobilePage = await mobileContext.newPage();
     mobilePage.on('pageerror', error => errors.push(error.message));
     await login(mobilePage, adminUsername, adminPassword);
@@ -192,8 +203,46 @@ async function main() {
     await mobileModal.waitFor();
     const mobileSize = await mobilePage.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(mobileSize.page <= mobileSize.viewport, 'the create exam dialog fits a 390px viewport');
+    const mobileOptionLayout = await mobileModal.evaluate(modal => {
+      const audience = modal.querySelector('.exam-target-toggle');
+      const options = modal.querySelector('.exam-option-list');
+      return {
+        audienceColumns: getComputedStyle(audience).gridTemplateColumns.split(' ').length,
+        optionColumns: getComputedStyle(options).gridTemplateColumns.split(' ').length,
+        audienceOverflow: audience.scrollWidth > audience.clientWidth,
+        optionsOverflow: options.scrollWidth > options.clientWidth,
+      };
+    });
+    assert.deepEqual(mobileOptionLayout, {
+      audienceColumns: 1, optionColumns: 1, audienceOverflow: false, optionsOverflow: false,
+    }, 'audience and option cards stack without clipping on narrow screens');
     await mobilePage.screenshot({ path: `/tmp/shsat-exam-release-create-form-mobile-${stamp}.png` });
+    await mobileModal.getByRole('radio', { name: /Specific classes/ }).check();
+    const mobileClassGrid = await mobileModal.locator('.exam-class-picker__grid').evaluate(grid => ({
+      columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+      overflow: grid.scrollWidth > grid.clientWidth,
+    }));
+    assert.deepEqual(mobileClassGrid, { columns: 1, overflow: false },
+      'class options also use a readable single-column layout on narrow screens');
+    await mobileModal.getByRole('radio', { name: /All students/ }).check();
+    const mobilePaper = (await api(mobilePage, '/api/admin/exam-types/SHSAT/papers')).find(item => item.status === 'READY');
+    assert.ok(mobilePaper, 'a READY SHSAT paper is available in the mobile session');
+    await mobileModal.locator('.exam-paper-select').selectOption(String(mobilePaper.id));
+    await mobileModal.getByLabel('Exam Title').fill(`SHSAT DST mobile check ${stamp}`);
+    await mobileModal.getByRole('textbox', { name: 'Start time' }).fill('2026-03-08T02:30');
+    await mobileModal.getByRole('textbox', { name: 'End time' }).fill('2026-03-08T03:15');
+    await mobileModal.getByRole('button', { name: 'Create Release', exact: true }).click();
+    await mobileModal.getByText('The selected time does not exist in your local time zone because of a clock change. Choose another time.', { exact: true }).waitFor();
+    await mobileModal.locator('.error-text').scrollIntoViewIfNeeded();
+    await mobilePage.screenshot({ path: `/tmp/shsat-exam-release-dst-validation-mobile-${stamp}.png` });
+    assert.ok(!(await api(mobilePage, '/api/admin/exam-types/SHSAT/exams'))
+      .some(item => item.title === `SHSAT DST mobile check ${stamp}`), 'the mobile form also rejects the nonexistent local time before creating a release');
     await mobileContext.close();
+
+    await startTime.fill('2027-03-14T01:30');
+    await endTime.fill('2027-03-14T03:30');
+    const selectedStartTime = await startTime.inputValue();
+    const selectedEndTime = await endTime.inputValue();
 
     let releasePaperCheck;
     let resolvePaperCheck;
@@ -270,12 +319,16 @@ async function main() {
       'the backend returns a clear English description-length error');
     assert.equal((await api(page, `/api/admin/exams/${examId}`)).summary.description.length, 500,
       'a rejected SHSAT edit leaves the saved description unchanged');
-    const expectedStartInstant = await page.evaluate(value => new Date(value).toISOString(), originalStartTime);
-    const expectedEndInstant = await page.evaluate(value => new Date(value).toISOString(), originalEndTime);
+    const expectedStartInstant = await page.evaluate(value => new Date(value).toISOString(), selectedStartTime);
+    const expectedEndInstant = await page.evaluate(value => new Date(value).toISOString(), selectedEndTime);
     assert.equal(Date.parse(details.summary.opensAt), Date.parse(expectedStartInstant),
       'the selected local start time is stored as the same absolute instant');
     assert.equal(Date.parse(details.summary.closesAt), Date.parse(expectedEndInstant),
       'the selected local end time is stored as the same absolute instant');
+    assert.equal(Date.parse(details.summary.opensAt), Date.parse('2027-03-14T06:30:00Z'),
+      'the spring daylight-saving start maps to its correct UTC instant');
+    assert.equal(Date.parse(details.summary.closesAt), Date.parse('2027-03-14T07:30:00Z'),
+      'the spring daylight-saving end maps to its correct UTC instant');
     assert.equal(details.summary.durationSeconds, 60,
       'the minimum one-minute attempt duration is persisted as 60 seconds');
     assert.equal(details.summary.attemptLimit, 1, 'the default attempt limit is persisted');
@@ -303,7 +356,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['defaults and required validation', 'end time and title/description/attempt field boundaries', 'duration validation in UI/API including negative and minimum duration', 'active class audience and required selection', 'duplicate submissions create only one release', 'local time and duration persist accurately', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
+      checks: ['defaults and required validation', 'end time and title/description/attempt field boundaries', 'duration validation in UI/API including negative and minimum duration', 'active class audience and required selection', 'nonexistent daylight-saving time rejected with a clear message', 'valid daylight-saving time stored as the correct instant', 'duplicate submissions create only one release', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
       className,
       mobileSize,
       pageErrors: errors.length,
