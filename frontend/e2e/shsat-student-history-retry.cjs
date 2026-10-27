@@ -80,6 +80,12 @@ async function main() {
       'an empty task state is not shown while task history could not be loaded');
     assert.equal(await student.getByText('No exams have been assigned to you yet.', { exact: true }).count(), 0,
       'an empty assignment state is not shown while the exam list could not be loaded');
+    await student.screenshot({ path: `/tmp/shsat-student-history-initial-error-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const initialErrorMobile = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(initialErrorMobile.page <= initialErrorMobile.viewport, 'the review-history error fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-student-history-initial-error-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 900 });
 
     const recoveredInitialLoad = student.waitForResponse(response => response.url().endsWith('/api/student/exams'), { timeout: 5000 });
     await refreshButton.click();
@@ -126,7 +132,12 @@ async function main() {
       checks: ['initial exam-list and SHSAT history failures show English errors', 'initial load recovers both endpoints via Refresh', 'Refresh disables during request', 'refresh failure can be retried successfully', '390px error-state layout'],
       mobileSize,
       pageErrors: pageErrors.length,
-      screenshots: [`/tmp/shsat-student-history-error-${stamp}.png`, `/tmp/shsat-student-history-error-mobile-${stamp}.png`],
+      screenshots: [
+        `/tmp/shsat-student-history-initial-error-${stamp}.png`,
+        `/tmp/shsat-student-history-initial-error-mobile-${stamp}.png`,
+        `/tmp/shsat-student-history-error-${stamp}.png`,
+        `/tmp/shsat-student-history-error-mobile-${stamp}.png`,
+      ],
     }));
   } finally {
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});
