@@ -245,6 +245,11 @@ async function main() {
     await dashboardTask.getByRole('button', { name: 'View Progress', exact: true }).click();
     await admin.waitForURL(url => url.pathname.endsWith(`/wrong-answer-tasks/${taskId}`));
     await admin.getByText('Progress could not be loaded. Please retry.', { exact: true }).waitFor();
+    await admin.getByRole('heading', { name: 'Task details unavailable', exact: true }).waitFor();
+    assert.equal(await admin.locator('.wrong-answer-task-page__context').count(), 0,
+      'a failed task request does not present placeholder exam, paper, or class details as real data');
+    assert.equal(await admin.locator('.wrong-answer-task-page__hero-stats').count(), 0,
+      'a failed task request does not present zero fallback values as real progress counts');
     await admin.screenshot({ path: `/tmp/shsat-review-progress-retry-error-${stamp}.png` });
     await admin.setViewportSize({ width: 390, height: 844 });
     const progressErrorMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
@@ -254,6 +259,7 @@ async function main() {
     await admin.setViewportSize({ width: 1440, height: 1000 });
     await admin.getByRole('button', { name: 'Retry', exact: true }).click();
     await admin.getByRole('heading', { name: taskTitle, exact: true }).waitFor();
+    await admin.locator('.wrong-answer-task-page__hero-stats').waitFor();
     await admin.locator('.task-table tbody tr').filter({ hasText: `Review Student ${displayStamp}` }).waitFor();
     await admin.unroute(progressUrl);
     await admin.getByRole('button', { name: 'Back to Review Assignments', exact: true }).click();

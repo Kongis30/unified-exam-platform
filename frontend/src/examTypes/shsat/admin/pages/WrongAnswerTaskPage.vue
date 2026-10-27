@@ -132,14 +132,14 @@ onMounted(loadTask);
       <section class="wrong-answer-task-page__hero">
         <div>
           <p class="page-subtitle">Review Assignment</p>
-          <h1 class="page-title">{{ task?.title || 'Task details' }}</h1>
-          <div class="wrong-answer-task-page__context">
+          <h1 class="page-title">{{ task?.title || (loading ? 'Loading task details…' : 'Task details unavailable') }}</h1>
+          <div v-if="task" class="wrong-answer-task-page__context">
             <p><span>Exam</span><strong>{{ task?.examTitle || `Exam #${route.params.examId}` }}</strong></p>
             <p><span>Paper</span><strong>{{ task?.paperName || 'Unavailable' }}</strong></p>
             <p><span>Class</span><strong>{{ task?.className || `Class #${route.params.classId}` }}</strong></p>
           </div>
         </div>
-        <div class="wrong-answer-task-page__hero-stats">
+        <div v-if="task" class="wrong-answer-task-page__hero-stats">
           <div>
             <strong>{{ task?.completedCount || 0 }}</strong>
             <span>Completed</span>
