@@ -63,6 +63,13 @@ async function main() {
     await modal.getByText('Duration must be greater than 0.', { exact: true }).waitFor();
     assert.deepEqual((await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id),
       examsBeforeInvalidDuration.map(item => item.id), 'zero duration does not create an exam');
+    await durationInput.fill('-1');
+    assert.equal(await durationInput.evaluate(input => input.validity.rangeUnderflow), true,
+      'the browser rejects a duration below the one-minute minimum');
+    const examsBeforeNegativeDuration = await api(page, '/api/admin/exam-types/SHSAT/exams');
+    await modal.getByRole('button', { name: 'Create Release', exact: true }).click();
+    assert.deepEqual((await api(page, '/api/admin/exam-types/SHSAT/exams')).map(item => item.id),
+      examsBeforeNegativeDuration.map(item => item.id), 'negative duration does not create an exam');
     await durationInput.fill(originalDuration);
 
     const apiStart = new Date(Date.now() + 60 * 60 * 1000);
@@ -101,6 +108,9 @@ async function main() {
       'the selected audience count updates');
     assert.equal(await modal.getByLabel('Auto-submit when time expires').isChecked(), true);
     assert.equal(await modal.getByLabel('Allow review').isChecked(), true);
+    await durationInput.fill('1');
+    assert.equal(await durationInput.evaluate(input => input.checkValidity()), true,
+      'one minute is the minimum valid attempt duration');
 
     const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const mobilePage = await mobileContext.newPage();
@@ -169,8 +179,8 @@ async function main() {
       'the selected local start time is stored as the same absolute instant');
     assert.equal(Date.parse(details.summary.closesAt), Date.parse(expectedEndInstant),
       'the selected local end time is stored as the same absolute instant');
-    assert.equal(details.summary.durationSeconds, Number(originalDuration) * 60,
-      'attempt duration is persisted in seconds without changing the entered minutes');
+    assert.equal(details.summary.durationSeconds, 60,
+      'the minimum one-minute attempt duration is persisted as 60 seconds');
     assert.equal(details.summary.attemptLimit, 1, 'the default attempt limit is persisted');
     assert.ok(JSON.stringify(details).includes(className), 'the chosen class is persisted as the audience');
     assert.equal(details.summary.autoSubmit, true);
@@ -196,7 +206,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['defaults and required validation', 'end time and duration validation in UI/API', 'active class audience and required selection', 'duplicate submissions create only one release', 'local time and duration persist accurately', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
+      checks: ['defaults and required validation', 'end time and duration validation in UI/API including negative and minimum duration', 'active class audience and required selection', 'duplicate submissions create only one release', 'local time and duration persist accurately', 'default options', 'create and cancel persistence', 'desktop/mobile dialog layout'],
       className,
       mobileSize,
       pageErrors: errors.length,
