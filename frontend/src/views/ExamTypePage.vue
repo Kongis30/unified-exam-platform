@@ -1636,8 +1636,7 @@ watch(() => props.code, (code) => {
                         <button v-if="paper.status !== 'ARCHIVED'" type="button" @click="handlePaperAction(() => openEditPaperInfoDialog(paper))">Edit Info</button>
                         <button v-if="paper.status !== 'ARCHIVED'" type="button" @click="handlePaperAction(() => editPaper(paper))">Edit Paper</button>
                         <button type="button" :disabled="creatingVersionPaperId !== null" @click="handlePaperAction(() => makeVersion(paper))">{{ creatingVersionPaperId === paper.id ? 'Creating…' : 'New version' }}</button>
-                        <button v-if="paper.status === 'DRAFT'" type="button" @click="handlePaperAction(() => seal(paper))">Seal</button>
-                        <button v-else type="button" @click="handlePaperAction(() => openPaperActionDialog(paper.status === 'ARCHIVED' ? 'restore' : 'archive', paper))">{{ paper.status === 'ARCHIVED' ? 'Restore' : 'Archive' }}</button>
+                        <button v-if="paper.status !== 'DRAFT'" type="button" @click="handlePaperAction(() => openPaperActionDialog(paper.status === 'ARCHIVED' ? 'restore' : 'archive', paper))">{{ paper.status === 'ARCHIVED' ? 'Restore' : 'Archive' }}</button>
                         <button class="admin-action-menu__danger" type="button" @click="handlePaperAction(() => openPaperActionDialog('delete', paper))">Delete</button>
                       </AdminActionMenu>
                       <div v-else class="table-actions">
