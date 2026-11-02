@@ -311,6 +311,7 @@ td small { margin-top: 4px; color: #8795aa; font-size: 9px; }
 .folder-panel__title strong { display: block; overflow: hidden; font-size: 14px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .folder-panel__toggle { width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 6px solid var(--color-muted); transition: transform 160ms ease; }
 .folder-panel__header--open .folder-panel__toggle { transform: rotate(90deg); }
+.paper-list-card { min-height: 560px; }
 .paper-list-card .folder-panel__title strong { font-size: 16px; }
 .paper-list-card .folder-panel__main-button small { font-size: 13px; }
 .paper-list-card .paper-list-toolbar .app-button { min-height: 38px; padding-inline: 15px; font-size: 14px; }
@@ -559,6 +560,7 @@ td small { margin-top: 4px; color: #8795aa; font-size: 9px; }
   .type-grid { grid-template-columns: 1fr; gap: 10px; }
   .management-heading { flex-direction: column; }
   .management-heading__actions { width: 100%; justify-content: space-between; }
+  .paper-list-card { min-height: 420px; }
   .admin-table { min-width: 720px; }
   .app-modal-backdrop { align-items: end; padding: 12px; }
   .app-modal { max-height: calc(100vh - 24px); padding: 21px; border-radius: 20px; }
