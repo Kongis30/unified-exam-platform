@@ -26,6 +26,10 @@ public class SatAdminExamResultsService {
     }
 
     public Map<String, Object> results(long examId) {
+        return results(examId, null);
+    }
+
+    public Map<String, Object> results(long examId, Long classId) {
         Map<String, Object> exam = jdbc.query("""
             SELECT e.id, e.paper_id, e.title, e.status, e.opens_at, e.closes_at, p.title AS paper_title,
                    p.exam_type_code, e.duration_seconds, p.default_duration_seconds
@@ -63,18 +67,21 @@ public class SatAdminExamResultsService {
         List<Map<String, Object>> attempts = scores.scoresForExam(examId);
         Map<Long, Map<String, Object>> latestScores = attempts.stream().collect(Collectors.toMap(
             row -> ((Number) row.get("attemptId")).longValue(), row -> row, (first, ignored) -> first));
-        List<Map<String, Object>> participants = jdbc.query("""
+        String classAttemptFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ?)";
+        String classParticipantFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM exam_participant_classes pc WHERE pc.exam_id = ep.exam_id AND pc.student_user_id = ep.student_user_id AND pc.class_id = ?)";
+        Object[] participantParameters = classId == null ? new Object[] { examId } : new Object[] { classId, examId, classId };
+        List<Map<String, Object>> participants = jdbc.query(("""
             SELECT u.id AS student_id, u.real_name, u.username, latest.id AS attempt_id,
                    latest.attempt_no, latest.status, latest.started_at, latest.submitted_at
             FROM exam_participants ep JOIN users u ON u.id = ep.student_user_id
             LEFT JOIN attempts latest ON latest.id = (
                 SELECT a.id FROM attempts a WHERE a.exam_id = ep.exam_id
-                    AND a.student_user_id = ep.student_user_id AND a.is_practice = FALSE
+                    AND a.student_user_id = ep.student_user_id AND a.is_practice = FALSE %s
                 ORDER BY a.attempt_no DESC, a.id DESC LIMIT 1
             )
-            WHERE ep.exam_id = ? AND ep.revoked_at IS NULL AND u.role_code = 'STUDENT'
+            WHERE ep.exam_id = ? AND ep.revoked_at IS NULL AND u.role_code = 'STUDENT' %s
             ORDER BY u.real_name, u.id
-            """, (rs, rowNum) -> {
+            """).formatted(classAttemptFilter, classParticipantFilter), (rs, rowNum) -> {
             Map<String, Object> row = new LinkedHashMap<>();
             Long attemptId = nullableLong(rs, "attempt_id");
             row.put("studentId", rs.getLong("student_id"));
@@ -86,7 +93,7 @@ public class SatAdminExamResultsService {
             row.put("startedAt", iso(rs.getTimestamp("started_at")));
             row.put("submittedAt", iso(rs.getTimestamp("submitted_at")));
             return row;
-        }, examId);
+        }, participantParameters);
 
         int completed = 0;
         int inProgress = 0;

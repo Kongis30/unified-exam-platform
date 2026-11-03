@@ -42,6 +42,12 @@ class SatAdminMonitorAuthorizationTest {
     @MockBean
     private SatAdminStudentScoreService studentScoreService;
 
+    @MockBean
+    private com.unifiedexam.platform.identity.WorkspaceAccessService workspaceAccessService;
+
+    @MockBean
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
 
     @TestConfiguration
     static class TestBeans {

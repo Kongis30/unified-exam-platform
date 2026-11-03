@@ -35,9 +35,10 @@ async function main() {
       return { classroom, classId, exams: asList(exams), students: asList(students) };
     }));
     const sample = candidates
-      .filter(candidate => candidate.exams.length >= 6 && candidate.students.length > 0)
+      .filter(candidate => candidate.exams.length >= 6
+        && candidate.students.some(student => Number(student.examCount || 0) === 0))
       .sort((left, right) => right.exams.length - left.exams.length)[0];
-    assert.ok(sample, 'read-only class data includes at least six exams and one student');
+    assert.ok(sample, 'read-only class data includes at least six exams and a student with no attempts');
 
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin/classes/${sample.classId}`);
     await page.getByRole('heading', { name: sample.classroom.name, exact: true }).waitFor();
@@ -49,6 +50,14 @@ async function main() {
     const apiSorted = [...sample.exams].sort((left, right) => Date.parse(right.startTime) - Date.parse(left.startTime));
     assert.deepEqual((await examTitles()).map(title => title.trim()), apiSorted.map(displayTitle),
       'class detail initially sorts exams newest first');
+
+    const expiredHiddenExam = sample.exams.find(exam => exam.published === false
+      && Date.parse(exam.endTime) < Date.now());
+    assert.ok(expiredHiddenExam, 'sample includes an ended exam that has been automatically unpublished');
+    const expiredRow = examTable.locator('tbody tr')
+      .filter({ hasText: displayTitle(expiredHiddenExam) }).first();
+    assert.equal(await expiredRow.locator('.exam-status-pill').innerText(), 'Ended',
+      'class exam status communicates that an automatically unpublished exam has ended');
 
     const search = page.getByPlaceholder('Search by exam name or paper');
     const uniqueExam = sample.exams.find(exam =>
@@ -134,10 +143,10 @@ async function main() {
     assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - classDetailScrollY) <= 2,
       'returning from Monitor restores the class detail scroll position');
 
-    const student = sample.students[0];
+    const student = sample.students.find(item => Number(item.examCount || 0) === 0);
     const studentName = student.studentName || student.realName || student.name;
     const studentId = Number(student.studentId || student.id);
-    assert.ok(studentName && studentId, 'sample class includes a student with an identifiable name and id');
+    assert.ok(studentName && studentId, 'sample class includes an identifiable student with no attempts');
     const studentViewButton = page.locator('.student-table tbody tr')
       .filter({ hasText: studentName })
       .getByRole('button', { name: 'View', exact: true });
@@ -149,7 +158,12 @@ async function main() {
     await page.getByRole('heading', { name: 'Score Statistics', exact: true }).waitFor();
     assert.equal(await page.getByRole('heading', { name: 'Unable to Load History', exact: true }).count(), 0,
       'student detail loads the account history instead of showing an error');
+    assert.deepEqual(await page.locator('.summary-grid dd').allTextContents(), ['0', '0', '-', '-'],
+      'a student with no attempts has empty score values instead of NaN');
+    await page.getByText('No completed attempts to chart yet.', { exact: true }).waitFor();
+    await page.getByText('This student has no exam attempts yet.', { exact: true }).waitFor();
     await page.screenshot({ path: `/tmp/shsat-class-detail-student-desktop-${stamp}.png` });
+    await page.screenshot({ path: `/tmp/shsat-empty-student-detail-desktop-${stamp}.png`, fullPage: true });
     await page.getByRole('button', { name: 'Back to Class Detail', exact: true }).click();
     await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${sample.classId}`));
     await page.getByRole('heading', { name: sample.classroom.name, exact: true }).waitFor();
@@ -199,7 +213,10 @@ async function main() {
     await page.getByRole('heading', { name: 'Score Statistics', exact: true }).waitFor();
     const studentPageDimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(studentPageDimensions.page <= studentPageDimensions.viewport, 'student detail fits a 390px viewport');
+    assert.deepEqual(await page.locator('.summary-grid dd').allTextContents(), ['0', '0', '-', '-'],
+      'the mobile empty history keeps score metrics readable');
     await page.screenshot({ path: `/tmp/shsat-class-detail-student-mobile-${stamp}.png` });
+    await page.screenshot({ path: `/tmp/shsat-empty-student-detail-mobile-${stamp}.png`, fullPage: true });
     await page.getByRole('button', { name: 'Back to Class Detail', exact: true }).click();
     await page.waitForURL(url => url.pathname.endsWith(`/admin/classes/${sample.classId}`));
     await page.getByRole('heading', { name: sample.classroom.name, exact: true }).waitFor();

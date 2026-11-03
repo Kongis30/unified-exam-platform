@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import { getQuestionTypeDefinition, getQuestionTypeLabel } from '@shsat/questionTypes';
 import { normalizeQuestionType, parseJson } from '@shsat/questionTypes/utils';
 import { adminApi } from '@shsat/admin/services/adminApi';
@@ -24,6 +23,7 @@ const router = useRouter();
 const loading = ref(false);
 const errorMessage = ref('');
 const report = ref(null);
+const unavailableMaterialUrls = ref(new Set());
 const activeFilter = ref(route.query.filter === 'incorrect' ? 'incorrect' : 'all');
 const EMPTY_CORRECT_ANSWER_TEXT = '-';
 
@@ -46,7 +46,7 @@ const answeredQuestionCount = computed(() => {
   if (!report.value?.answersVisible) {
     return report.value?.answeredCount ?? 0;
   }
-  return questions.value.filter(hasSubmittedAnswer).length;
+  return questions.value.filter((question) => getQuestionOutcome(question) !== 'unanswered').length;
 });
 const rawSectionMaxima = computed(() => ({
   ela: positiveInteger(report.value?.elaRawMaxScore),
@@ -581,6 +581,7 @@ function getReportApi() {
 async function loadReport() {
   loading.value = true;
   errorMessage.value = '';
+  unavailableMaterialUrls.value = new Set();
 
   try {
     report.value = unwrapResponse(
@@ -706,7 +707,7 @@ function formatTimeAnalysisCompactDuration(seconds) {
 function buildSectionTimeStats() {
   return ['ELA', 'MATH'].map((sectionCode) => {
     const sectionQuestions = questions.value.filter((question) => normalizeSectionCode(question) === sectionCode);
-    const answered = sectionQuestions.filter(hasSubmittedAnswer);
+    const answered = sectionQuestions.filter((question) => getQuestionOutcome(question) !== 'unanswered');
     const totalSeconds = answered.reduce((sum, question) => {
       const seconds = Number(question.timeSpent);
       return Number.isFinite(seconds) && seconds > 0 ? sum + seconds : sum;
@@ -877,6 +878,11 @@ function isImageMaterial(question) {
   return Boolean(question?.assetUrl);
 }
 
+function markMaterialImageUnavailable(assetUrl) {
+  if (!assetUrl || unavailableMaterialUrls.value.has(assetUrl)) return;
+  unavailableMaterialUrls.value = new Set([...unavailableMaterialUrls.value, assetUrl]);
+}
+
 function getCorrectReportAnswerData(question) {
   return hasMeaningfulCorrectAnswer(question?.correctAnswerData)
     ? question.correctAnswerData
@@ -1006,6 +1012,11 @@ function isReviewRequired(question) {
 
 function getQuestionOutcome(question) {
   if (!hasSubmittedAnswer(question)) {
+    return 'unanswered';
+  }
+
+  // 答案可见后，服务端的 null 判分表示该输入未构成有效答案。
+  if (Object.hasOwn(question, 'correct') && question.correct === null) {
     return 'unanswered';
   }
 
@@ -1156,13 +1167,17 @@ function questionRangeLabel(questionList) {
   return first === last ? `Question ${first}` : `Questions ${first}-${last}`;
 }
 
+function questionCountLabel(count) {
+  return `${count} ${count === 1 ? 'question' : 'questions'}`;
+}
+
 onMounted(loadReport);
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="page-shell attempt-report">
-      <div class="attempt-report__hero">
+      <div v-if="!errorMessage" class="attempt-report__hero">
           <div class="attempt-report__hero-copy">
           <p class="attempt-report__eyebrow">
             Attempt Report
@@ -1207,10 +1222,17 @@ onMounted(loadReport);
         </div>
       </AppCard>
 
-      <AppCard v-else-if="errorMessage" title="Unable to Load Report">
+      <AppCard
+        v-else-if="errorMessage"
+        title="Unable to Load Report"
+        subtitle="The report is unavailable right now. You can retry or return to the previous page."
+      >
         <div class="attempt-report__state attempt-report__state--error">
           <p class="error-text">{{ errorMessage }}</p>
-          <AppButton variant="secondary" @click="loadReport">Retry</AppButton>
+          <div class="attempt-report__error-actions">
+            <AppButton variant="secondary" @click="loadReport">Retry</AppButton>
+            <AppButton variant="ghost" @click="goBack">{{ returnLabel }}</AppButton>
+          </div>
         </div>
       </AppCard>
 
@@ -1356,7 +1378,7 @@ onMounted(loadReport);
                       <span v-if="report.answersVisible"> · {{ section.needsReview }} to review</span>
                     </p>
                   </div>
-                  <span class="question-section__count">{{ section.total }} questions</span>
+                  <span class="question-section__count">{{ questionCountLabel(section.total) }}</span>
                 </div>
 
                 <div class="question-set-list">
@@ -1369,7 +1391,7 @@ onMounted(loadReport);
                           <span v-if="report.answersVisible"> · {{ set.needsReview }} to review</span>
                         </p>
                       </div>
-                      <span class="question-set-card__count">{{ set.questions.length }} questions</span>
+                      <span class="question-set-card__count">{{ questionCountLabel(set.questions.length) }}</span>
                     </header>
 
                     <div class="question-table-wrap">
@@ -1398,12 +1420,19 @@ onMounted(loadReport);
                                 Question {{ question.questionNumber }}
                               </button>
                               <img
-                                v-if="isImageMaterial(question)"
+                                v-if="isImageMaterial(question) && !unavailableMaterialUrls.has(question.assetUrl)"
                                 class="question-preview__image"
                                 :src="question.assetUrl"
                                 alt="Question material image"
                                 loading="lazy"
+                                @error="markMaterialImageUnavailable(question.assetUrl)"
                               />
+                              <span
+                                v-else-if="isImageMaterial(question)"
+                                class="question-preview__image-unavailable"
+                                role="img"
+                                aria-label="Question material image unavailable"
+                              >Image unavailable</span>
                             </td>
                             <td>
                               <span class="type-pill">{{ formatQuestionTypeLabel(question.questionType) }}</span>
@@ -1468,7 +1497,7 @@ onMounted(loadReport);
         </AppCard>
       </template>
     </section>
-  </AdminLayout>
+
 </template>
 
 <style scoped>
@@ -1607,6 +1636,12 @@ onMounted(loadReport);
 .attempt-report__state--error {
   justify-items: start;
   text-align: left;
+}
+
+.attempt-report__error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .attempt-report__spinner {
@@ -2093,6 +2128,25 @@ onMounted(loadReport);
   background: #ffffff;
 }
 
+.question-preview__image-unavailable {
+  display: flex;
+  width: min(180px, 100%);
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-muted);
+  background: #f7f9fc;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .question-table__answer {
   min-width: 0;
   color: var(--color-text);
@@ -2318,325 +2372,5 @@ onMounted(loadReport);
   }
 }
 
-@media print {
-  @page {
-    margin: 12mm;
-  }
 
-  .attempt-report {
-    width: 100%;
-    max-width: none;
-    min-width: 0;
-    gap: 16px;
-  }
-
-  .time-analysis-section {
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .knowledge-score-item {
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .knowledge-score-grid {
-    display: block;
-  }
-
-  .knowledge-score-subject + .knowledge-score-subject {
-    margin-top: 20px;
-  }
-
-  .knowledge-card {
-    border-color: #d7e4f8;
-    padding: 18px;
-    box-shadow: none;
-  }
-
-  .knowledge-analysis {
-    gap: 18px;
-  }
-
-  .knowledge-analysis__header {
-    flex-direction: row;
-    gap: 16px;
-  }
-
-  .knowledge-analysis__header h2 {
-    font-size: 17px;
-  }
-
-  .knowledge-analysis__header p {
-    margin-top: 8px;
-    font-size: 12px;
-  }
-
-  .knowledge-analysis__header > span {
-    font-size: 11px;
-    text-align: right;
-    white-space: nowrap;
-  }
-
-  .knowledge-score-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 24px;
-  }
-
-  .knowledge-score-subject h3 {
-    margin-bottom: 12px;
-    font-size: 16px;
-  }
-
-  .knowledge-score-item {
-    gap: 6px;
-    padding-bottom: 14px;
-  }
-
-  .knowledge-score-item + .knowledge-score-item {
-    padding-top: 14px;
-  }
-
-  .knowledge-score-item__header strong {
-    font-size: 14px;
-  }
-
-  .knowledge-score-item__header span {
-    font-size: 14px;
-  }
-
-  .knowledge-score-item__detail,
-  .knowledge-score-item__footer {
-    font-size: 11px;
-  }
-
-  .knowledge-segment-bar {
-    grid-template-columns: repeat(8, minmax(10px, 1fr));
-    gap: 3px;
-  }
-
-  .knowledge-segment-bar__segment {
-    height: 10px;
-    border-color: #1f2937;
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
-  }
-
-  .knowledge-segment-bar__segment--filled {
-    background: #1f2937;
-  }
-
-  .report-print-hidden,
-  .attempt-report__actions,
-  .icon-refresh-button {
-    display: none !important;
-  }
-
-  .question-table-wrap {
-    overflow: visible;
-  }
-
-  .question-set-card {
-    overflow: visible;
-  }
-
-  .question-section__header {
-    break-after: avoid;
-    page-break-after: avoid;
-  }
-
-  .question-table {
-    display: block;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-  }
-
-  .question-table thead {
-    display: none;
-  }
-
-  .question-table tbody {
-    display: block;
-  }
-
-  .question-table tbody tr {
-    display: inline-grid;
-    width: 100%;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "question type status score"
-      "your your your your"
-      "correct correct correct correct";
-    gap: 8px 12px;
-    box-sizing: border-box;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    margin-bottom: 10px;
-    vertical-align: top;
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .question-table tbody tr.question-row--wrong {
-    background: #fff1f2;
-  }
-
-  .question-table tbody tr.question-row--unanswered {
-    background: #fff8e1;
-  }
-
-  .question-table tbody td {
-    display: block;
-    width: auto;
-    min-width: 0 !important;
-    border: 0;
-    padding: 0;
-  }
-
-  .question-table__question {
-    grid-area: question;
-  }
-
-  .question-table tbody td:nth-child(2) {
-    grid-area: type;
-  }
-
-  .question-table tbody td:nth-child(3) {
-    grid-area: your;
-  }
-
-  .question-table tbody td:nth-child(4) {
-    grid-area: correct;
-  }
-
-  .question-table tbody td:nth-child(5) {
-    grid-area: status;
-  }
-
-  .question-table tbody td:nth-child(6) {
-    grid-area: score;
-  }
-
-  .question-table tbody td:nth-child(3),
-  .question-table tbody td:nth-child(4) {
-    border-top: 1px solid var(--color-border);
-    padding-top: 8px;
-  }
-
-  .question-table tbody td:nth-child(3)::before,
-  .question-table tbody td:nth-child(4)::before {
-    display: block;
-    margin-bottom: 4px;
-    color: var(--color-muted);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .question-table tbody td:nth-child(3)::before {
-    content: "Your Answer";
-  }
-
-  .question-table tbody td:nth-child(4)::before {
-    content: "Correct Answer";
-  }
-
-  .summary-table-wrap {
-    overflow: visible;
-  }
-
-  .summary-table {
-    min-width: 0;
-  }
-
-  .summary-table th,
-  .summary-table td,
-  .question-table th,
-  .question-table td {
-    min-width: 0 !important;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: normal;
-  }
-
-  .question-table__answer,
-  .question-table__answer-component {
-    width: auto;
-    max-width: 100% !important;
-    min-width: 0 !important;
-  }
-
-  .question-table__answer-component {
-    display: block;
-  }
-
-  .question-table__answer :deep(.inline-choice-report),
-  .question-table__answer :deep(.drag-report),
-  .question-table__answer :deep(.table-grid-report),
-  .question-table__answer :deep(.formula-text),
-  .question-table__answer :deep(.mixed-content) {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    overflow: visible !important;
-    white-space: normal !important;
-  }
-
-  .question-table__answer :deep(.inline-choice-report__row) {
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-
-  .question-table__answer :deep(.drag-report__choices),
-  .question-table__answer :deep(.drag-report__choice) {
-    min-width: 0;
-    max-width: 100%;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .question-table__answer :deep(.table-grid-report) {
-    table-layout: auto;
-    border-radius: 0;
-  }
-
-  .question-table__answer :deep(.table-grid-report th),
-  .question-table__answer :deep(.table-grid-report td) {
-    min-width: 0;
-    max-width: 100%;
-    padding: 4px;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .question-table__answer :deep(.formula-text__block-math),
-  .question-table__answer :deep(.mixed-content__block-math) {
-    overflow: visible !important;
-  }
-
-  .type-pill {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .question-table tbody tr {
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .review-toolbar {
-    display: none;
-  }
-
-  .question-link {
-    color: inherit;
-    font: inherit;
-    font-weight: 700;
-    text-decoration: none;
-    cursor: default;
-  }
-}
 </style>

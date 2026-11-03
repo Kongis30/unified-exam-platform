@@ -14,20 +14,25 @@ async function main() {
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const teacherContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const studentContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const secondStudentContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const admin = await adminContext.newPage();
   const teacher = await teacherContext.newPage();
   const student = await studentContext.newPage();
+  const secondStudent = await secondStudentContext.newPage();
   const errors = [];
-  [admin, teacher, student].forEach(page => page.on('pageerror', error => errors.push(error.message)));
+  [admin, teacher, student, secondStudent].forEach(page => page.on('pageerror', error => errors.push(error.message)));
   const stamp = Date.now();
   const teacherUsername = `shsat_teacher_${stamp}`;
   const teacherPassword = `Teacher${stamp}!`;
   const studentUsername = `shsat_student_${stamp}`;
   const studentPassword = `Student${stamp}!`;
+  const secondStudentUsername = `shsat_student_2_${stamp}`;
+  const secondStudentPassword = `Student2_${stamp}!`;
   const className = `SHSAT Teacher Check ${String(stamp).slice(-6)}`;
   const examTitle = `SHSAT Teacher Release ${String(stamp).slice(-6)}`;
   let teacherId;
   let studentId;
+  let secondStudentId;
   let classId;
   let examId;
   let emptyEndedExamId;
@@ -49,6 +54,12 @@ async function main() {
     });
     studentId = Number(studentAccount.id);
     await api(admin, `/api/admin/classes/${classId}/students`, 'POST', { studentUserId: studentId });
+    const secondStudentAccount = await api(admin, '/api/admin/users', 'POST', {
+      username: secondStudentUsername, password: secondStudentPassword, realName: `Student Two ${stamp}`,
+      roleCode: 'STUDENT', email: null, phone: null,
+    });
+    secondStudentId = Number(secondStudentAccount.id);
+    await api(admin, `/api/admin/classes/${classId}/students`, 'POST', { studentUserId: secondStudentId });
 
     await login(teacher, teacherUsername, teacherPassword);
     await teacher.goto(`${baseUrl}/exam-types/SHSAT/admin`);
@@ -94,7 +105,25 @@ async function main() {
     await modal.getByRole('radio', { name: /Specific classes/ }).check();
     const classOption = modal.locator('.exam-class-option').filter({ hasText: className });
     await classOption.locator('input[type="checkbox"]').check();
+    await modal.evaluate(element => { element.scrollTop = 0; });
     await teacher.screenshot({ path: `/tmp/shsat-teacher-release-form-${stamp}.png` });
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    await modal.evaluate(element => { element.scrollTop = 0; });
+    const releaseFormMobileSize = await teacher.evaluate(() => ({
+      page: document.documentElement.scrollWidth,
+      viewport: innerWidth,
+      modal: document.querySelector('.exam-release-modal')?.getBoundingClientRect().width || 0,
+    }));
+    assert.ok(releaseFormMobileSize.page <= releaseFormMobileSize.viewport
+      && releaseFormMobileSize.modal <= releaseFormMobileSize.viewport,
+    `the teacher release form fits a 390px viewport: ${JSON.stringify(releaseFormMobileSize)}`);
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-release-form-mobile-${stamp}.png` });
+    await modal.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await teacher.screenshot({ path: `/tmp/shsat-teacher-release-form-mobile-bottom-${stamp}.png` });
+    assert.equal(await modal.getByRole('button', { name: 'Create Release', exact: true }).isVisible(), true,
+      'the release form action remains reachable at the bottom of the mobile dialog');
+    await teacher.setViewportSize({ width: 1440, height: 900 });
+    await modal.evaluate(element => { element.scrollTop = 0; });
     await modal.getByRole('button', { name: 'Create Release', exact: true }).click();
     const structureWarning = teacher.locator('.publish-confirm-modal').filter({ hasText: 'Create this exam release?' });
     if (await structureWarning.isVisible().catch(() => false)) {
@@ -154,35 +183,57 @@ async function main() {
       answer: { answers: [firstQuestionDetails.answerKey.answers[0]] }, timeSpentSeconds: 38,
     });
 
+    await login(secondStudent, secondStudentUsername, secondStudentPassword);
+    const secondStarted = await api(secondStudent, `/api/student/exams/${examId}/attempts`, 'POST', { firstSection: 'ELA' });
+    const secondAttemptId = Number(secondStarted.id);
+    const secondAttempt = await api(secondStudent, `/api/student/attempts/${secondAttemptId}`);
+    const secondQuestion = (secondAttempt.questions || []).find(question => Number(question.displayNumber) === 1);
+    assert.ok(secondQuestion, 'a second student receives the same first question');
+    await api(secondStudent, `/api/student/attempts/${secondAttemptId}/presence`, 'POST', { questionNumber: 1 });
+    await api(secondStudent, `/api/student/attempts/${secondAttemptId}/answers/${secondQuestion.paperItemId}`, 'PUT', {
+      answer: { answers: [firstQuestionDetails.answerKey.answers[0]] }, timeSpentSeconds: 62,
+    });
+
     const liveMonitor = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/live`);
     assert.ok(liveMonitor.currentQuestionDistribution.some(item =>
-      Number(item.questionNumber) === 1 && Number(item.students) === 1),
-    'live monitoring places the active student at question 1');
+      Number(item.questionNumber) === 1 && Number(item.students) === 2),
+    'live monitoring aggregates both active students at question 1');
     const analytics = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`);
     const questionOneAnalytics = analytics.questionAnalytics.find(item => Number(item.questionNumber) === 1);
-    assert.equal(Number(questionOneAnalytics?.attemptedCount), 1, 'monitor analytics counts the saved answer');
-    assert.equal(Number(questionOneAnalytics?.averageTimeSpent), 38, 'monitor analytics reports the saved response time');
-    assert.equal(questionOneAnalytics?.accuracy, null, 'an unsubmitted answer remains pending rather than affecting accuracy');
+    assert.equal(Number(questionOneAnalytics?.attemptedCount), 2, 'monitor analytics counts answers from both students');
+    assert.equal(Number(questionOneAnalytics?.averageTimeSpent), 50, 'monitor analytics averages response time across students');
+    assert.equal(Number(questionOneAnalytics?.pendingCount), 2, 'unsubmitted answers remain pending rather than affecting accuracy');
+    assert.equal(questionOneAnalytics?.accuracy, null, 'accuracy is unavailable until at least one answer is scored');
 
     await teacher.reload();
     await teacher.getByRole('heading', { name: 'Current Question Distribution' }).waitFor();
-    await teacher.locator('.chart-bar--blue title').filter({ hasText: 'Question 1: 1 students' }).waitFor({ state: 'attached' });
-    await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 38s' }).waitFor({ state: 'attached' });
+    await teacher.locator('.chart-bar--blue title').filter({ hasText: 'Question 1: 2 students' }).waitFor({ state: 'attached' });
+    await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 50s' }).waitFor({ state: 'attached' });
+    assert.equal(await teacher.locator('.monitor-chart-hint:visible').count(), 0,
+      'horizontal chart guidance stays out of the desktop layout');
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-${stamp}.png` });
 
     await teacher.waitForTimeout(31_000);
     const staleLiveMonitor = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/live`);
-    assert.equal(Number(staleLiveMonitor.summary?.inProgressStudents), 1,
-      'an unfinished attempt remains in progress while its student is away');
+    assert.equal(Number(staleLiveMonitor.summary?.inProgressStudents), 2,
+      'both unfinished attempts remain in progress while the students are away');
     assert.equal(staleLiveMonitor.currentQuestionDistribution.length, 0,
       'a stale presence does not leave a student on the live question chart');
     await teacher.reload();
     await teacher.getByText('No live question positions are available. In-progress students may be away from the exam.', { exact: true }).waitFor();
-    await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 38s' }).waitFor({ state: 'attached' });
+    await teacher.locator('.chart-bar--orange title').filter({ hasText: 'Question 1: 50s' }).waitFor({ state: 'attached' });
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-stale-presence-${stamp}.png` });
 
     const submittedAttempt = await api(student, `/api/student/attempts/${attemptId}/submit`, 'POST');
-    assert.equal(submittedAttempt.status, 'SUBMITTED', 'submitting the attempt finalizes the saved answer for scoring');
+    assert.equal(submittedAttempt.status, 'SUBMITTED', 'submitting the first attempt finalizes the saved answer for scoring');
+    const partialAnalytics = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`);
+    const partiallyScoredQuestion = partialAnalytics.questionAnalytics.find(item => Number(item.questionNumber) === 1);
+    assert.equal(Number(partiallyScoredQuestion?.accuracy), 100,
+      'one correct scored answer yields 100% while the second answer remains pending');
+    assert.equal(Number(partiallyScoredQuestion?.pendingCount), 1,
+      'the still-unsubmitted student remains in the pending count');
+    const secondSubmittedAttempt = await api(secondStudent, `/api/student/attempts/${secondAttemptId}/submit`, 'POST');
+    assert.equal(secondSubmittedAttempt.status, 'SUBMITTED', 'submitting the second attempt completes the aggregate sample');
     const submittedReport = await api(admin, `/api/admin/reports/attempts/${attemptId}/result`);
     const firstQuestionResult = submittedReport.questions.find(question => Number(question.questionNumber) === 1);
     assert.equal(firstQuestionResult?.correct, true, 'the control report confirms the saved answer is correct');
@@ -196,6 +247,9 @@ async function main() {
     await teacher.getByText('No students are currently taking this exam.', { exact: true }).waitFor();
     const scoredTile = teacher.getByRole('button', { name: 'Open question 1 details' });
     await scoredTile.waitFor();
+    await teacher.waitForFunction(() => Array.from(
+      document.querySelectorAll('button[aria-label="Open question 1 details"] span'),
+    ).some(span => span.textContent.trim() === '100%'));
     assert.equal((await scoredTile.locator('span').innerText()).trim(), '100%', 'the heatmap displays the scored accuracy');
     assert.ok((await scoredTile.getAttribute('class')).includes('accuracy-tile--high'),
       'the heatmap uses the high-accuracy color for a correct response');
@@ -269,8 +323,14 @@ async function main() {
       maxScrollLeft: element.scrollWidth - element.clientWidth,
     }));
     assert.ok(mobileChartScroll.maxScrollLeft > 0, 'mobile charts preserve a readable width inside their own horizontal scroller');
+    assert.equal(await teacher.locator('.monitor-chart-hint:visible').count(), 1,
+      'mobile users are told when a populated chart can be swiped horizontally');
+    assert.equal(await teacher.locator('.monitor-panel').filter({ has: teacher.getByRole('heading', { name: 'Average Time per Question' }) })
+      .locator('.monitor-chart-hint:visible').count(), 1,
+    'the populated average-time chart shows its mobile swipe hint');
     assert.equal(await teacher.locator('.chart-axis-title--question').first().evaluate(element => getComputedStyle(element).display),
       'none', 'the mobile chart does not clip its centered horizontal axis title');
+    await teacher.getByRole('heading', { name: 'Average Time per Question' }).scrollIntoViewIfNeeded();
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-mobile-${stamp}.png` });
     await teacher.locator('.monitor-chart-scroll').first().evaluate(element => { element.scrollLeft = element.scrollWidth; });
     await teacher.screenshot({ path: `/tmp/shsat-teacher-monitor-live-mobile-end-${stamp}.png` });
@@ -344,8 +404,8 @@ async function main() {
       .find(item => Number(item.id) === examId);
     assert.equal(endedRelease.status, 'CLOSED', 'the ended state is persisted in the release list');
     const endedLiveMonitor = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/live`);
-    assert.equal(Number(endedLiveMonitor.summary?.completedStudents), 1,
-      'completed student totals remain available after the exam ends');
+    assert.equal(Number(endedLiveMonitor.summary?.completedStudents), 2,
+      'both completed students remain included after the exam ends');
     assert.equal(Number(endedLiveMonitor.summary?.inProgressStudents), 0,
       'a submitted attempt is not counted as in progress after the exam ends');
     const endedAnalytics = await api(teacher, `/api/admin/reports/exams/${examId}/monitor/analytics`);
@@ -417,7 +477,8 @@ async function main() {
       result: 'PASS',
       checks: ['teacher SHSAT tab access', 'shared all-class directory', 'account directory denied',
         'paper answer details and editing API denied to teachers',
-        'create, publish and unpublish release', 'empty and populated monitoring charts from a real student attempt',
+        'create, publish and unpublish release', 'live monitoring aggregates concurrent students at a question',
+        'average response time, pending answers and accuracy update across multiple students',
         'in-progress attempt with stale presence has an accurate empty chart state',
         'monitor accuracy updates after a scored response', 'ended exam preserves completed totals and accuracy analytics',
         'monitor analytics and return path',
@@ -426,18 +487,26 @@ async function main() {
         'unanswered ended exam shows accurate chart empty states',
         'delete hidden in UI and forbidden by API', '390px layout'],
       mobileSize,
+      releaseFormMobileSize,
       monitorMobileSize,
       mobileChartScroll,
       mobileDrawerSize,
       accuracyMobileSize,
       endedMonitorSize,
       emptyEndedSize,
+      screenshots: [`/tmp/shsat-teacher-release-form-${stamp}.png`,
+        `/tmp/shsat-teacher-release-form-mobile-${stamp}.png`,
+        `/tmp/shsat-teacher-release-form-mobile-bottom-${stamp}.png`,
+        `/tmp/shsat-teacher-monitor-accuracy-mobile-${stamp}.png`,
+        `/tmp/shsat-teacher-monitor-image-preview-mobile-${stamp}.png`,
+        `/tmp/shsat-teacher-monitor-ended-mobile-${stamp}.png`],
       pageErrors: errors.length,
     }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (emptyEndedExamId) await api(admin, `/api/admin/exams/${emptyEndedExamId}`, 'DELETE').catch(() => {});
     if (studentId) await api(admin, `/api/admin/users/${studentId}`, 'DELETE').catch(() => {});
+    if (secondStudentId) await api(admin, `/api/admin/users/${secondStudentId}`, 'DELETE').catch(() => {});
     if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (teacherId) await api(admin, `/api/admin/users/${teacherId}`, 'DELETE').catch(() => {});
     if (teacherId || studentId || classId) {
@@ -445,11 +514,17 @@ async function main() {
         api(admin, '/api/admin/users').catch(() => []),
         api(admin, '/api/admin/classes?examTypeCodes=SHSAT').catch(() => []),
       ]);
-      assert.ok(!users.some(user => [teacherId, studentId].includes(Number(user.id))), 'temporary accounts are removed');
+      assert.ok(!users.some(user => [teacherId, studentId, secondStudentId].includes(Number(user.id))), 'temporary accounts are removed');
       assert.ok(!classes.some(item => Number(item.classId || item.id) === classId), 'the temporary class is removed');
+    }
+    if (examId || emptyEndedExamId) {
+      const remainingReleases = await api(admin, '/api/admin/exam-types/SHSAT/exams');
+      assert.ok(!remainingReleases.some(item => [examId, emptyEndedExamId].includes(Number(item.id))),
+        'temporary monitoring releases are removed');
     }
     await teacherContext.close();
     await studentContext.close();
+    await secondStudentContext.close();
     await adminContext.close();
     await browser.close();
   }

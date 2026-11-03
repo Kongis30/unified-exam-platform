@@ -57,6 +57,24 @@ async function main() {
         .map(paper => paper.title);
       const displayed = await folder.locator('tbody tr td:first-child strong').allTextContents();
       assert.deepEqual(new Set(displayed), new Set(expected), `${onlineValue} should show only matching SHSAT papers`);
+      if (onlineValue === 'true') {
+        await page.setViewportSize({ width: 390, height: 844 });
+        const paperTableWrap = folder.locator('.paper-table-wrap');
+        await paperTableWrap.getByText('Swipe horizontally to view all columns.', { exact: true }).waitFor();
+        const mobilePaperScroll = await paperTableWrap.evaluate(element => {
+          element.scrollLeft = element.scrollWidth;
+          return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, scrollLeft: element.scrollLeft };
+        });
+        assert.ok(mobilePaperScroll.scrollWidth > mobilePaperScroll.clientWidth,
+          'the expanded paper list keeps all table columns on a narrow screen');
+        assert.ok(mobilePaperScroll.scrollLeft > 0, 'the expanded paper list can scroll to its Actions column');
+        assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= 390,
+          'paper table scrolling remains inside the page viewport');
+        await paperTableWrap.evaluate(element => { element.scrollLeft = 0; });
+        await paperTableWrap.getByText('Swipe horizontally to view all columns.', { exact: true }).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: '/tmp/shsat-paper-list-mobile-horizontal-scroll-20261028.png' });
+        await page.setViewportSize({ width: 1440, height: 900 });
+      }
       await page.screenshot({
         path: `/tmp/shsat-paper-filter-${onlineValue === 'true' ? 'online' : 'offline'}-20261027.png`,
         fullPage: true,

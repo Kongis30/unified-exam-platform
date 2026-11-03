@@ -133,7 +133,7 @@ class ClassAdminControllerTest {
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("ROW_NUMBER()")
                 && sql.contains("a.is_practice = FALSE") && sql.contains("p.exam_type_code IN (?, ?)")
-                && sql.contains("ts.student_user_id = cm.student_user_id")
+                && sql.contains("FROM attempt_classes ac")
                 && sql.contains("source_score_json") && sql.contains("rb.breakdown_code = ps.section_code")
                 && sql.contains("'$.moduleNumber')) AS UNSIGNED) = 1")),
             any(RowMapper.class),
@@ -149,11 +149,12 @@ class ClassAdminControllerTest {
 
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("COUNT(DISTINCT a.exam_id)")
-                && sql.contains("FROM exam_target_students ts")
-                && sql.contains("ts.student_user_id = m.student_user_id")
+                && sql.contains("FROM attempt_classes ac")
+                && sql.contains("a.id = ac.attempt_id")
+                && sql.contains("u.role_code = 'STUDENT'")
                 && sql.contains("AS deletable")
                 && sql.contains("FROM shsat_wrong_answer_tasks review_tasks")),
-            any(RowMapper.class), eq("SAT"), eq("PSAT"));
+            any(RowMapper.class), eq("SAT"), eq("PSAT"), eq("SAT"), eq("PSAT"));
     }
 
     @Test
@@ -169,9 +170,10 @@ class ClassAdminControllerTest {
         assertEquals(3, result.examCount());
         assertEquals(new java.math.BigDecimal("1280.50"), result.averageScore());
         verify(jdbcTemplate).query(
-            org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("FROM exam_target_students ts")
-                && sql.contains("ts.student_user_id = m.student_user_id")),
-            any(RowMapper.class), eq("SAT"), eq("PSAT"), eq(12L));
+            org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("FROM attempt_classes ac")
+                && sql.contains("a.id = ac.attempt_id")
+                && sql.contains("u.role_code = 'STUDENT'")),
+            any(RowMapper.class), eq("SAT"), eq("PSAT"), eq(12L), eq("SAT"), eq("PSAT"));
         verify(jdbcTemplate).queryForObject(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END)")
                 && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED')")
@@ -237,13 +239,13 @@ class ClassAdminControllerTest {
                 && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED')")
                 && sql.contains("a.is_practice = FALSE")
                 && sql.contains("p.exam_type_code IN (?)")
-                && sql.contains("exam_target_classes")
-                && sql.contains("exam_target_students")),
+                && sql.contains("FROM attempt_classes ac")
+                && sql.contains("a.id = ac.attempt_id")),
             any(RowMapper.class), eq(12L), eq("SHSAT"), eq(12L));
     }
 
     @Test
-    void classExamListIncludesOnlyExamsTakenDuringClassMembership() {
+    void classExamListIncludesOnlyAttemptsAttributedToClass() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
@@ -253,9 +255,8 @@ class ClassAdminControllerTest {
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("ELSE 'SPECIFIC_STUDENTS'")
                 && sql.contains("FROM attempts a")
-                && sql.contains("a.is_practice = FALSE AND cm.class_id = ?")
-                && sql.contains("cm.joined_at <= a.started_at")
-                && sql.contains("a.started_at <= cm.left_at")
+                && sql.contains("a.is_practice = FALSE AND ac.class_id = ?")
+                && sql.contains("JOIN attempt_classes ac ON ac.attempt_id = a.id")
                 && sql.contains("ses.is_practice_archive = TRUE")),
             any(RowMapper.class), eq(12L), eq("SAT"), eq(12L));
     }

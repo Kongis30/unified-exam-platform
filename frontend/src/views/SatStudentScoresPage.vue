@@ -5,7 +5,6 @@ import { useRoute, useRouter } from 'vue-router'
 import AppCard from '@/components/AppCard.vue'
 import AdminDataTable from '@/components/admin/AdminDataTable.vue'
 import AdminActionMenu from '@/components/admin/AdminActionMenu.vue'
-import AdminLayout from '@/components/admin/AdminLayout.vue'
 import AppButton from '@/components/AppButton.vue'
 import AppModal from '@/components/AppModal.vue'
 import { authState } from '@/auth'
@@ -13,13 +12,14 @@ import { deleteSatStudentAttempt, getSatStudentScores } from '@/examTypes/sat/ad
 
 const route = useRoute()
 const router = useRouter()
+const workspaceCode = computed(() => route.name === 'psat-student-scores' ? 'PSAT' : 'SAT')
 const loading = ref(true)
 const error = ref('')
 const student = ref(null)
 const scores = ref([])
 const statistics = ref(null)
 const scoreMode = ref(route.query.scoreMode === 'RAW' ? 'RAW' : 'SCALED')
-const scoreTypeFilter = ref(['SAT', 'PSAT'].includes(route.query.scoreType) ? route.query.scoreType : 'SAT')
+const scoreTypeFilter = ref(workspaceCode.value)
 const deleteTarget = ref(null)
 const deleteError = ref('')
 const deletingAttemptId = ref(null)
@@ -79,9 +79,13 @@ function displayScore(value, max = null) {
   return max ? `${formatted} / ${max}` : formatted
 }
 
+function formatChartScore(value) {
+  return String(Math.round(Number(value)))
+}
+
 function goBack() {
   router.push({
-    name: 'sat-class-detail',
+    name: workspaceCode.value === 'PSAT' ? 'psat-class-detail' : 'sat-class-detail',
     params: { classId: route.params.classId },
     query: typeof route.query.returnTo === 'string' ? { returnTo: route.query.returnTo } : {},
   })
@@ -106,7 +110,7 @@ watch([scoreMode, scoreTypeFilter], () => {
     scoreType: scoreTypeFilter.value === 'SAT' ? undefined : scoreTypeFilter.value,
   }
   if (JSON.stringify(query) !== JSON.stringify(route.query)) {
-    router.replace({ name: 'sat-student-scores', params: route.params, query })
+    router.replace({ name: workspaceCode.value === 'PSAT' ? 'psat-student-scores' : 'sat-student-scores', params: route.params, query })
   }
 })
 
@@ -149,12 +153,12 @@ async function loadScores() {
   loading.value = true
   error.value = ''
   try {
-    const result = await getSatStudentScores(route.params.studentId)
+    const result = await getSatStudentScores(route.params.studentId, route.params.classId, workspaceCode.value)
     student.value = result.student
-    scores.value = result.scores || []
+    scores.value = (result.scores || []).filter((row) => row.examTypeCode === workspaceCode.value)
     statistics.value = result.statistics || null
     if (!availableScoreTypes.value.includes(scoreTypeFilter.value)) {
-      scoreTypeFilter.value = availableScoreTypes.value[0] || 'SAT'
+      scoreTypeFilter.value = workspaceCode.value
     }
     if (!hasScaledScores.value) scoreMode.value = 'RAW'
   } catch (requestError) {
@@ -169,7 +173,7 @@ onBeforeUnmount(dismissNotification)
 </script>
 
 <template>
-  <AdminLayout>
+
     <main class="sat-student-scores-page">
       <Teleport to="body">
         <Transition name="sat-score-notification">
@@ -193,10 +197,10 @@ onBeforeUnmount(dismissNotification)
       <p v-if="error" class="sat-student-scores-error" role="alert">{{ error }}</p>
       <div v-if="loading" class="sat-student-scores-loading">Loading score history…</div>
       <template v-else-if="statistics">
-        <AppCard title="Score Statistics" subtitle="Completed attempts are summarized separately because SAT and PSAT use different score ranges.">
-          <p class="sat-score-total">Completed attempts <strong>{{ statistics.totalAttempts }}</strong></p>
+        <AppCard title="Score Statistics" subtitle="Completed attempts for this exam system.">
+          <p class="sat-score-total">Completed attempts <strong>{{ statistics[workspaceCode.toLowerCase()]?.attempts || 0 }}</strong></p>
           <div class="sat-score-stat-types">
-            <section v-for="type in ['SAT', 'PSAT']" :key="type" class="sat-score-stat-type">
+            <section v-for="type in [workspaceCode]" :key="type" class="sat-score-stat-type">
               <h3>{{ type }}</h3>
               <div v-if="statistics[type.toLowerCase()]?.attempts" class="sat-score-stat-grid">
                 <div><span>Attempts</span><strong>{{ statistics[type.toLowerCase()]?.attempts ?? 0 }}</strong></div>
@@ -235,8 +239,8 @@ onBeforeUnmount(dismissNotification)
               </g>
               <polyline v-if="chartGeometry.points.length > 1" class="sat-score-chart__line" :points="chartGeometry.line" />
               <g v-for="point in chartGeometry.points" :key="point.attemptId">
-                <circle class="sat-score-chart__point" :cx="point.x" :cy="point.y" r="6"><title>{{ point.examTitle }}: {{ point.value }} · {{ formatDate(point.submittedAt || point.examDate) }}</title></circle>
-                <text class="sat-score-chart__point-label" :x="point.x" :y="point.y - 12" text-anchor="middle">{{ point.value }}</text>
+                <circle class="sat-score-chart__point" :cx="point.x" :cy="point.y" r="6"><title>{{ point.examTitle }}: {{ formatChartScore(point.value) }} · {{ formatDate(point.submittedAt || point.examDate) }}</title></circle>
+                <text class="sat-score-chart__point-label" :x="point.x" :y="point.y - 12" text-anchor="middle">{{ formatChartScore(point.value) }}</text>
                 <text class="sat-score-chart__label" :x="point.x" :y="chartGeometry.height - 16" text-anchor="middle">{{ formatDate(point.submittedAt || point.examDate).replace(/, \d{4}/, '') }}</text>
               </g>
             </svg>
@@ -303,7 +307,7 @@ onBeforeUnmount(dismissNotification)
         </AppButton>
       </template>
     </AppModal>
-  </AdminLayout>
+
 </template>
 
 <style scoped>

@@ -1,22 +1,11 @@
 <template>
-  <AdminLayout>
+
     <div class="main-content">
       <RouterLink class="sat-editor-back" :to="returnLocation">← Back to Paper Management</RouterLink>
       <div class="header-section">
         <h1 class="page-title">Edit Paper: {{ paperTitle }}</h1>
         <p class="page-subtitle">Manage SAT sections, modules and questions for this paper</p>
-        <div class="paper-settings">
-          <span>Scoring Table</span>
-          <el-select
-            v-model="scoringType"
-            :disabled="savingScoringType"
-            style="width: 160px"
-            @change="saveScoringType"
-          >
-            <el-option label="SAT" value="SAT" />
-            <el-option label="PSAT" value="PSAT" />
-          </el-select>
-        </div>
+
       </div>
 
       <div class="paper-edit-container">
@@ -133,7 +122,7 @@
                              >
                                <span v-if="sortMode" class="drag-handle">⋮⋮</span>
                                <span class="question-number">Q{{ index + 1 }}</span>
-                               <span class="question-preview">{{ getQuestionPreview(question.content) }}</span>
+                               <span class="question-list-preview">{{ getQuestionPreview(question.content) }}</span>
                                <!-- <span class="question-type">{{ question.type }}</span> -->
                              </div>
                            </template>
@@ -166,7 +155,7 @@
                          >
                            <span v-if="sortMode" class="drag-handle">⋮⋮</span>
                            <span class="question-number">Q{{ index + 1 }}</span>
-                           <span class="question-preview">{{ getQuestionPreview(question.content) }}</span>
+                           <span class="question-list-preview">{{ getQuestionPreview(question.content) }}</span>
                            <!-- <span class="question-type">{{ question.typeName || 'Unknown' }}</span> -->
                            <!-- <span class="question-score">{{ question.score }}分</span> -->
                          </div>
@@ -468,7 +457,7 @@
         </div>
       </div>
     </div>
-  </AdminLayout>
+
 </template>
 
 <script setup>
@@ -483,12 +472,10 @@ import { ArrowDown, Plus } from '@element-plus/icons-vue'
 import draggable from 'vuedraggable'
 import 'element-plus/dist/index.css'
 import { RouterLink } from 'vue-router'
-import AdminLayout from '@/components/admin/AdminLayout.vue'
 import { readEditorSelection, writeEditorSelection } from '@/utils/editorSelectionStorage'
 import { notifyOperation } from '@/utils/operationNotification'
 import { renderMarkdown } from './markdown.js'
 import { paperEditApi } from './satEditorApi.js'
-import { paperApi } from './satEditorApi.js'
 
 const operationToast = {
   success: (message) => notifyOperation(message, 'success'),
@@ -503,11 +490,11 @@ const vLoading = ElLoading.directive
 const returnLocation = computed(() => {
   const returnTo = route.query.returnTo
   if (typeof returnTo === 'string'
-    && returnTo.startsWith('/exam-types/SAT/admin')
+    && (/^\/(sat|psat)(?:[/?#]|$)/.test(returnTo) || returnTo.startsWith('/exam-types/SAT/admin') || returnTo.startsWith('/exam-types/PSAT/admin'))
     && !returnTo.startsWith('//')) {
     return returnTo
   }
-  return { name: 'sat-admin', query: { tab: 'papers' } }
+  return { name: route.name === 'psat-paper-edit' ? 'psat-admin' : 'sat-admin', query: { tab: 'papers' } }
 })
 
 function returnToPaperList() {
@@ -697,9 +684,6 @@ const expandedModules = ref([])
 const showMaterialPreview = ref(false)
 const showQuestionPreview = ref(false)
 const loading = ref(false)
-const scoringType = ref('SAT')
-const savingScoringType = ref(false)
-const paperSettings = ref({ adaptiveMode: true, restTimeSeconds: 600 })
 const stemImageUploading = ref(false)
 const materialImageUploading = ref(false)
 const questionContentInput = ref(null)
@@ -1034,35 +1018,6 @@ const removeCorrectAnswer = (index) => {
 // SAT阶段和模块数据结构（从API获取）
 const satSections = ref([])
 
-const loadPaperInfo = async () => {
-  const response = await paperApi.getInfo(paperId)
-  if (response?.success) {
-    scoringType.value = Number(response.data?.totalScore) === 1520 ? 'PSAT' : 'SAT'
-    paperSettings.value = {
-      adaptiveMode: response.data?.settings?.adaptiveMode ?? true,
-      restTimeSeconds: response.data?.settings?.restTimeSeconds ?? 600,
-    }
-  }
-}
-
-const saveScoringType = async () => {
-  savingScoringType.value = true
-  try {
-    const response = await paperApi.update(paperId, {
-      scoringType: scoringType.value,
-      ...paperSettings.value,
-    })
-    paperSettings.value = response.data
-    operationToast.success('Scoring table updated')
-  } catch (error) {
-    console.error('Failed to update scoring table:', error)
-    await loadPaperInfo()
-    operationToast.error('Failed to update scoring table')
-  } finally {
-    savingScoringType.value = false
-  }
-}
-
 // 方法
 // 加载试卷结构数据
 const loadPaperStructure = async () => {
@@ -1332,7 +1287,7 @@ const selectQuestion = async (question, module) => {
   const editableQuestion = savedDraft ? { ...question, ...savedDraft } : { ...question }
   selectedQuestion.value = editableQuestion
   selectedModule.value = module
-  
+
   // 直接使用已加载的完整题目数据，无需再次请求
   if (editableQuestion) {
     // 解析选项数据
@@ -1401,7 +1356,7 @@ const parseQuestionOptions = (optionsJson) => {
       { text: '' }
     ]
   }
-  
+
   // 如果已经是对象，直接使用
   if (typeof optionsJson === 'object' && optionsJson !== null && !Array.isArray(optionsJson)) {
     return [
@@ -1411,7 +1366,7 @@ const parseQuestionOptions = (optionsJson) => {
       { text: optionsJson.D || '' }
     ]
   }
-  
+
   // 如果是字符串，尝试解析JSON
   try {
     const options = JSON.parse(optionsJson)
@@ -1451,7 +1406,7 @@ const parseQuestionOptions = (optionsJson) => {
 
 const getQuestionNumber = (question) => {
   if (!question || !selectedModule.value) return ''
-  
+
   const questions = selectedModule.value.questions || []
   const index = questions.findIndex(q => q.questionId === question.questionId)
   return index >= 0 ? index + 1 : ''
@@ -1958,14 +1913,14 @@ const toggleSortMode = () => {
 
 const onQuestionMove = async (evt, module) => {
   if (!sortMode.value) return
-  
+
   // 不立即更新后端，只在用户点击保存时才更新
   operationToast.info('Question order changed. Click "Save Order" to apply changes.')
 }
 
 const saveSortOrder = async () => {
   if (!sortMode.value) return
-  
+
   try {
     const modules = satSections.value.flatMap(section => section.modules).map(module => ({
       moduleId: module.id,
@@ -1984,17 +1939,15 @@ const saveSortOrder = async () => {
   }
 }
 
-// 辅助函数：截取题目内容前20个字符
+// 移除格式标记，列表根据实际可用宽度省略过长的题目文字。
 const getQuestionPreview = (content) => {
   if (!content) return ''
-  // 移除HTML标签和Markdown标记
-  const plainText = content.replace(/<[^>]*>/g, '').replace(/[#*_`]/g, '').trim()
-  return plainText.length > 20 ? plainText.substring(0, 20) + '...' : plainText
+  return content.replace(/<[^>]*>/g, '').replace(/[#*_`]/g, '').replace(/\s+/g, ' ').trim()
 }
 
 // 初始化
 onMounted(async () => {
-  await Promise.all([loadPaperStructure(), loadPaperInfo()])
+  await loadPaperStructure()
 })
 </script>
 
@@ -2009,9 +1962,23 @@ onMounted(async () => {
 
 .main-content {
   width: 100%;
-  max-width: var(--page-container-width, 1320px);
+  max-width: 1760px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 24px clamp(12px, 1.5vw, 24px);
+  font-family: inherit;
+}
+
+.main-content :deep(.el-button),
+.main-content :deep(.el-switch__label) {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.main-content :deep(.el-input__inner),
+.main-content :deep(.el-select__selected-item),
+.main-content :deep(.el-form-item__label) {
+  font-family: inherit;
+  font-size: 16px;
 }
 
 .header-section {
@@ -2019,15 +1986,7 @@ onMounted(async () => {
   text-align: center;
 }
 
-.paper-settings {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 12px;
-  color: #606266;
-  font-size: 14px;
-}
+
 
 .page-title {
   font-size: 24px;
@@ -2050,7 +2009,8 @@ onMounted(async () => {
 }
 
 .modules-panel {
-  width: 350px;
+  flex: 0 0 370px;
+  min-width: 0;
   background: white;
   border-radius: 8px;
   border: 1px solid #e4e7ed;
@@ -2071,7 +2031,7 @@ onMounted(async () => {
 
 .panel-header h3 {
   margin: 0 0 8px 0;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   color: #303133;
 }
@@ -2109,13 +2069,13 @@ onMounted(async () => {
 
 .section-info h4 {
   margin: 0 0 4px 0;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
   color: #303133;
 }
 
 .module-count {
-  font-size: 12px;
+  font-size: 14px;
   color: #909399;
   font-weight: 500;
 }
@@ -2150,13 +2110,13 @@ onMounted(async () => {
 
 .module-info h5 {
   margin: 0 0 2px 0;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   color: #303133;
 }
 
 .question-count {
-  font-size: 11px;
+  font-size: 13px;
   color: #909399;
   font-weight: 500;
 }
@@ -2200,13 +2160,13 @@ onMounted(async () => {
 
 .adaptive-info h6 {
   margin: 0 0 2px 0;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: #303133;
 }
 
 .adaptive-desc {
-  font-size: 10px;
+  font-size: 12px;
   color: #909399;
   display: block;
   margin-bottom: 2px;
@@ -2238,7 +2198,7 @@ onMounted(async () => {
 }
 
 .question-number {
-  font-size: 11px;
+  font-size: 15px;
   font-weight: 600;
   color: #606266;
   flex-shrink: 0;
@@ -2249,14 +2209,17 @@ onMounted(async () => {
   color: white;
 }
 
-.question-preview {
+.question-list-preview {
   flex: 1;
+  min-width: 0;
   color: #666;
-  font-size: 10px;
+  font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.question-item.active .question-list-preview { color: white; }
 
 .question-type {
   font-size: 10px;
@@ -2302,7 +2265,7 @@ onMounted(async () => {
   gap: 4px;
   padding: 6px 8px;
   color: #409eff;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   border-radius: 4px;
   transition: background-color 0.2s;
@@ -2319,7 +2282,7 @@ onMounted(async () => {
   gap: 4px;
   padding: 8px 12px;
   color: #409eff;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   border-radius: 4px;
   border: 1px dashed #409eff;
@@ -2354,6 +2317,7 @@ onMounted(async () => {
 
 .question-panel {
   flex: 1;
+  min-width: 0;
   background: white;
   border-radius: 8px;
   border: 1px solid #e4e7ed;
@@ -2390,7 +2354,7 @@ onMounted(async () => {
 
 .editor-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   color: #303133;
 }
@@ -2421,7 +2385,7 @@ onMounted(async () => {
 
 .section-title h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   color: #303133;
 }
@@ -2440,11 +2404,11 @@ onMounted(async () => {
 }
 
 .material-tools { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.material-tools .hint { font-size: 12px; color: #909399; }
+.material-tools .hint { font-size: 14px; color: #909399; }
 .markdown-hint {
   padding: 0 16px 8px;
   color: #909399;
-  font-size: 12px;
+  font-size: 14px;
 }
 .markdown-hint code {
   padding: 1px 4px;
@@ -2465,8 +2429,8 @@ onMounted(async () => {
   border: none;
   box-shadow: none;
   padding: 16px;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 13px;
+  font-family: inherit;
+  font-size: 17px;
   line-height: 1.5;
   min-height: 180px;
 }
@@ -2475,13 +2439,13 @@ onMounted(async () => {
   border: none;
   box-shadow: none;
   padding: 16px;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 13px;
+  font-family: inherit;
+  font-size: 17px;
   line-height: 1.5;
 }
 
 .passage-content {
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.6;
   color: #333;
   text-align: left;
@@ -2516,7 +2480,7 @@ onMounted(async () => {
 }
 
 .question-text {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
   color: #333;
   line-height: 1.5;
@@ -2672,7 +2636,7 @@ onMounted(async () => {
 .option-label {
   font-weight: 600;
   color: #303133;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .option-content {
@@ -2690,7 +2654,7 @@ onMounted(async () => {
 
 .option-image-actions .hint {
   color: #7a8497;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .option-textarea {
@@ -2703,8 +2667,8 @@ onMounted(async () => {
 
 .option-textarea :deep(.el-textarea__inner) {
   min-height: 80px;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 13px;
+  font-family: inherit;
+  font-size: 17px;
   line-height: 1.5;
   resize: vertical;
   width: 100%;
@@ -2725,7 +2689,7 @@ onMounted(async () => {
 }
 
 .preview-label {
-  font-size: 12px;
+  font-size: 14px;
   color: #909399;
   margin-bottom: 4px;
   font-weight: 500;
@@ -2736,7 +2700,7 @@ onMounted(async () => {
   background: #f8f9fa;
   border-radius: 4px;
   border: 1px solid #e9ecef;
-  font-size: 14px;
+  font-size: 17px;
   line-height: 1.5;
   color: #333;
   white-space: pre-wrap;
@@ -2776,13 +2740,13 @@ onMounted(async () => {
 /* 响应式设计 */
 @media (max-width: 1400px) {
   .modules-panel {
-    width: 320px;
+    flex-basis: 340px;
   }
 }
 
 @media (max-width: 1200px) {
   .modules-panel {
-    width: 300px;
+    flex-basis: 310px;
   }
 }
 
@@ -2791,16 +2755,17 @@ onMounted(async () => {
     flex-direction: column;
     height: auto;
   }
-  
+
   .modules-panel {
+    flex: none;
     width: 100%;
     height: 350px;
   }
-  
+
   .question-panel {
     height: 600px;
   }
-  
+
   .editor-content {
     padding: 12px;
   }

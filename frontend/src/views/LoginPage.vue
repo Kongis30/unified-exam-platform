@@ -9,8 +9,8 @@ import { authState } from '@/auth'
 
 const route = useRoute()
 const router = useRouter()
-const username = ref('admin')
-const password = ref('1')
+const username = ref('')
+const password = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 const fieldErrors = ref({})
@@ -48,10 +48,10 @@ async function handleLogin() {
   <main class="login-page">
     <section class="login-page__intro">
       <div class="login-page__brand">
-        <img class="login-page__logo" src="/logo.png" alt="Unified Exam Platform" />
+        <img class="login-page__logo" src="/logo.png" alt="Jin Exam System" />
         <div class="login-page__brand-copy">
           <span>Online Assessment Platform</span>
-          <strong>Unified Exam Platform</strong>
+          <strong>Jin Exam System</strong>
         </div>
       </div>
       <div class="login-page__art" aria-hidden="true">

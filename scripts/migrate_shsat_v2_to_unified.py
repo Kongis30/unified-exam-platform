@@ -13,10 +13,11 @@ import subprocess
 import sys
 import uuid
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
+from zoneinfo import ZoneInfo
 
 try:
     import pymysql
@@ -27,6 +28,7 @@ except ImportError:
 
 
 SOURCE_SYSTEM = "SHSAT_V2"
+SOURCE_SHSAT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 ANSWER_JSON_FIELDS = {"answer_data", "correct_answer_data", "scoring_details"}
 ENTITY_KEYS = {
     "user": "user_id", "class": "class_id", "student": "student_id",
@@ -61,11 +63,63 @@ def json_text(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
+def source_shsat_datetime(value: datetime | None) -> datetime | None:
+    """把源库按 UTC 写入的任务 DATETIME 还原为源 SHSAT 服务使用的本地时间。"""
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc).astimezone(SOURCE_SHSAT_TIMEZONE).replace(tzinfo=None)
+
+
+def practice_question_numbers(attempt: dict[str, Any]) -> list[int] | None:
+    """只对错题复习 attempt 使用源系统记录的实际题目集合。"""
+    if not attempt.get("is_practice") or not attempt.get("practice_task_assignment_id"):
+        return None
+    raw_numbers = json_value(attempt.get("practice_question_numbers"))
+    if raw_numbers is None:
+        return None
+    if not isinstance(raw_numbers, list):
+        raise ValueError(f"Practice attempt {attempt.get('attempt_id')} has invalid question numbers")
+    numbers = [int(number) for number in raw_numbers]
+    if len(numbers) != len(set(numbers)):
+        raise ValueError(f"Practice attempt {attempt.get('attempt_id')} repeats a question number")
+    return numbers
+
+
 def source_answer_metadata(answer: dict[str, Any]) -> dict[str, Any]:
     """保留答案归档原值，仅将源表 JSON 列解析为结构化对象。"""
     # 旧库的 selected_answer/correct_answer 是文本列，数字样式字符串也必须保持原样。
     return {key: json_value(value) if key in ANSWER_JSON_FIELDS else value
             for key, value in answer.items()}
+
+
+def source_question_metadata(question: dict[str, Any]) -> dict[str, Any]:
+    """保留 SHSAT 题目的来源编号、旧库追溯编号和原始题型配置。"""
+    return {
+        "sourceQuestionId": question["question_id"],
+        "legacyQuestionId": question.get("legacy_question_id"),
+        "sourceQuestionConfig": json_value(question.get("question_config")),
+    }
+
+
+def attempt_section_breakdown(
+    attempt: dict[str, Any], section_code: str, snapshot_raw_max: Any = None
+) -> dict[str, Any]:
+    """读取源考试分区成绩和分母；旧记录缺少 maxRaw 时使用答题快照分值合计。"""
+    details = json_value(attempt.get("score_details")) or {}
+    sections = details.get("sections", {}) if isinstance(details, dict) else {}
+    section = sections.get(section_code, {}) if isinstance(sections, dict) else {}
+    index = 1 if section_code == "ELA" else 2
+    return {
+        "rawScore": attempt.get(f"section{index}_score"),
+        "rawMaxScore": section.get("maxRaw") if section.get("maxRaw") is not None else snapshot_raw_max,
+        "scaledScore": section.get("scaled", attempt.get(f"section{index}_scaled_score")),
+        "scaledMaxScore": section.get("maxScaled"),
+    }
+
+
+def imported_shsat_ungraded_count() -> int:
+    """SHSAT 历史分数已自动阅卷；空题数另存到来源明细，不能当成待人工阅卷数。"""
+    return 0
 
 
 def fingerprint(row: dict[str, Any]) -> str:
@@ -84,6 +138,7 @@ class Migration:
         self.run_id: int | None = None
         self.maps: dict[tuple[str, int], int] = {}
         self.account_map = self._read_account_map(args.account_map)
+        self.username_overrides = self._read_username_overrides(args.username_override)
         self.created_files: list[Path] = []
         self.asset_cache: dict[str, str] = {}
         self.asset_index: dict[str, list[Path]] | None = None
@@ -105,6 +160,19 @@ class Migration:
                     raise ValueError(f"Duplicate source_user_id in account map: {key}")
                 result[key] = value
         return result
+
+    @staticmethod
+    def _read_username_overrides(values: list[str] | None) -> dict[int, str]:
+        overrides: dict[int, str] = {}
+        for value in values or []:
+            source_id_text, separator, username = value.partition("=")
+            if not separator or not source_id_text.isdecimal() or not username.strip():
+                raise ValueError("Username overrides must use SOURCE_USER_ID=USERNAME format")
+            source_id = int(source_id_text)
+            if source_id in overrides:
+                raise ValueError(f"Duplicate username override for source user {source_id}")
+            overrides[source_id] = username.strip()
+        return overrides
 
     def rows(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         with self.source.cursor() as cursor:
@@ -178,11 +246,12 @@ class Migration:
             source_id = int(user["user_id"])
             if ("user", source_id) in self.maps:
                 continue
-            target_id = existing_usernames.get(user["username"].casefold())
+            username = self.username_overrides.get(source_id, user["username"])
+            target_id = existing_usernames.get(username.casefold())
             if target_id is not None:
                 mapped_target = self.account_map.get(source_id)
                 if mapped_target != target_id:
-                    collisions.append({"source_user_id": source_id, "username": user["username"],
+                    collisions.append({"source_user_id": source_id, "username": username,
                                        "target_user_id": target_id, "mapped_target_user_id": mapped_target})
             elif int(user["user_id"]) in self.account_map:
                 mapped_target = self.account_map[int(user["user_id"])]
@@ -225,6 +294,7 @@ class Migration:
 
         report = {"source_database": self.args.source_database, "target_database": self.args.target_database,
                   "source_counts": source_counts, "username_collisions": collisions,
+                  "username_overrides": self.username_overrides,
                   "class_name_collisions": class_collisions,
                   "paper_code_collisions": paper_collisions,
                   "missing_assets": missing_assets, "ambiguous_assets": ambiguous_assets,
@@ -376,11 +446,13 @@ class Migration:
             if self._already("user", row):
                 continue
             source_id = int(row["user_id"])
+            # 只改目标库中新建账号的用户名，源库保持只读，避免跨系统同名但角色不同的账号碰撞。
+            username = self.username_overrides.get(source_id, row["username"])
             mapped_id = self.account_map.get(source_id)
-            target_id = target_by_name.get(row["username"].casefold())
+            target_id = target_by_name.get(username.casefold())
             if target_id is not None:
                 if mapped_id != target_id:
-                    raise ValueError(f"Unresolved account collision for {row['username']} (source user {source_id}).")
+                    raise ValueError(f"Unresolved account collision for {username} (source user {source_id}).")
                 target_user = target_by_id[target_id]
                 if target_user["role_code"] != row["role"]:
                     raise ValueError(f"Mapped account role mismatch for {row['username']}; resolve manually before import.")
@@ -395,10 +467,10 @@ class Migration:
             target_id = self.insert("""INSERT INTO users
                 (username,password_hash,real_name,role_code,email,status,last_login_at,created_at,updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (row["username"], row["password_hash"], row["real_name"], row["role"], row["email"],
+                (username, row["password_hash"], row["real_name"], row["role"], row["email"],
                  "ACTIVE" if row["is_active"] else "DISABLED", row["last_login_at"], row["created_at"], row["updated_at"]))
-            target_by_id[target_id] = {"id": target_id, "username": row["username"], "role_code": row["role"]}
-            target_by_name[row["username"].casefold()] = target_id
+            target_by_id[target_id] = {"id": target_id, "username": username, "role_code": row["role"]}
+            target_by_name[username.casefold()] = target_id
             self._save_or_existing("user", row, target_id)
 
     def _import_classes_and_students(self) -> None:
@@ -621,13 +693,14 @@ class Migration:
                 VALUES (%s,%s,%s,%s,%s,%s,%s)""",
                 (section_id, question_id, category_id, row["display_order"], row["question_number"], row["score"], row["scoring_section_code"]))
             self.maps[("paper_item", int(row["question_id"]))] = item_id
-            if row["question_config"]:
-                config = json_value(row["question_config"])
+            source_metadata = source_question_metadata(row)
+            if row["question_config"] or row.get("legacy_question_id") is not None:
+                config = source_metadata["sourceQuestionConfig"]
                 skill = config.get("shsatSkillTag", {}) if isinstance(config, dict) else {}
                 self.update("""INSERT INTO shsat_question_metadata (question_id,skill_tag_code,extra_json)
                     VALUES (%s,%s,CAST(%s AS JSON))""",
                     (question_id, skill.get("skillCode") if isinstance(skill, dict) else None,
-                     json_text({"sourceQuestionConfig": config, "sourceQuestionId": row["question_id"]})))
+                     json_text(source_metadata)))
 
         for row in self.rows("SELECT * FROM paper_solution ORDER BY solution_id"):
             if self._already("solution", row):
@@ -762,17 +835,25 @@ class Migration:
         source_max = self.one("SELECT COALESCE(SUM(score),0) AS n FROM question WHERE paper_id=%s", (attempt["paper_id"],))["n"]
         self.update("""INSERT INTO attempt_results (attempt_id,scoring_profile_id,algorithm_version,total_points,max_points,
             ungraded_count,breakdown_json,graded_at) VALUES (%s,%s,%s,%s,%s,%s,CAST(%s AS JSON),%s)""",
-            (target_attempt, profile_id, "SHSAT_V2", attempt["total_score"], source_max, attempt["unanswered_count"],
+            (target_attempt, profile_id, "SHSAT_V2", attempt["total_score"], source_max, imported_shsat_ungraded_count(),
              json_text(breakdown), attempt["submitted_at"] or attempt["updated_at"]))
         self._import_breakdowns(attempt, target_attempt)
 
     def _import_breakdowns(self, attempt: dict[str, Any], target_attempt: int) -> None:
-        for code, name, raw in (("ELA", "ELA", attempt["section1_score"]), ("MATH", "Math", attempt["section2_score"])):
+        snapshot_maxima = {
+            row["section_code"]: row["raw_max"]
+            for row in self.rows("""SELECT UPPER(part_code) AS section_code, SUM(max_score) AS raw_max
+                FROM attempt_question_snapshot WHERE attempt_id=%s GROUP BY UPPER(part_code)""",
+                (attempt["attempt_id"],))
+        }
+        for code, name in (("ELA", "ELA"), ("MATH", "Math")):
+            scores = attempt_section_breakdown(attempt, code, snapshot_maxima.get(code))
             self.update("""INSERT INTO attempt_result_breakdowns
-                (attempt_id,breakdown_code,dimension_kind,display_name,sort_order,raw_score,metrics_json)
-                VALUES (%s,%s,'SECTION',%s,%s,%s,CAST(%s AS JSON))""",
-                (target_attempt, code, name, 10 if code == "ELA" else 20, raw,
-                 json_text({"scaledScore": attempt["section1_scaled_score"] if code == "ELA" else attempt["section2_scaled_score"]})))
+                (attempt_id,breakdown_code,dimension_kind,display_name,sort_order,raw_score,raw_max_score,
+                 scaled_score,scaled_max_score,metrics_json)
+                VALUES (%s,%s,'SECTION',%s,%s,%s,%s,%s,%s,CAST(%s AS JSON))""",
+                (target_attempt, code, name, 10 if code == "ELA" else 20, scores["rawScore"], scores["rawMaxScore"],
+                 scores["scaledScore"], scores["scaledMaxScore"], json_text(scores)))
         detail = json_value(attempt["score_details"])
         sections = detail.get("sections", {}) if isinstance(detail, dict) else {}
         for code, section in sections.items():
@@ -790,6 +871,13 @@ class Migration:
     def _insert_attempt_items(self, attempt: dict[str, Any], target_attempt: int) -> None:
         question_rows = self.rows("""SELECT question_id,question_number FROM question WHERE paper_id=%s
             ORDER BY display_order,question_number,question_id""", (attempt["paper_id"],))
+        review_numbers = practice_question_numbers(attempt)
+        if review_numbers is not None:
+            by_number = {int(question["question_number"]): question for question in question_rows}
+            missing = [number for number in review_numbers if number not in by_number]
+            if missing:
+                raise ValueError(f"Practice attempt {attempt['attempt_id']} references missing questions: {missing}")
+            question_rows = [by_number[number] for number in review_numbers]
         attempt_item_ids: set[int] = set()
         for served, question in enumerate(question_rows, 1):
             item_id = self.maps[("paper_item", int(question["question_id"]))]
@@ -834,29 +922,78 @@ class Migration:
     def _import_wrong_answer_tasks(self) -> None:
         for row in self.rows("SELECT * FROM wrong_answer_task ORDER BY task_id"):
             if self._already("wrong_task", row):
+                # 已迁移记录只修正仍等于源库原值的时间列，保留目标端之后的人工编辑。
+                self.update("""UPDATE shsat_wrong_answer_tasks SET
+                    starts_at=CASE WHEN starts_at <=> %s THEN %s ELSE starts_at END,
+                    ends_at=CASE WHEN ends_at <=> %s THEN %s ELSE ends_at END,
+                    created_at=CASE WHEN created_at <=> %s THEN %s ELSE created_at END,
+                    updated_at=CASE WHEN updated_at <=> %s THEN %s ELSE updated_at END
+                    WHERE id=%s""",
+                    (row["start_at"], source_shsat_datetime(row["start_at"]),
+                     row["due_at"], source_shsat_datetime(row["due_at"]),
+                     row["created_at"], source_shsat_datetime(row["created_at"]),
+                     row["updated_at"], source_shsat_datetime(row["updated_at"]),
+                     self.mapped("wrong_task", row["task_id"])))
                 continue
             task_id = self.insert("""INSERT INTO shsat_wrong_answer_tasks
                 (exam_id,class_id,title,description,starts_at,ends_at,status,created_by,created_at,updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (self.mapped("exam", row["exam_id"]), self.mapped("class", row["class_id"]), row["title"], row["description"],
-                 row["start_at"], row["due_at"], "ENDED" if row["status"] in ("CLOSED", "ENDED") else "PUBLISHED",
-                 self.maps.get(("user", int(row["created_by"]))) if row["created_by"] else None, row["created_at"], row["updated_at"]))
+                 source_shsat_datetime(row["start_at"]), source_shsat_datetime(row["due_at"]),
+                 "ENDED" if row["status"] in ("CLOSED", "ENDED") else "PUBLISHED",
+                 self.maps.get(("user", int(row["created_by"]))) if row["created_by"] else None,
+                 source_shsat_datetime(row["created_at"]), source_shsat_datetime(row["updated_at"])))
             self._save_or_existing("wrong_task", row, task_id)
         for row in self.rows("SELECT * FROM wrong_answer_task_assignment ORDER BY assignment_id"):
             if self._already("wrong_assignment", row):
+                assignment_id = self.mapped("wrong_assignment", row["assignment_id"])
+            else:
+                user_row = self.rows("SELECT user_id FROM users WHERE student_id=%s", (row["student_id"],))
+                if not user_row:
+                    raise ValueError(f"Wrong-answer assignment {row['assignment_id']} has no linked student account")
+                assignment_id = self.insert("""INSERT INTO shsat_wrong_answer_assignments
+                    (task_id,student_user_id,source_attempt_id,question_numbers_json,status,practice_attempt_id,created_at,updated_at)
+                    VALUES (%s,%s,%s,CAST(%s AS JSON),%s,%s,%s,%s)""",
+                    (self.mapped("wrong_task", row["task_id"]), self.mapped("user", user_row[0]["user_id"]),
+                     self.maps.get(("attempt", int(row["source_attempt_id"]))) if row["source_attempt_id"] else None,
+                     json_text(json_value(row["question_numbers"]) or []), row["status"],
+                     self.maps.get(("attempt", int(row["practice_attempt_id"]))) if row["practice_attempt_id"] else None,
+                     row["created_at"], row["updated_at"]))
+                self._save_or_existing("wrong_assignment", row, assignment_id)
+
+            if not row["practice_attempt_id"]:
                 continue
-            user_row = self.rows("SELECT user_id FROM users WHERE student_id=%s", (row["student_id"],))
-            if not user_row:
-                raise ValueError(f"Wrong-answer assignment {row['assignment_id']} has no linked student account")
-            assignment_id = self.insert("""INSERT INTO shsat_wrong_answer_assignments
-                (task_id,student_user_id,source_attempt_id,question_numbers_json,status,practice_attempt_id,created_at,updated_at)
-                VALUES (%s,%s,%s,CAST(%s AS JSON),%s,%s,%s,%s)""",
-                (self.mapped("wrong_task", row["task_id"]), self.mapped("user", user_row[0]["user_id"]),
-                 self.maps.get(("attempt", int(row["source_attempt_id"]))) if row["source_attempt_id"] else None,
-                 json_text(json_value(row["question_numbers"]) or []), row["status"],
-                 self.maps.get(("attempt", int(row["practice_attempt_id"]))) if row["practice_attempt_id"] else None,
-                 row["created_at"], row["updated_at"]))
-            self._save_or_existing("wrong_assignment", row, assignment_id)
+            target_attempt = self.mapped("attempt", row["practice_attempt_id"])
+            source_attempt = self.one("""SELECT attempt_id,paper_id,is_practice,practice_task_assignment_id,practice_question_numbers
+                FROM attempt WHERE attempt_id=%s""", (row["practice_attempt_id"],))
+            if not source_attempt:
+                raise ValueError(f"Review assignment {row['assignment_id']} references a missing practice attempt")
+            review_numbers = practice_question_numbers(source_attempt)
+            frozen_numbers = review_numbers if review_numbers is not None else (json_value(row["question_numbers"]) or [])
+            self.update("""UPDATE attempts SET shsat_wrong_answer_assignment_id = %s,
+                shsat_wrong_answer_questions_json = CAST(%s AS JSON) WHERE id = %s""",
+                (assignment_id, json_text(frozen_numbers), target_attempt))
+            if review_numbers is not None:
+                self._sync_review_practice_items(target_attempt, source_attempt["paper_id"], review_numbers)
+
+    def _sync_review_practice_items(self, attempt_id: int, source_paper_id: int, question_numbers: list[int]) -> None:
+        """让已导入的复习 attempt 只包含源系统冻结的题目集合。"""
+        paper_id = self.mapped("paper", source_paper_id)
+        paper_items = self.target_rows("""SELECT pi.id,pi.display_number FROM paper_items pi
+            JOIN paper_sections ps ON ps.id=pi.section_id WHERE ps.paper_id=%s""", (paper_id,))
+        by_number = {int(item["display_number"]): int(item["id"]) for item in paper_items}
+        missing = [number for number in question_numbers if number not in by_number]
+        if missing:
+            raise ValueError(f"Practice attempt {attempt_id} references missing target questions: {missing}")
+        expected = [by_number[number] for number in question_numbers]
+        current = self.target_rows("SELECT paper_item_id FROM attempt_items WHERE attempt_id=%s ORDER BY served_order",
+                                   (attempt_id,))
+        if [int(item["paper_item_id"]) for item in current] == expected:
+            return
+        self.update("DELETE FROM attempt_items WHERE attempt_id=%s", (attempt_id,))
+        for served_order, paper_item_id in enumerate(expected, 1):
+            self.update("INSERT INTO attempt_items (attempt_id,paper_item_id,served_order) VALUES (%s,%s,%s)",
+                        (attempt_id, paper_item_id, served_order))
 
     def _verify_import(self) -> None:
         # 外键确保本次数据的关联有效；这里额外核对核心对象映射数量。
@@ -914,6 +1051,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-database", default=os.getenv("SOURCE_DB_NAME", "shsat_exam_v2"))
     parser.add_argument("--target-database", default=os.getenv("TARGET_DB_NAME", "unified_exam_platform"))
     parser.add_argument("--account-map", help="人工核对的 source_user_id,target_user_id CSV")
+    parser.add_argument("--username-override", action="append", metavar="SOURCE_USER_ID=USERNAME",
+                        help="仅在目标库导入指定源账号时更换用户名，可重复指定")
     parser.add_argument("--source-asset-root", default=os.getenv("SOURCE_ASSET_ROOT"), help="源上传目录或可定位历史素材的根目录")
     parser.add_argument("--target-asset-root", default=os.getenv("TARGET_ASSET_ROOT", "backend/uploads"))
     parser.add_argument("--system-user-id", type=int, help="创建归档试卷时使用的平台管理员 ID")

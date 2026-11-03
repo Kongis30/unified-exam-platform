@@ -243,6 +243,13 @@ public class StudentAttemptService {
             FROM exams WHERE id = ?
             """, examId, studentId, attemptNo, practice, durationSeconds, durationSeconds, examId);
         Long attemptId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        if (!practice) {
+            // 作答开始时固定该学生的派发班级，后续班级变更不会改写历史成绩归属。
+            jdbcTemplate.update("""
+                INSERT IGNORE INTO attempt_classes (attempt_id, class_id)
+                SELECT ?, class_id FROM exam_participant_classes WHERE exam_id = ? AND student_user_id = ?
+                """, attemptId, examId, studentId);
+        }
         jdbcTemplate.update("""
             INSERT INTO attempt_items (attempt_id, paper_item_id, served_order)
             WITH RECURSIVE section_tree AS (

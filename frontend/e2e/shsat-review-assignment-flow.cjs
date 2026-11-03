@@ -148,9 +148,30 @@ async function main() {
     assert.equal(details.assignments.length, 1);
     assert.equal(details.assignments[0].sourceAttemptId, attemptId);
     assert.ok(details.assignments[0].totalQuestions > 0, 'unanswered source questions are assigned for review');
+    assert.equal(details.assignments[0].startedAt, null,
+      'an assignment without a practice attempt is not presented as already started');
 
     const teacherTaskRow = teacher.locator('.wrong-task-table tbody tr').filter({ hasText: taskTitle });
     await teacherTaskRow.waitFor();
+    await teacher.setViewportSize({ width: 390, height: 844 });
+    const taskTableScroll = teacher.locator('.wrong-task-table-wrap');
+    const mobileTableHint = teacher.locator('.wrong-task-table-wrap .mobile-table-scroll-hint');
+    await mobileTableHint.waitFor();
+    const tableScrollMetrics = await taskTableScroll.evaluate(element => {
+      element.scrollLeft = element.scrollWidth;
+      return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, scrollLeft: element.scrollLeft };
+    });
+    assert.ok(tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth,
+      'the review assignment table preserves its full column width on mobile');
+    assert.ok(tableScrollMetrics.scrollLeft > 0, 'the mobile table can scroll horizontally to its Actions column');
+    assert.ok(await teacher.locator('.wrong-task-table thead th').last().isVisible(),
+      'the Actions column remains reachable on mobile');
+    await taskTableScroll.evaluate(element => { element.scrollLeft = 0; });
+    await mobileTableHint.scrollIntoViewIfNeeded();
+    await teacher.screenshot({ path: `/tmp/shsat-review-assignment-table-mobile-${stamp}.png` });
+    assert.ok((await teacher.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }))).page <= 390,
+      'the review assignment table scrolls inside its card without widening the page');
+    await teacher.setViewportSize({ width: 1440, height: 1000 });
     await teacherTaskRow.getByRole('button', { name: `Actions for ${taskTitle}` }).click();
     await teacher.getByRole('menuitem', { name: 'View Progress', exact: true }).click();
     await teacher.waitForURL(url => url.pathname.endsWith(`/wrong-answer-tasks/${taskId}`));
@@ -333,6 +354,8 @@ async function main() {
     const taskAfterStart = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
     assert.equal(taskAfterStart.assignments[0].status, 'IN_PROGRESS');
     assert.equal(taskAfterStart.assignments[0].practiceAttemptId, practiceAttemptId);
+    assert.ok(taskAfterStart.assignments[0].startedAt,
+      'the started time comes from the linked practice attempt');
 
     await admin.goto(`${baseUrl}/exam-types/SHSAT/admin?tab=wrong-answer-tasks`);
     await admin.getByRole('tab', { name: 'Review Assignments', exact: true }).click();
@@ -370,6 +393,9 @@ async function main() {
       .then(rows => rows.find(item => item.assignmentId === details.assignments[0].assignmentId));
     assert.equal(retryTask.status, 'RETRY_REQUIRED', 'unanswered assigned questions require another practice round');
     assert.equal(retryTask.canStart, true, 'the student can begin another round while the task is available');
+    const retryDetailsAfterSubmission = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
+    assert.equal(retryDetailsAfterSubmission.assignments[0].status, 'RETRY_REQUIRED',
+      'admin progress derives retry status from the completed practice attempt');
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
     const retryReview = student.locator('.student-review-list article.paper-row').filter({ hasText: taskTitle });
     await retryReview.getByText('More Practice Needed', { exact: true }).waitFor();
@@ -394,6 +420,9 @@ async function main() {
     const retryDetails = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
     assert.equal(retryDetails.assignments[0].practiceAttemptId, practiceAttemptId,
       'the assignment now points to the latest retry attempt');
+    const taskWindowText = await admin.locator('.wrong-answer-task-page__info span').innerText();
+    assert.match(taskWindowText, /\b\d{2}:\d{2}\b/, 'the task availability window uses 24-hour time to the minute');
+    assert.doesNotMatch(taskWindowText, /\b(?:AM|PM)\b/i, 'the task availability window omits AM/PM');
     await admin.screenshot({ path: `/tmp/shsat-review-assignment-progress-${stamp}.png` });
     await admin.setViewportSize({ width: 390, height: 844 });
     await admin.waitForTimeout(250);
@@ -428,8 +457,25 @@ async function main() {
     assert.equal((await endRequest).status(), 200, 'the task-end request succeeds');
     const ended = await api(admin, '/api/admin/wrong-answer-tasks').then(rows => rows.find(item => item.taskId === taskId));
     assert.equal(ended.status, 'ENDED');
+    assert.equal(ended.inProgressCount, 1, 'the ended task still has one student who must be tracked');
     const endedDetails = await api(admin, `/api/admin/wrong-answer-tasks/${taskId}`);
     assert.equal(endedDetails.assignments[0].status, 'IN_PROGRESS', 'ending a task keeps an in-progress student attempt intact');
+    await admin.goto(`${baseUrl}/exam-types/SHSAT/admin`);
+    const endedDashboardTask = admin.locator('.dashboard-review-task').filter({ hasText: taskTitle });
+    await endedDashboardTask.waitFor();
+    assert.equal(await endedDashboardTask.locator('.dashboard-review-task__status').innerText(), 'Ended',
+      'an ended assignment with an in-progress student remains visible for progress tracking');
+    await endedDashboardTask.getByRole('button', { name: 'View Progress', exact: true }).waitFor();
+    await endedDashboardTask.scrollIntoViewIfNeeded();
+    await admin.screenshot({ path: `/tmp/shsat-review-assignment-ended-dashboard-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await endedDashboardTask.scrollIntoViewIfNeeded();
+    const endedDashboardMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(endedDashboardMobileSize.page <= endedDashboardMobileSize.viewport,
+      'the ended assignment dashboard card fits a 390px viewport');
+    await admin.screenshot({ path: `/tmp/shsat-review-assignment-ended-dashboard-mobile-${stamp}.png` });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
+    await admin.goto(`${baseUrl}/exam-types/SHSAT/admin?tab=wrong-answer-tasks`);
     const studentTaskAfterEnd = await api(student, '/api/student/wrong-answer-tasks')
       .then(rows => rows.find(item => item.assignmentId === details.assignments[0].assignmentId));
     assert.equal(studentTaskAfterEnd.status, 'IN_PROGRESS');
@@ -600,7 +646,7 @@ async function main() {
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'teacher views task progress and ends the assignment', 'eligible question snapshot', 'admin Start Exam launches SHSAT practice, hides platform nav, and returns to dashboard', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment', 'class deletion is hidden while review tasks are linked, API explains the conflict, and the class can be deleted after source cleanup', 'deleting the source exam removes student review tasks and reports'],
+      checks: ['student submitted source attempt', 'teacher creates assignment and is denied account directory access', 'teacher views task progress and ends the assignment', 'eligible question snapshot', 'admin Start Exam launches SHSAT practice, hides platform nav, and returns to dashboard', 'admin dashboard refresh, collapse persistence, counts, progress link, and return tab', 'expired or ended tasks with an in-progress student remain visible on admin dashboard', 'student start and progress state', 'elapsed end time automatically disables student task', 'admin progress detail and return context', 'View Report opens and returns from the in-progress report', 'mobile progress row is visible and readable', 'retry-required state and Try again creates a fresh attempt', 'ended task label and disabled action', 'completed assignment history and student report', 'end cancel and in-progress preservation', 'student can continue after administrator ends assignment', 'class deletion is hidden while review tasks are linked, API explains the conflict, and the class can be deleted after source cleanup', 'deleting the source exam removes student review tasks and reports'],
       sourceTaskIds,
       deletedSourceTaskMobileSize,
       reviewClassMobileSize,
@@ -618,6 +664,7 @@ async function main() {
       completedHistoryMobileSize,
       completedReportMobileSize,
       endedTaskMobileSize,
+      endedDashboardMobileSize,
       retryTaskMobileSize,
       pageErrors: errors.length,
     }));
@@ -626,6 +673,16 @@ async function main() {
     if (classId) await api(admin, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (userId) await api(admin, `/api/admin/users/${userId}`, 'DELETE').catch(() => {});
     if (teacherId) await api(admin, `/api/admin/users/${teacherId}`, 'DELETE').catch(() => {});
+    if (classId) {
+      const remainingClasses = await api(admin, '/api/admin/classes?examTypeCodes=SHSAT');
+      assert.ok(!remainingClasses.some(item => Number(item.id) === classId),
+        `the temporary class ${classId} is removed during cleanup`);
+    }
+    if (userId || teacherId) {
+      const remainingUsers = await api(admin, '/api/admin/users');
+      assert.ok(!remainingUsers.some(item => Number(item.id) === userId || Number(item.id) === teacherId),
+        'temporary student and teacher accounts are removed during cleanup');
+    }
     await studentContext.close();
     await teacherContext.close();
     await adminContext.close();

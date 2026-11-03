@@ -142,6 +142,8 @@ async function main() {
     await student.getByRole('tab', { name: 'Exam History', exact: true }).click();
     const retakeRows = student.locator('.shsat-history-row').filter({ hasText: retake.title });
     assert.equal(await retakeRows.count(), 3, 'the student sees all three retakes in Exam History');
+    assert.equal(await retakeRows.getByRole('button', { name: /delete/i }).count(), 0,
+      'SHSAT completed exam reports cannot be deleted by a student');
     await retakeRows.nth(0).getByText('Attempt #3', { exact: false }).waitFor();
     await retakeRows.nth(1).getByText('Attempt #2', { exact: false }).waitFor();
     await retakeRows.nth(2).getByText('Attempt #1', { exact: false }).waitFor();
@@ -167,7 +169,31 @@ async function main() {
       examRows: document.querySelectorAll('.student-exam-list .paper-row').length,
       attemptRows: document.querySelectorAll('.shsat-history-row').length,
     }));
+    await api(admin, `/api/admin/exams/${retake.id}/close`, 'POST');
     await retakeRows.nth(0).getByRole('button', { name: 'View report', exact: true }).click();
+    await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[2]}/report`);
+    await student.getByText('Result Summary', { exact: true }).waitFor();
+    const reportQuestion = student.locator('.question-link').first();
+    await reportQuestion.waitFor();
+    const reviewedQuestionNumber = (await reportQuestion.innerText()).match(/\d+/)?.[0];
+    await reportQuestion.click();
+    await student.waitForURL(url => url.pathname === `/student/exams/${retake.id}`
+      && url.searchParams.get('review') === '1'
+      && url.searchParams.get('questionNumber') === reviewedQuestionNumber);
+    assert.equal(await student.getByText('This exam paper is unavailable. Please contact your teacher.', { exact: true }).count(), 0,
+      'read-only report review uses the submitted question snapshot without a misleading paper-unavailable warning');
+    await student.getByRole('button', { name: 'Back to Report', exact: true }).waitFor();
+    await student.screenshot({ path: `/tmp/shsat-student-report-question-review-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const questionReviewMobileSize = await student.evaluate(() => ({
+      pageWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    }));
+    assert.ok(questionReviewMobileSize.pageWidth <= questionReviewMobileSize.viewportWidth,
+      'read-only question review from a report fits the 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-student-report-question-review-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 1000 });
+    await student.getByRole('button', { name: 'Back to Report', exact: true }).click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${retakeAttempts[2]}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
     await student.evaluate(() => window.scrollTo(0, 0));
@@ -250,7 +276,7 @@ async function main() {
       checks: ['Upcoming status and disabled start', 'Available status and start action',
         'target eligibility isolation', 'View attempt opens the latest submitted read-only attempt',
         'repeated attempts and latest-first history',
-        'history refresh, report route, tab/scroll return, and 390px report layout',
+        'history refresh, report-to-question-to-report route, tab/scroll return, and 390px layout',
         'required login fields, invalid password, disabled account and refresh session',
         'student report access remains private', 'availability closure disables Start exam', '390px layout'],
       mobileSize,
@@ -311,6 +337,7 @@ async function createPublishedExam(admin, paperId, studentId, state, startOffset
     durationSeconds: 10_800,
     attemptLimit,
     targetScope: 'SELECTED',
+    allowReview: true,
   });
   const examId = created.summary.id;
   await api(admin, `/api/admin/exams/${examId}/targets`, 'PUT', {

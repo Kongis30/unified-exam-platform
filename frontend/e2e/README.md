@@ -40,6 +40,14 @@ E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:unassigne
 
 This test creates temporary students and a class, verifies select-all, selection retention after refresh/cancel, batch assignment, the 800px scroll cap and 390px layout, then removes and verifies cleanup of all temporary data. Do not point it at production data.
 
+To verify SHSAT exam eligibility when a targeted class changes membership, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:class-exam-eligibility
+```
+
+This test checks eligibility for existing and late-joining class members, confirms leaving the class does not revoke an already granted place, and starts the exam as that student. It saves desktop/390px student-workspace and exam screenshots, then removes the temporary release, class, students, and attempts. Do not point it at production data.
+
 To verify SHSAT class-card ordering, run:
 
 ```sh
@@ -47,3 +55,27 @@ E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:class-ord
 ```
 
 This test moves temporary classes in the browser, checks the saved order after reload, restores the original order, and verifies no temporary classes remain. It saves desktop and 390px screenshots. Do not point it at production data.
+
+To verify imported SHSAT paper scoring from the real student interface, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:imported-paper-full-exam
+```
+
+By default, this test publishes a temporary release from imported paper 244, answers all 100 questions through the student UI, verifies the answer types and raw/scaled report totals, and checks the full report PDF. Set `E2E_IMPORTED_PAPER_ID=248` to also run the flow against the authentic imported Graph Question in paper 248; because that source paper is a draft, the test creates and seals a temporary version, then deletes the cloned paper with the exam, class, and student. It saves report, PDF, and question screenshots under `/tmp`. Do not point it at production data.
+
+To verify SHSAT monitor counters when one student has repeat attempts, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:monitor-retry-counters
+```
+
+This test submits two attempts from one student, starts a third, and checks that attempt counts and distinct-student counters match the independent SHSAT monitor. It saves 1440px and 390px screenshots and removes the temporary release and account. Do not point it at production data.
+
+To verify the SHSAT native fullscreen browser flow, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:native-fullscreen
+```
+
+This test launches a headed Chromium window, enters real fullscreen from the section-selection gesture, and verifies the English warning, persisted violation count, and fullscreen recovery. By default it exits through the browser Fullscreen API. To verify a native Escape key manually, set `E2E_NATIVE_ESCAPE=manual`; press Escape in the fullscreen exam window, then press Enter in the terminal when prompted. To verify an actual tab switch manually, set `E2E_NATIVE_TAB_SWITCH=manual`; switch away and back to the exam window at the two prompts. Playwright key events do not count as OS-level key evidence. The test creates and removes a temporary student and release. Do not point it at production data.

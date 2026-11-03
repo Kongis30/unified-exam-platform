@@ -142,6 +142,22 @@ async function main() {
     await row.getByText('Active', { exact: true }).waitFor();
 
     await admin.screenshot({ path: '/tmp/sat-account-management-ui.png', fullPage: true });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const accountTable = admin.getByRole('region', { name: 'Account list' });
+    await admin.getByText('Swipe horizontally to view all columns.', { exact: true }).waitFor();
+    const mobileTableMetrics = await accountTable.evaluate((element) => {
+      const metrics = { clientWidth: element.clientWidth, scrollWidth: element.scrollWidth };
+      element.scrollLeft = element.scrollWidth;
+      return { ...metrics, scrollLeft: element.scrollLeft };
+    });
+    assert.ok(mobileTableMetrics.scrollWidth > mobileTableMetrics.clientWidth,
+      'the account table keeps all columns reachable in its own mobile scroller');
+    assert.ok(mobileTableMetrics.scrollLeft > 0, 'the mobile account table can scroll to its Actions column');
+    await accountTable.evaluate((element) => { element.scrollLeft = 0; });
+    const mobilePageSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(mobilePageSize.page <= 390, 'the account directory does not widen the mobile page');
+    await admin.screenshot({ path: '/tmp/sat-account-management-mobile-20261028.png' });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
     await row.getByRole('button', { name: 'Account actions' }).click();
     await admin.getByRole('menuitem', { name: 'Delete permanently' }).click();
     const deleteButton = admin.getByRole('button', { name: /Delete \(\d+s\)|Delete permanently/ });
@@ -156,8 +172,11 @@ async function main() {
       result: 'PASS',
       checks: ['required/invalid login validation', 'create with editable defaults and optional details', 'alphabetical order, search and role filter',
         'change role', 'reset password, invalid-password message, session restore and sign out',
-        'disabled-account login rejection and re-enable', 'five-second delete confirmation'],
-      screenshot: '/tmp/sat-account-management-ui.png',
+        'disabled-account login rejection and re-enable', 'five-second delete confirmation',
+        'mobile account table scroll hint, horizontal actions reachability, and no page overflow'],
+      mobilePageSize,
+      mobileTableMetrics,
+      screenshots: ['/tmp/sat-account-management-ui.png', '/tmp/sat-account-management-mobile-20261028.png'],
     }));
   } finally {
     // 无论哪一步失败都清理临时账号，避免测试数据留在本地系统。

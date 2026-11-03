@@ -15,32 +15,6 @@ function jsonBody(value) {
   return { method: 'POST', body: JSON.stringify(value) }
 }
 
-export const paperApi = {
-  async getInfo(paperId) {
-    activePaperId = Number(paperId)
-    const [paper, settings] = await Promise.all([
-      apiRequest(`/api/admin/papers/${paperId}`),
-      apiRequest(`/api/admin/papers/${paperId}/sat-settings`),
-    ])
-    return success({
-      ...paper.summary,
-      totalScore: settings.scoringTableCode === 'PSAT' ? 1520 : 1600,
-      settings,
-    })
-  },
-  async update(paperId, payload) {
-    activePaperId = Number(paperId)
-    const settings = await apiRequest(`/api/admin/papers/${paperId}/sat-settings`, {
-      method: 'PUT', body: JSON.stringify({
-        scoringTableCode: payload.scoringType,
-        adaptiveMode: payload.adaptiveMode,
-        restTimeSeconds: payload.restTimeSeconds,
-      }),
-    })
-    return success(settings)
-  },
-}
-
 export const paperEditApi = {
   async getStructure(paperId) {
     activePaperId = Number(paperId)

@@ -24,6 +24,7 @@
     "test:e2e:shsat:unassigned-bulk": "node e2e/shsat-unassigned-bulk-assign.cjs",
     "test:e2e:shsat:class-order": "node e2e/shsat-class-order.cjs",
     "test:e2e:shsat:class-detail-save": "node e2e/shsat-class-detail-save.cjs",
+    "test:e2e:shsat:class-exam-eligibility": "node e2e/shsat-class-exam-eligibility.cjs",
     "test:e2e:shsat:class-results-retry": "node e2e/shsat-class-results-retry.cjs",
     "test:e2e:shsat:class-results-statuses": "node e2e/shsat-class-results-statuses.cjs",
     "test:e2e:shsat:class-results-sorting": "node e2e/shsat-class-results-sorting.cjs",
@@ -36,12 +37,17 @@
     "test:e2e:shsat:wrong-answer-book": "node e2e/shsat-wrong-answer-book.cjs",
     "test:e2e:shsat:two-section-exam": "node e2e/shsat-two-section-exam.cjs",
     "test:e2e:shsat:full-length-navigation": "node e2e/shsat-full-length-exam-navigation.cjs",
+    "test:e2e:shsat:imported-paper-full-exam": "node e2e/shsat-imported-paper-full-exam.cjs",
+    "test:e2e:shsat:missing-material-report": "node e2e/shsat-missing-material-report.cjs",
     "test:e2e:shsat:hotspot-flow": "node e2e/shsat-hotspot-answer-flow.cjs",
     "test:e2e:shsat:equation-grading-report": "node e2e/shsat-equation-grading-report.cjs",
     "test:e2e:shsat:historical-delete": "node e2e/shsat-historical-exam-delete.cjs",
+    "test:e2e:shsat:native-fullscreen": "node e2e/shsat-native-fullscreen.cjs",
     "test:e2e:shsat:teacher-workspace": "node e2e/shsat-teacher-workspace.cjs",
+    "test:e2e:shsat:monitor-retry-counters": "node e2e/shsat-monitor-retry-counters.cjs",
     "test:e2e:shsat:admin-tab-scroll": "node e2e/shsat-admin-tab-scroll.cjs",
-    "test:e2e:shsat:system-selection": "node e2e/shsat-system-selection.cjs"
+    "test:e2e:shsat:system-selection": "node e2e/shsat-system-selection.cjs",
+    "test:e2e:shsat:original-hotspot-flow": "node e2e/shsat-original-hotspot-flow.cjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

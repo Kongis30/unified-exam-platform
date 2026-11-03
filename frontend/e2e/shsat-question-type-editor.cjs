@@ -670,6 +670,23 @@ async function main() {
     await multiSelectEditor.scrollIntoViewIfNeeded();
     await multiSelectEditor.screenshot({ path: `/tmp/shsat-question-type-editor-multi-select-${stamp}.png` });
 
+    const multiSelectQuestionNumber = Number(multiSelectQuestion.displayNumber);
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.goto(`${baseUrl}/exam-types/SHSAT/admin/papers/${paperId}/preview?questionNumber=${multiSelectQuestionNumber}`);
+    await page.getByText(multiSelectStem, { exact: true }).waitFor();
+    assert.equal(await page.locator('.choice-answer__option').count(), 2,
+      'multi-select preview renders each saved option');
+    await page.screenshot({ path: `/tmp/shsat-question-type-preview-multi-select-${stamp}.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const multiSelectPreviewMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(multiSelectPreviewMobileSize.page <= multiSelectPreviewMobileSize.viewport,
+      `the multi-select preview fits a 390px viewport: ${JSON.stringify(multiSelectPreviewMobileSize)}`);
+    await page.screenshot({ path: `/tmp/shsat-question-type-preview-multi-select-mobile-${stamp}.png` });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(editorUrl);
+    await page.getByRole('heading', { name: title, exact: true }).waitFor();
+
     const fixedMultiSelectStem = `Choose two factors of ten ${suffix}.`;
     await elaSection.getByRole('button', { name: 'Add Question', exact: true }).click();
     await page.locator('.meta-field--type select').selectOption('MULTI_SELECT_FIXED');
@@ -752,10 +769,56 @@ async function main() {
     await fillBlankEditor.evaluate(element => element.scrollIntoView({ block: 'center' }));
     await page.screenshot({ path: `/tmp/shsat-question-type-editor-fill-blank-mobile-${stamp}.png` });
 
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await elaSection.getByRole('button', { name: 'Add Question', exact: true }).click();
+    await page.locator('.meta-field--type select').selectOption('MULTIPLE_CHOICE');
+    const multipleChoiceStem = `Choose the even number ${suffix}.`;
+    await page.locator('.stem-input').fill(multipleChoiceStem);
+    const multipleChoiceEditor = page.locator('.choice-editor');
+    await multipleChoiceEditor.waitFor();
+    const multipleChoiceOptions = multipleChoiceEditor.locator('.choice-editor__option-row');
+    assert.ok(await multipleChoiceOptions.count() >= 2, 'multiple-choice starts with at least two options');
+    await multipleChoiceOptions.nth(0).locator('.choice-editor__option-key').fill('A');
+    await multipleChoiceOptions.nth(0).locator('input.form-input').fill('2');
+    await multipleChoiceOptions.nth(1).locator('.choice-editor__option-key').fill('B');
+    await multipleChoiceOptions.nth(1).locator('input.form-input').fill('3');
+    await multipleChoiceOptions.nth(0).locator('input[type="radio"]').check();
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    questions = readQuestions(await api(page, `/api/admin/papers/${paperId}`));
+    const multipleChoiceQuestion = questions.find(question => question.stem === multipleChoiceStem);
+    assert.ok(multipleChoiceQuestion, 'the multiple-choice question is persisted');
+    assert.equal(multipleChoiceQuestion.questionTypeCode, 'MULTIPLE_CHOICE');
+    assert.deepEqual(multipleChoiceQuestion.render.options.map(option => option.text), ['2', '3']);
+    assert.deepEqual(multipleChoiceQuestion.answerKey.answers, ['A']);
+
+    await page.reload();
+    await page.locator('.question-item').filter({ hasText: multipleChoiceStem }).click();
+    assert.deepEqual(await multipleChoiceOptions.evaluateAll(rows => rows.map(row => ({
+      key: row.querySelector('.choice-editor__option-key')?.value,
+      text: row.querySelector('input.form-input')?.value,
+      correct: row.querySelector('input[type="radio"]')?.checked,
+    }))), [{ key: 'A', text: '2', correct: true }, { key: 'B', text: '3', correct: false }],
+    'multiple-choice options and correct answer are restored after reloading');
+    await multipleChoiceEditor.scrollIntoViewIfNeeded();
+    await multipleChoiceEditor.screenshot({ path: `/tmp/shsat-question-type-editor-multiple-choice-${stamp}.png` });
+    const multipleChoiceQuestionNumber = Number(multipleChoiceQuestion.displayNumber);
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.goto(`${baseUrl}/exam-types/SHSAT/admin/papers/${paperId}/preview?questionNumber=${multipleChoiceQuestionNumber}`);
+    await page.getByText(multipleChoiceStem, { exact: true }).waitFor();
+    await page.screenshot({ path: `/tmp/shsat-question-type-preview-multiple-choice-${stamp}.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const multipleChoicePreviewMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(multipleChoicePreviewMobileSize.page <= multipleChoicePreviewMobileSize.viewport,
+      `the multiple-choice preview fits a 390px viewport: ${JSON.stringify(multipleChoicePreviewMobileSize)}`);
+    await page.screenshot({ path: `/tmp/shsat-question-type-preview-multiple-choice-mobile-${stamp}.png` });
+
     assert.deepEqual(pageErrors, [], 'question type editing and preview have no browser errors');
     console.log(JSON.stringify({
       result: 'PASS',
       questionTypes: [...new Set(questions.map(question => question.questionTypeCode))],
+      multiSelectPreviewMobileSize,
       mobileEditorSize,
       mobileSize,
       hotTextMobileSize,
@@ -770,6 +833,7 @@ async function main() {
       graphPreviewMobileSize,
       tableEditorMobileSize,
       tablePreviewMobileSize,
+      multipleChoicePreviewMobileSize,
       pageErrors: pageErrors.length,
       screenshots: [
         `/tmp/shsat-question-type-editor-drag-${stamp}.png`,
@@ -811,7 +875,11 @@ async function main() {
         `/tmp/shsat-question-type-editor-multi-select-fixed-mobile-${stamp}.png`,
         `/tmp/shsat-question-type-preview-fill-blank-${stamp}.png`,
         `/tmp/shsat-question-type-preview-multi-select-${stamp}.png`,
+        `/tmp/shsat-question-type-preview-multi-select-mobile-${stamp}.png`,
         `/tmp/shsat-question-type-editor-multi-select-fixed-${stamp}.png`,
+        `/tmp/shsat-question-type-editor-multiple-choice-${stamp}.png`,
+        `/tmp/shsat-question-type-preview-multiple-choice-${stamp}.png`,
+        `/tmp/shsat-question-type-preview-multiple-choice-mobile-${stamp}.png`,
       ],
     }));
   } finally {

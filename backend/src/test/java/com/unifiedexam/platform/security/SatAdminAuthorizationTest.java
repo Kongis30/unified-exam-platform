@@ -53,6 +53,9 @@ class SatAdminAuthorizationTest {
     @MockBean
     private JdbcTemplate jdbcTemplate;
 
+    @MockBean
+    private com.unifiedexam.platform.identity.WorkspaceAccessService workspaceAccessService;
+
     @TestConfiguration
     static class TestBeans {
         @Bean

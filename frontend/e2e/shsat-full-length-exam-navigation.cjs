@@ -321,7 +321,8 @@ async function main() {
       checks: [`100-question UI navigation starting with ${firstSection}`, `${firstSection} submit and ${secondSection} transition`,
         `${secondSection} submit and final report`, 'stale section submit and answer writes are rejected',
         'repeated final submission is idempotent', 'bookmark filters and locked Review navigation',
-        'question navigation respects section boundaries', 'drawing pen color, real stroke rendering, and clearing',
+        'question navigation respects section boundaries', 'keyboard Next/Previous navigation and drawing retention within the active session',
+        'drawing pen color, real stroke rendering, and clearing',
         '100 question results and 50/50 section maxima', 'student/admin report answer counts reconcile', '390px report layout'],
       firstSection, attemptId, correctCount: adminReport.correctCount, wrongCount: adminReport.wrongCount, mobileSize, drawingMobileSize,
       pageErrors: pageErrors.length,
@@ -384,6 +385,17 @@ async function verifyDrawing(page, stamp) {
   assert.ok(viewport.page <= viewport.width, 'the exam drawing interface fits a 390px viewport');
   await page.screenshot({ path: mobileScreenshot });
   await page.setViewportSize({ width: 1440, height: 900 });
+  const questionNumber = Number((await page.locator('.question-number').innerText()).match(/\d+/)?.[0]);
+  const nextButton = page.getByRole('button', { name: 'Next', exact: true });
+  await nextButton.focus();
+  await page.keyboard.press('Enter');
+  await expectQuestion(page, questionNumber + 1);
+  const previousButton = page.getByRole('button', { name: 'Previous', exact: true });
+  await previousButton.focus();
+  await page.keyboard.press('Enter');
+  await expectQuestion(page, questionNumber);
+  assert.ok(await drawingStroke.count() > 0,
+    'keyboard navigation returns to the material question without dropping its in-session drawing');
   await page.getByRole('button', { name: 'Pen Color', exact: true }).click();
   await page.locator('.tool-color-menu').getByRole('button', { name: 'Clear Drawing', exact: true }).click();
   assert.equal(await page.locator('.drawing-stroke').count(), 0, 'Clear Drawing removes the current question strokes');

@@ -111,9 +111,9 @@ function mapAttempt(attempt) {
 }
 
 export const studentApi = {
-  async getExams() {
+  async getExams(examRows = null) {
     if (['admin', 'teacher'].includes(getUserRole())) {
-      return (await listExams('SHSAT')).map((exam) => ({
+      return (await (examRows || listExams('SHSAT'))).map((exam) => ({
         ...exam,
         examId: exam.id,
         examTitle: exam.title,

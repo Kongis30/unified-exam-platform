@@ -2,6 +2,9 @@ package com.unifiedexam.platform.examtype.shsat.admin;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.unifiedexam.platform.examtype.shsat.ShsatQuestionGrader;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -23,19 +26,31 @@ public class ShsatAdminReportService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final ShsatQuestionGrader questionGrader;
 
-    public ShsatAdminReportService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    @Autowired
+    public ShsatAdminReportService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
+                                   ShsatQuestionGrader questionGrader) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.questionGrader = questionGrader;
     }
 
+    /** 简化服务层单测构造；运行时由 Spring 注入评分器实例。 */
+    public ShsatAdminReportService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+        this(jdbcTemplate, objectMapper, new ShsatQuestionGrader());
+    }
+
+    /** 汇总班级成绩；迁移空题以 legacyAnswer:null 占位，不能把 ungraded_count 当作已作答数。 */
     public List<Map<String, Object>> classExamScores(long examId, long classId) {
         requireShsatExam(examId);
         requireClass(classId);
         Boolean targeted = jdbcTemplate.queryForObject("""
             SELECT EXISTS(SELECT 1 FROM exams WHERE id = ? AND target_scope = 'ALL_STUDENTS')
                 OR EXISTS(SELECT 1 FROM exam_target_classes WHERE exam_id = ? AND class_id = ?)
-            """, Boolean.class, examId, examId, classId);
+                OR EXISTS(SELECT 1 FROM exam_target_student_classes WHERE exam_id = ? AND class_id = ?)
+                OR EXISTS(SELECT 1 FROM attempt_classes ac JOIN attempts a ON a.id = ac.attempt_id WHERE a.exam_id = ? AND ac.class_id = ?)
+            """, Boolean.class, examId, examId, classId, examId, classId, examId, classId);
         if (!Boolean.TRUE.equals(targeted)) throw notFound("Class exam results not found.");
         return jdbcTemplate.query("""
             SELECT u.id AS student_id, u.real_name, u.username, a.id AS attempt_id, a.attempt_no, a.status AS attempt_status,
@@ -58,20 +73,24 @@ public class ShsatAdminReportService {
                     WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_max_score,
                    sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
-                       + COALESCE(r.ungraded_count, 0) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id
+                    AND NOT (JSON_CONTAINS_PATH(aa.answer_json, 'one', '$.legacyAnswer')
+                      AND (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'NULL'
+                        OR (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'STRING'
+                          AND JSON_UNQUOTE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = '')))) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    TIMESTAMPDIFF(SECOND, a.started_at, COALESCE(a.submitted_at, CURRENT_TIMESTAMP(6))) AS time_used
-            FROM class_memberships cm JOIN users u ON u.id = cm.student_user_id
+            FROM exam_participant_classes pc JOIN users u ON u.id = pc.student_user_id
             LEFT JOIN attempts a ON a.id = (
                 SELECT a2.id FROM attempts a2 WHERE a2.exam_id = ? AND a2.student_user_id = u.id AND a2.is_practice = FALSE
+                    AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a2.id AND ac.class_id = pc.class_id)
                 ORDER BY a2.attempt_no DESC LIMIT 1
             )
             LEFT JOIN attempt_results r ON r.attempt_id = a.id
             LEFT JOIN exams e ON e.id = a.exam_id
             LEFT JOIN scoring_profiles sp ON sp.id = COALESCE(r.scoring_profile_id, e.scoring_profile_id)
-            WHERE cm.class_id = ? AND cm.left_at IS NULL
+            WHERE pc.exam_id = ? AND pc.class_id = ?
             ORDER BY u.real_name, u.id
             """, (rs, rowNum) -> {
                 Map<String, Object> row = new LinkedHashMap<>();
@@ -99,27 +118,37 @@ public class ShsatAdminReportService {
                     nullableInt(rs, "ela_scaled_max_score"), nullableInt(rs, "math_scaled_max_score"),
                     rs.getString("scoring_mode"));
                 row.put("estimated", rs.getObject("is_estimated") == null ? false : rs.getBoolean("is_estimated"));
-                row.put("correctCount", correct);
-                row.put("wrongCount", wrong);
-                row.put("unansweredCount", Math.max(0, questionCount - answered));
+                row.put("correctCount", attemptId == null ? null : correct);
+                row.put("wrongCount", attemptId == null ? null : wrong);
+                row.put("unansweredCount", attemptId == null ? null : Math.max(0, questionCount - answered));
                 row.put("completionRate", percent(answered, questionCount));
                 row.put("accuracy", percent(correct, answered));
                 row.put("timeUsed", attemptId == null ? null : rs.getInt("time_used"));
                 row.put("startedAt", iso(rs.getTimestamp("started_at")));
                 row.put("submittedAt", iso(rs.getTimestamp("submitted_at")));
                 return row;
-            }, examId, classId);
+            }, examId, examId, classId);
     }
 
+    /** 管理员学生成绩历史只展示正式考试；练习记录留在独立的错题练习流程中。 */
     public List<Map<String, Object>> studentAttemptHistory(long studentId) {
+        return studentAttemptHistory(studentId, null);
+    }
+
+    public List<Map<String, Object>> studentAttemptHistory(long studentId, Long classId) {
         requireStudent(studentId);
-        return jdbcTemplate.query("""
+        String classFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ?)";
+        Object[] parameters = classId == null ? new Object[] { studentId } : new Object[] { studentId, classId };
+        return jdbcTemplate.query(("""
             SELECT a.id, a.exam_id, a.attempt_no, a.status, a.started_at, a.submitted_at,
                    e.title AS exam_title, p.id AS paper_id, p.title AS paper_name,
                    r.total_points, r.max_points, r.is_estimated,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
-                       + COALESCE(r.ungraded_count, 0) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id
+                    AND NOT (JSON_CONTAINS_PATH(aa.answer_json, 'one', '$.legacyAnswer')
+                      AND (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'NULL'
+                        OR (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'STRING'
+                          AND JSON_UNQUOTE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = '')))) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    (SELECT raw_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'ELA') AS ela_score,
@@ -135,9 +164,9 @@ public class ShsatAdminReportService {
             FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             LEFT JOIN attempt_results r ON r.attempt_id = a.id
             LEFT JOIN scoring_profiles sp ON sp.id = COALESCE(r.scoring_profile_id, e.scoring_profile_id)
-            WHERE a.student_user_id = ? AND p.exam_type_code = 'SHSAT'
+            WHERE a.student_user_id = ? AND p.exam_type_code = 'SHSAT' AND a.is_practice = FALSE %s
             ORDER BY a.started_at DESC, a.id DESC
-            """, (rs, rowNum) -> historyRow(rs), studentId);
+            """).formatted(classFilter), (rs, rowNum) -> historyRow(rs), parameters);
     }
 
     /** 学生工作区仅返回本人 SHSAT 已结束尝试，并按发布策略标注成绩与答案可见性。 */
@@ -153,8 +182,11 @@ public class ShsatAdminReportService {
                    (SELECT rb.scaled_max_score FROM attempt_result_breakdowns rb WHERE rb.attempt_id = a.id AND rb.breakdown_code = 'MATH') AS math_scaled_max_score,
                    sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
-                       + COALESCE(r.ungraded_count, 0) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id
+                    AND NOT (JSON_CONTAINS_PATH(aa.answer_json, 'one', '$.legacyAnswer')
+                      AND (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'NULL'
+                        OR (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'STRING'
+                          AND JSON_UNQUOTE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = '')))) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    (SELECT COUNT(*) FROM shsat_self_practice_cleared_questions cleared
@@ -217,8 +249,11 @@ public class ShsatAdminReportService {
                    u.real_name, r.total_points, r.max_points, r.is_estimated, r.scoring_profile_id,
                    sp.algorithm_code AS scoring_mode,
                    (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id) AS question_count,
-                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct IS NOT NULL)
-                       + COALESCE(r.ungraded_count, 0) AS answered_count,
+                   (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id
+                    AND NOT (JSON_CONTAINS_PATH(aa.answer_json, 'one', '$.legacyAnswer')
+                      AND (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'NULL'
+                        OR (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'STRING'
+                          AND JSON_UNQUOTE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = '')))) AS answered_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = TRUE) AS correct_count,
                    (SELECT COUNT(*) FROM attempt_answers aa WHERE aa.attempt_id = a.id AND aa.is_correct = FALSE) AS wrong_count,
                    COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(shsat_state.flow_json, '$.focusViolationCount')) AS UNSIGNED), 0)
@@ -264,10 +299,34 @@ public class ShsatAdminReportService {
                 row.put("submittedAt", local(rs.getTimestamp("submitted_at")));
                 return row;
             }, attemptId);
-        report.put("questions", attemptQuestions(attemptId));
+        List<Map<String, Object>> questions = attemptQuestions(attemptId);
+        long answered = questions.isEmpty()
+            ? ((Number) report.get("answeredCount")).longValue()
+            : questions.stream().filter(this::hasMeaningfulAnswer).count();
+        long questionCount = ((Number) report.get("questionCount")).longValue();
+        long correct = ((Number) report.get("correctCount")).longValue();
+        report.put("answeredCount", answered);
+        report.put("unansweredCount", Math.max(0, questionCount - answered));
+        report.put("completionRate", percent(answered, questionCount));
+        report.put("accuracy", percent(correct, answered));
+        report.put("questions", questions);
         Map<String, Object> sections = sectionScores(attemptId);
         report.putAll(sections);
         return report;
+    }
+
+    private boolean hasMeaningfulAnswer(Map<String, Object> question) {
+        String type = String.valueOf(question.get("questionType"));
+        Object rawAnswer = question.get("answerData");
+        if (rawAnswer == null || rawAnswer.toString().isBlank()) rawAnswer = question.get("selectedAnswer");
+        if (rawAnswer == null || rawAnswer.toString().isBlank()) return false;
+        JsonNode answer;
+        try {
+            answer = objectMapper.readTree(rawAnswer.toString());
+        } catch (Exception ignored) {
+            answer = objectMapper.getNodeFactory().textNode(rawAnswer.toString());
+        }
+        return questionGrader.hasMeaningfulAnswer(type, answer);
     }
 
     /** 学生报告复用管理报告的展示结构，但先验证本人归属并按可见策略清除答案与成绩字段。 */
@@ -307,23 +366,29 @@ public class ShsatAdminReportService {
         Map<String, Object> summary = jdbcTemplate.query("""
             SELECT COUNT(*) AS started,
                    SUM(a.status = 'IN_PROGRESS') AS in_progress,
-                   SUM(a.status = 'SUBMITTED') AS submitted,
+                   SUM(a.status IN ('SUBMITTED', 'COMPLETED', 'EXPIRED')) AS submitted,
+                   COUNT(DISTINCT CASE WHEN a.status = 'IN_PROGRESS' THEN a.student_user_id END) AS in_progress_students,
+                   COUNT(DISTINCT CASE WHEN a.status IN ('SUBMITTED', 'COMPLETED', 'EXPIRED')
+                       THEN a.student_user_id END) AS completed_students,
                    MAX(COALESCE(a.submitted_at, a.started_at)) AS last_seen
-            FROM attempts a WHERE a.exam_id = ? AND a.is_practice = FALSE
+            FROM attempts a
+            WHERE a.exam_id = ? AND a.is_practice = FALSE AND a.status NOT IN ('NOT_STARTED', 'CANCELLED')
             """, rs -> {
                 rs.next();
                 long started = rs.getLong("started");
                 long inProgress = rs.getLong("in_progress");
                 long submitted = rs.getLong("submitted");
+                long inProgressStudents = rs.getLong("in_progress_students");
+                long completedStudents = rs.getLong("completed_students");
                 Map<String, Object> result = new LinkedHashMap<>();
                 result.put("activeAttempts", activeAttempts(examId));
                 result.put("startedAttempts", started);
                 result.put("totalStudents", Math.max(exam.participantCount(), started));
                 result.put("inProgressAttempts", inProgress);
                 result.put("finishedAttempts", submitted);
-                result.put("inProgressStudents", inProgress);
-                result.put("completedStudents", submitted);
-                result.put("incompleteStudents", Math.max(0, Math.max(exam.participantCount(), started) - submitted));
+                result.put("inProgressStudents", inProgressStudents);
+                result.put("completedStudents", completedStudents);
+                result.put("incompleteStudents", Math.max(0, Math.max(exam.participantCount(), started) - completedStudents));
                 result.put("lastSeenAt", iso(rs.getTimestamp("last_seen")));
                 return result;
             }, examId);
@@ -441,19 +506,42 @@ public class ShsatAdminReportService {
         return jdbcTemplate.query("""
             SELECT q.id AS question_id, pi.display_number, q.question_type_code, q.stem, q.render_json,
                    q.answer_key_json, q.grading_json, pi.max_points, aa.answer_json, aa.is_correct,
-                   aa.awarded_points, aa.time_spent_seconds, qm.skill_tag_code, ps.section_code, ps.title AS section_title,
-                   ps.section_kind, parent.section_code AS parent_section_code, parent.title AS parent_section_title
+                   aa.awarded_points, aa.time_spent_seconds, imported_answer.source_metadata_json AS imported_answer_metadata,
+                   qm.skill_tag_code, ps.section_code, ps.title AS section_title,
+                   ps.section_kind, parent.section_code AS parent_section_code, parent.title AS parent_section_title,
+                   COALESCE(shsm.id, shpm.id) AS shsat_material_id,
+                   COALESCE(shsm.title, shpm.title) AS shsat_material_title,
+                   COALESCE(shsm.material_type, shpm.material_type) AS shsat_material_type,
+                   COALESCE(shsm.category, shpm.category) AS shsat_material_category,
+                   COALESCE(shsm.content, shpm.content) AS shsat_material_content,
+                   COALESCE(shsm.asset_key, shpm.asset_key) AS shsat_material_asset_key
             FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
             JOIN paper_sections ps ON ps.id = pi.section_id
             LEFT JOIN paper_sections parent ON parent.id = ps.parent_section_id
+            JOIN papers p ON p.id = ps.paper_id
             JOIN questions q ON q.id = pi.question_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
+            LEFT JOIN shsat_attempt_answer_details imported_answer
+                ON imported_answer.attempt_id = ai.attempt_id AND imported_answer.target_paper_item_id = ai.paper_item_id
             LEFT JOIN shsat_question_metadata qm ON qm.question_id = q.id
+            LEFT JOIN shsat_section_materials shsm
+                ON shsm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+                AND (shsm.section_id = ps.id OR shsm.section_id = parent.id)
+            LEFT JOIN shsat_paper_materials shpm ON shsm.id IS NULL
+                AND shpm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+                AND shpm.paper_id = p.id
             WHERE ai.attempt_id = ? ORDER BY ai.served_order
             """, (rs, rowNum) -> {
                 JsonNode render = readJson(rs.getString("render_json"));
                 JsonNode selected = readJson(rs.getString("answer_json"));
                 JsonNode answerKey = readJson(rs.getString("answer_key_json"));
+                JsonNode importedAnswer = readJson(rs.getString("imported_answer_metadata"));
+                String selectedAnswer = importedAnswer.path("selected_answer").asText(null);
+                if (selectedAnswer == null || selectedAnswer.isBlank()) selectedAnswer = selected == null ? null : selected.toString();
+                String correctAnswer = answerKey.path("answer").asText(null);
+                if (correctAnswer == null || correctAnswer.isBlank()) {
+                    correctAnswer = importedAnswer.path("correct_answer").asText(null);
+                }
                 Map<String, Object> question = new LinkedHashMap<>();
                 question.put("questionId", rs.getLong("question_id"));
                 question.put("questionNumber", rs.getObject("display_number"));
@@ -469,8 +557,8 @@ public class ShsatAdminReportService {
                 question.put("validationRules", render.path("validationRules").toString());
                 question.put("scoringRules", readJson(rs.getString("grading_json")));
                 question.put("correctAnswerData", answerKey);
-                question.put("correctAnswer", answerKey.path("answer").asText(null));
-                question.put("selectedAnswer", selected == null ? null : selected.path("value").asText(selected.asText(null)));
+                question.put("correctAnswer", correctAnswer);
+                question.put("selectedAnswer", selectedAnswer);
                 question.put("answerData", selected == null ? null : selected.toString());
                 question.put("correct", rs.getObject("is_correct") == null ? null : rs.getBoolean("is_correct"));
                 question.put("score", rs.getBigDecimal("awarded_points"));
@@ -478,6 +566,19 @@ public class ShsatAdminReportService {
                 question.put("timeSpent", nullableInt(rs, "time_spent_seconds"));
                 question.put("skillTagCode", rs.getString("skill_tag_code"));
                 JsonNode material = render.path("material");
+                if (rs.getObject("shsat_material_id") != null) {
+                    ObjectNode materialView = objectMapper.createObjectNode();
+                    materialView.put("title", rs.getString("shsat_material_title"));
+                    materialView.put("type", rs.getString("shsat_material_type"));
+                    materialView.put("category", rs.getString("shsat_material_category"));
+                    materialView.put("content", rs.getString("shsat_material_content"));
+                    materialView.put("assetUrl", shsatMaterialAssetUrl(rs.getString("shsat_material_asset_key")));
+                    ObjectNode enrichedRender = render != null && render.isObject()
+                        ? ((ObjectNode) render).deepCopy() : objectMapper.createObjectNode();
+                    enrichedRender.set("material", materialView);
+                    render = enrichedRender;
+                    material = materialView;
+                }
                 question.put("material", material.isMissingNode() ? null : material);
                 question.put("materialType", material.path("type").asText(null));
                 question.put("materialTitle", material.path("title").asText(null));
@@ -496,6 +597,7 @@ public class ShsatAdminReportService {
         row.put("examTitle", rs.getString("exam_title"));
         row.put("paperId", rs.getLong("paper_id"));
         row.put("paperName", rs.getString("paper_name"));
+        row.put("totalQuestions", questionCount);
         row.put("attemptNumber", rs.getInt("attempt_no"));
         row.put("status", reportStatus(rs.getString("status")));
         row.put("totalScore", rs.getBigDecimal("total_points"));
@@ -587,7 +689,14 @@ public class ShsatAdminReportService {
     private ExamMonitor requireShsatExam(long examId) {
         return jdbcTemplate.query("""
             SELECT e.id, p.id AS paper_id, e.title, e.opens_at, e.closes_at, e.duration_seconds,
-                   (SELECT COUNT(*) FROM exam_participants ep WHERE ep.exam_id = e.id AND ep.revoked_at IS NULL) AS participants
+                   (SELECT COUNT(*) FROM users u
+                    WHERE u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
+                      AND (e.target_scope = 'ALL_STUDENTS'
+                        OR EXISTS (SELECT 1 FROM exam_target_students ts
+                                   WHERE ts.exam_id = e.id AND ts.student_user_id = u.id)
+                        OR EXISTS (SELECT 1 FROM exam_target_classes tc
+                                   JOIN class_memberships cm ON cm.class_id = tc.class_id AND cm.left_at IS NULL
+                                   WHERE tc.exam_id = e.id AND cm.student_user_id = u.id))) AS participants
             FROM exams e JOIN papers p ON p.id = e.paper_id
             WHERE e.id = ? AND p.exam_type_code = 'SHSAT'
             """, rs -> {
@@ -634,6 +743,12 @@ public class ShsatAdminReportService {
         if (value == null || value.isBlank()) return objectMapper.nullNode();
         try { return objectMapper.readTree(value); }
         catch (Exception exception) { throw new IllegalStateException("Stored report JSON is invalid.", exception); }
+    }
+
+    private String shsatMaterialAssetUrl(String assetKey) {
+        if (assetKey == null || assetKey.isBlank()) return null;
+        if (assetKey.startsWith("http://") || assetKey.startsWith("https://") || assetKey.startsWith("/")) return assetKey;
+        return "/uploads/paper-materials/" + assetKey;
     }
 
     private Long nullableLong(ResultSet rs, String column) throws SQLException {

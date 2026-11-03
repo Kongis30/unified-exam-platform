@@ -1,14 +1,15 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
+import CreatePaperDialog from '@/components/admin/CreatePaperDialog.vue';
+import ExamReleaseDialog from '@/components/admin/ExamReleaseDialog.vue';
 import AdminTabs from '@/components/admin/AdminTabs.vue';
 import ResponsiveActionGroup from '@/components/admin/ResponsiveActionGroup.vue';
 import AdminTabPanels from '@/components/admin/AdminTabPanels.vue';
 import AdminSection from '@/components/admin/AdminSection.vue';
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import AdminExamCard from '@/components/admin/AdminExamCard.vue';
 import AdminDataTable from '@/components/admin/AdminDataTable.vue';
 import AdminActionMenu from '@/components/admin/AdminActionMenu.vue';
@@ -16,6 +17,7 @@ import RichSelect from '@shsat/components/RichSelect.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 import { studentApi } from '@shsat/admin/services/studentApi';
 import { getUserRole } from '@shsat/admin/authBridge';
+import { listExams } from '@/api/platform';
 
 const router = useRouter();
 const route = useRoute();
@@ -103,6 +105,7 @@ const showMoveModal = ref(false);
 const showPaperCreateModal = ref(false);
 const showPaperEditModal = ref(false);
 const showExamReleaseModal = ref(false);
+const pendingExamId = ref(null);
 const showPaperDetailModal = ref(false);
 const showClassModal = ref(false);
 // The class modal is reused for create and edit; an empty editingClassId means create mode.
@@ -205,12 +208,14 @@ const paperFilters = reactive({
 const hasAppliedPaperFilter = ref(false);
 
 const examReleaseFilters = reactive({
-  keyword: '',
-  published: '',
-  timeStatus: '',
-  targetType: '',
-  page: 1,
-  pageSize: 10,
+  keyword: typeof route.query.releaseKeyword === 'string' ? route.query.releaseKeyword : '',
+  published: typeof route.query.releasePublished === 'string' ? route.query.releasePublished : '',
+  timeStatus: typeof route.query.releaseTimeStatus === 'string' ? route.query.releaseTimeStatus : '',
+  targetType: typeof route.query.releaseTargetType === 'string' ? route.query.releaseTargetType : '',
+  page: Number.isInteger(Number(route.query.releasePage)) && Number(route.query.releasePage) > 0
+    ? Number(route.query.releasePage) : 1,
+  pageSize: Number.isInteger(Number(route.query.releasePageSize)) && Number(route.query.releasePageSize) > 0
+    ? Number(route.query.releasePageSize) : 10,
 });
 
 const historicalExamFilters = reactive({
@@ -251,18 +256,20 @@ const examForm = reactive({
   targetType: 'ALL_STUDENTS',
   targetIdsText: '',
   targetClassIds: [],
+  targetStudentIds: [],
+  targetStudentClasses: [],
   attemptLimit: 1,
   autoSubmit: true,
   allowReview: true,
 });
-const examStartTimeInput = ref(null);
-const examEndTimeInput = ref(null);
 const wrongAnswerTaskStartAtInput = ref(null);
 const wrongAnswerTaskEndAtInput = ref(null);
 
-const examClassFilters = reactive({
-  keyword: '',
-});
+const examReleaseFields = { paper: 'paperId', title: 'examTitle', description: 'examDescription', start: 'startTime', end: 'endTime', duration: 'duration', scope: 'targetType' };
+const sharedExamPaperGroups = computed(() => examPaperGroups.value.map((group) => ({
+  label: group.groupName,
+  papers: group.papers.map((paper) => ({ id: String(paper.paperId), title: paper.paperName })),
+})));
 
 const classForm = reactive({
   className: '',
@@ -281,6 +288,7 @@ const reportForm = reactive({
 
 const classFilters = reactive({
   keyword: '',
+  status: 'ACTIVE',
 });
 
 const scoreFilters = reactive({
@@ -291,35 +299,6 @@ const scoreFilters = reactive({
 const classExamFilters = reactive({
   page: 1,
   pageSize: 10,
-});
-
-const selectedPaper = computed(() => {
-  return papers.value.find((paper) => getId(paper, 'paperId') === Number(examForm.paperId));
-});
-
-const selectedExamTargetClasses = computed(() => {
-  const selectedIds = new Set(examForm.targetClassIds.map((item) => String(item)));
-
-  return assignableExamClasses.value.filter((item) => selectedIds.has(String(item.classId)));
-});
-
-const assignableExamClasses = computed(() => classes.value.filter((item) => item.isActive));
-
-const filteredExamTargetClasses = computed(() => {
-  const keyword = examClassFilters.keyword.trim().toLowerCase();
-
-  if (!keyword) {
-    return assignableExamClasses.value;
-  }
-
-  return assignableExamClasses.value.filter((item) => {
-    return [
-      item.className,
-      item.teacherName,
-      item.gradeLevel,
-      item.academicYear,
-    ].some((value) => String(value || '').toLowerCase().includes(keyword));
-  });
 });
 
 const selectedEditPaperQuestionCount = computed(() => getActualPaperQuestionCount(selectedEditPaper.value));
@@ -348,24 +327,23 @@ const allUnassignedStudentsSelected = computed(() => (
 
 const visibleClasses = computed(() => {
   const keyword = classFilters.keyword.trim().toLowerCase();
-
-  if (!keyword) {
-    return classes.value;
-  }
-
   return classes.value.filter((item) => {
-    return [
+    const isActive = getClassActiveState(item);
+    const statusMatches = classFilters.status === 'ALL'
+      || (classFilters.status === 'ACTIVE' ? isActive : !isActive);
+    const keywordMatches = !keyword || [
       item.className,
       item.teacherName,
       item.teacherEmail,
       item.gradeLevel,
       item.academicYear,
     ].some((value) => String(value || '').toLowerCase().includes(keyword));
+    return statusMatches && keywordMatches;
   });
 });
 
 const canReorderClasses = computed(() => {
-  return !classFilters.keyword.trim() && visibleClasses.value.length > 1;
+  return !classFilters.keyword.trim() && classFilters.status === 'ALL' && visibleClasses.value.length > 1;
 });
 
 const relatedClassExams = computed(() => {
@@ -484,10 +462,10 @@ function isReviewAssignmentEnded(task) {
   return status === 'CLOSED' || status === 'ENDED' || (endAt > 0 && endAt <= Date.now());
 }
 
-/** 首页复习任务卡片：只展示仍可开始或继续的错题复习任务。 */
+/** 首页保留未归档的复习任务；截止或手动结束后仍可查看学生进度。 */
 const dashboardReviewAssignments = computed(() => {
   return wrongAnswerTasks.value
-    .filter((task) => !isReviewAssignmentEnded(task))
+    .filter((task) => String(task.status || '').toUpperCase() !== 'CLOSED')
     .sort((left, right) => getTimeValue(right.createdAt) - getTimeValue(left.createdAt));
 });
 
@@ -699,6 +677,12 @@ const groupedPapers = computed(() => {
     }
 
     groups.get(key).papers.push(paper);
+  });
+
+  groups.forEach((group) => {
+    group.papers.sort((left, right) => (
+      String(left.paperName || '').localeCompare(String(right.paperName || ''), undefined, { sensitivity: 'base', numeric: true })
+    ));
   });
 
   return Array.from(groups.values()).sort((a, b) => {
@@ -1121,13 +1105,16 @@ function getExamReleaseIdentity(exam) {
   ].filter(Boolean).join(' · ');
 
   return {
-    title: titleIsNumeric ? (paperName || 'Exam release') : (releaseTitle || paperName || 'Exam release'),
+    title: titleIsNumeric ? (paperName || releaseTitle || 'Exam release') : (releaseTitle || paperName || 'Exam release'),
     detail,
   };
 }
 
 function getExamReleaseActions(exam, historical = false) {
   const actions = [];
+  if (exam.status === 'DRAFT' && (!isTeacherPortal.value || exam.targetType !== 'ALL_STUDENTS')) {
+    actions.push({ label: 'Edit draft', onSelect: () => openExamDraft(exam) });
+  }
   if (!historical && exam.status === 'DRAFT') {
     actions.push({
       label: isPublishStructureCheckLoading(exam) ? 'Checking...' : 'Publish',
@@ -1224,6 +1211,22 @@ function goExamReleasePage(page) {
   examReleaseFilters.page = Math.min(Math.max(1, page), examReleaseTotalPages.value);
 }
 
+// 将发布筛选同步到当前地址，确保返回后调整筛选再刷新仍对应屏幕状态。
+function syncExamReleaseFiltersToRoute() {
+  return router.replace({
+    query: {
+      ...route.query,
+      tab: 'exams',
+      releaseKeyword: examReleaseFilters.keyword || undefined,
+      releasePublished: examReleaseFilters.published || undefined,
+      releaseTimeStatus: examReleaseFilters.timeStatus || undefined,
+      releaseTargetType: examReleaseFilters.targetType || undefined,
+      releasePage: examReleaseFilters.page > 1 ? String(examReleaseFilters.page) : undefined,
+      releasePageSize: examReleaseFilters.pageSize !== 10 ? String(examReleaseFilters.pageSize) : undefined,
+    },
+  });
+}
+
 function resetHistoricalExamPage() {
   historicalExamFilters.page = 1;
 }
@@ -1247,13 +1250,30 @@ function clearObject(target, values) {
 }
 
 function setNowWindow() {
-  const start = new Date();
-  start.setMinutes(start.getMinutes() - start.getTimezoneOffset() + 10);
-  const end = new Date(start);
-  end.setHours(end.getHours() + 2);
+  const start = nextSafeLocalDateTime(new Date());
+  const end = nextSafeLocalDateTime(new Date(new Date(start).getTime() + 2 * 60 * 60_000));
 
-  examForm.startTime = start.toISOString().slice(0, 16);
-  examForm.endTime = end.toISOString().slice(0, 16);
+  examForm.startTime = start;
+  examForm.endTime = end;
+}
+
+function toLocalDateTimeInput(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function nextSafeLocalDateTime(date) {
+  const candidate = new Date(date);
+  candidate.setSeconds(0, 0);
+
+  for (let attempt = 0; attempt < 48; attempt += 1) {
+    const value = toLocalDateTimeInput(candidate);
+    if (isValidLocalDateTime(value) && !isAmbiguousLocalDateTime(value)) return value;
+    candidate.setMinutes(candidate.getMinutes() + 15);
+  }
+
+  return toLocalDateTimeInput(candidate);
 }
 
 function openDateTimePicker(inputRef) {
@@ -1578,7 +1598,9 @@ function buildExamPayload() {
     duration: Number(examForm.duration),
     targetType: examForm.targetType,
     target_ids: targetIds,
-    attemptLimit: 1,
+    studentUserIds: examForm.targetType === 'SPECIFIC_CLASSES' ? examForm.targetStudentIds.map(Number) : [],
+    studentTargets: examForm.targetType === 'SPECIFIC_CLASSES' ? examForm.targetStudentClasses : [],
+    attemptLimit: examForm.attemptLimit || 1,
     autoSubmit: examForm.autoSubmit,
     allowReview: examForm.allowReview,
   };
@@ -1637,14 +1659,14 @@ function validateExamPayload(payload) {
     return 'Duration must be greater than 0.';
   }
 
-  if (payload.targetType === 'SPECIFIC_CLASSES' && payload.target_ids.length === 0) {
-    return 'Select at least one class for this release.';
+  if (payload.targetType === 'SPECIFIC_CLASSES' && payload.target_ids.length === 0 && payload.studentUserIds.length === 0) {
+    return 'Select at least one class or student for this release.';
   }
 
   return '';
 }
 
-async function loadPapers() {
+async function loadPapers(force = false) {
   loading.papers = true;
   errors.papers = '';
   hasAppliedPaperFilter.value = Boolean(
@@ -1654,7 +1676,7 @@ async function loadPapers() {
   try {
     const [groupResponse, paperResponse] = await Promise.all([
       adminApi.getPaperGroups(),
-      adminApi.getPapers(buildPaperQuery()),
+      adminApi.getPapers(buildPaperQuery(), { force: force === true }),
     ]);
     paperGroups.value = unwrapListResponse(groupResponse);
     papers.value = unwrapListResponse(paperResponse);
@@ -1664,18 +1686,17 @@ async function loadPapers() {
     syncExpandedFolders();
   } catch (error) {
     errors.papers = error.message || 'Failed to load papers';
-    papers.value = [];
   } finally {
     loading.papers = false;
   }
 }
 
-async function loadAdminExams() {
+async function loadAdminExams(examRows = null) {
   loading.adminExams = true;
   errors.adminExams = '';
 
   try {
-    adminExams.value = unwrapListResponse(await studentApi.getExams());
+    adminExams.value = unwrapListResponse(await studentApi.getExams(examRows));
   } catch (error) {
     errors.adminExams = error.message || 'Failed to load exams for participation';
     adminExams.value = [];
@@ -2092,12 +2113,12 @@ function getPaperPartQuestionCount(partId) {
   return (paperDetail.value?.questions || []).filter((question) => String(question.partId) === String(partId)).length;
 }
 
-async function loadExams() {
+async function loadExams(examRows = null) {
   loading.exams = true;
   errors.exams = '';
 
   try {
-    exams.value = unwrapListResponse(await adminApi.getExams());
+    exams.value = unwrapListResponse(await adminApi.getExams({}, examRows));
   } catch (error) {
     errors.exams = error.message || 'Failed to load exams';
     exams.value = [];
@@ -2258,21 +2279,27 @@ async function createExamRelease(payload) {
   loading.submittingExam = true;
 
   try {
-    unwrapResponse(await adminApi.createExam(payload));
-    notices.examForm = 'Exam release created. You can publish the same paper multiple times.';
+    const wasEditing = Boolean(pendingExamId.value);
+    unwrapResponse(await (pendingExamId.value
+      ? adminApi.updateExam(pendingExamId.value, payload)
+      : adminApi.createExam(payload)));
+    pendingExamId.value = null;
+    notices.examForm = wasEditing ? 'Exam draft updated.' : 'Exam release created. You can publish the same paper multiple times.';
     clearObject(examForm, {
       ...examForm,
       examTitle: '',
       examDescription: '',
       targetIdsText: '',
       targetClassIds: [],
+      targetStudentIds: [],
+      targetStudentClasses: [],
       attemptLimit: 1,
     });
-    examClassFilters.keyword = '';
     showExamReleaseModal.value = false;
     closeCreateExamStructureConfirm({ force: true });
     await Promise.all([loadExams(), loadAdminExams()]);
   } catch (error) {
+    if (error.draftExamId) pendingExamId.value = error.draftExamId;
     errors.examForm = error.message || 'Failed to create exam';
     closeCreateExamStructureConfirm({ force: true });
   } finally {
@@ -2336,15 +2363,51 @@ async function confirmCreateExamStructureRisk() {
   await createExamRelease(payload);
 }
 
-function openExamReleaseModal() {
+async function openExamReleaseModal() {
+  await ensureAdminTab('exams');
+  if (errors.papers || errors.classes) {
+    errors.exams = errors.papers || errors.classes;
+    return;
+  }
   errors.examForm = '';
   notices.examForm = '';
-  examClassFilters.keyword = '';
-  if (isTeacherPortal.value) {
-    examForm.targetType = 'SPECIFIC_CLASSES';
-    examForm.targetClassIds = [];
-  }
+  pendingExamId.value = null;
+  setNowWindow();
+  examForm.targetType = 'SPECIFIC_CLASSES';
+  examForm.targetClassIds = [];
+  examForm.targetStudentIds = [];
+  examForm.targetStudentClasses = [];
   showExamReleaseModal.value = true;
+}
+
+// 草稿重新载入原始班级和个人目标，避免修改时覆盖已有的派发对象。
+async function openExamDraft(exam) {
+  errors.exams = '';
+  try {
+    await ensureAdminTab('exams');
+    if (errors.papers || errors.classes) throw new Error(errors.papers || errors.classes);
+    const detail = await adminApi.getExam(exam.examId);
+    Object.assign(examForm, {
+      paperId: String(detail.paperId),
+      examTitle: detail.examTitle || '',
+      examDescription: detail.description || '',
+      startTime: toLocalDateTimeInput(new Date(detail.startTime)),
+      endTime: toLocalDateTimeInput(new Date(detail.endTime)),
+      duration: Math.round((detail.durationSeconds || 0) / 60),
+      targetType: detail.targetType === 'ALL_STUDENTS' ? 'ALL_STUDENTS' : 'SPECIFIC_CLASSES',
+      targetClassIds: detail.target_ids || [],
+      targetStudentIds: detail.studentUserIds || [],
+      targetStudentClasses: detail.studentTargets || [],
+      attemptLimit: detail.attemptLimit || 1,
+      autoSubmit: detail.autoSubmit,
+      allowReview: detail.allowReview,
+    });
+    pendingExamId.value = detail.examId;
+    errors.examForm = '';
+    showExamReleaseModal.value = true;
+  } catch (error) {
+    errors.exams = error.message || 'Unable to open this draft.';
+  }
 }
 
 function closeExamReleaseModal() {
@@ -2352,7 +2415,6 @@ function closeExamReleaseModal() {
     return;
   }
   errors.examForm = '';
-  examClassFilters.keyword = '';
   closeCreateExamStructureConfirm();
   showExamReleaseModal.value = false;
 }
@@ -2574,7 +2636,6 @@ async function loadClasses() {
     }
   } catch (error) {
     errors.classes = error.message || 'Failed to load classes';
-    classes.value = [];
   } finally {
     loading.classes = false;
   }
@@ -2679,9 +2740,10 @@ async function submitBulkAssign() {
   } else {
     showBulkAssignModal.value = false;
     selectedUnassignedStudentIds.value = [];
+    const assignedCount = selectedStudents.length;
     showActionToast({
       title: 'Students Assigned',
-      message: `${selectedStudents.length} students were added to ${assignableClasses.value.find((item) => String(item.classId) === String(classId))?.className || 'the selected class'}.`,
+      message: `${assignedCount} ${assignedCount === 1 ? 'student was' : 'students were'} added to ${assignableClasses.value.find((item) => String(item.classId) === String(classId))?.className || 'the selected class'}.`,
       variant: 'success',
     });
   }
@@ -2783,9 +2845,6 @@ function selectAdminTab(tabKey) {
 
   if (tabKey === 'classes') {
     returnToClassList();
-  }
-  if (tabKey === 'wrong-answer-tasks') {
-    loadWrongAnswerTasks();
   }
 }
 
@@ -2999,9 +3058,25 @@ function openExamMonitor(exam) {
   if (!canAccessExamMonitor.value || !examId) {
     return;
   }
+  // 监考页的 Back 使用此地址恢复考试发布标签及当前筛选/滚动位置。
+  const returnTo = router.resolve({
+    name: 'shsat-admin',
+    query: {
+      tab: 'exams',
+      releaseKeyword: examReleaseFilters.keyword || undefined,
+      releasePublished: examReleaseFilters.published || undefined,
+      releaseTimeStatus: examReleaseFilters.timeStatus || undefined,
+      releaseTargetType: examReleaseFilters.targetType || undefined,
+      releasePage: examReleaseFilters.page > 1 ? String(examReleaseFilters.page) : undefined,
+      releasePageSize: examReleaseFilters.pageSize !== 10 ? String(examReleaseFilters.pageSize) : undefined,
+      releaseScrollY: window.scrollY ? String(Math.round(window.scrollY)) : undefined,
+    },
+  }).fullPath;
+
   router.push({
     name: 'admin-exam-monitor',
     params: { examId: String(examId) },
+    query: { returnTo },
   });
 }
 
@@ -3009,18 +3084,63 @@ async function refreshAdminData() {
   loading.initial = true;
 
   try {
-    if (isTeacherPortal.value) {
-      await Promise.all([loadAdminExams(), loadPapers(), loadExams(), loadClasses(), loadWrongAnswerTasks()]);
-    } else {
-      await Promise.all([loadAdminExams(), loadPapers(), loadExams(), loadClasses(), loadUnassignedStudents(), loadWrongAnswerTasks()]);
-    }
-    await loadStudents();
+    // 学生列表只依赖班级列表，无需等待试卷、考试和复习任务全部完成。
+    const classData = loadClasses().then(() => loadStudents());
+    // 首页考试卡片和发布列表采用不同的展示结构，但来自同一个考试列表。
+    const examRows = listExams('SHSAT');
+    const requests = [loadAdminExams(examRows), loadPapers(), loadExams(examRows), classData, loadWrongAnswerTasks()];
+    if (!isTeacherPortal.value) requests.push(loadUnassignedStudents());
+    await Promise.all(requests);
   } catch (error) {
     errors.initial = error.message || 'Failed to initialize the admin workspace';
   } finally {
     loading.initial = false;
   }
 }
+
+// 首页卡片始终加载考试和复习任务，其余数据在对应 tab 首次打开时加载。
+const loadedAdminData = new Set();
+const pendingAdminData = new Map();
+async function ensureAdminData(key, load, failed) {
+  if (loadedAdminData.has(key)) return;
+  if (pendingAdminData.has(key)) return pendingAdminData.get(key);
+  const request = Promise.resolve().then(load).then(() => {
+    if (!failed()) loadedAdminData.add(key);
+  }).finally(() => pendingAdminData.delete(key));
+  pendingAdminData.set(key, request);
+  return request;
+}
+
+function ensureClasses() {
+  return ensureAdminData('classes', loadClasses, () => Boolean(errors.classes));
+}
+
+async function ensureAdminTab(tab) {
+  const requests = [];
+  if (tab === 'exams' || (tab === 'papers' && !isTeacherPortal.value)) {
+    requests.push(ensureAdminData('papers', loadPapers, () => Boolean(errors.papers)));
+  }
+  if (['classes', 'exams', 'wrong-answer-tasks'].includes(tab)) requests.push(ensureClasses());
+  if (tab === 'classes') {
+    requests.push(ensureClasses().then(() => ensureAdminData('students', loadStudents, () => Boolean(errors.students))));
+    if (!isTeacherPortal.value) requests.push(ensureAdminData('unassigned', loadUnassignedStudents, () => Boolean(errors.unassignedStudents)));
+  }
+  await Promise.all(requests);
+}
+
+async function loadInitialAdminData() {
+  loading.initial = true;
+  try {
+    const examRows = listExams('SHSAT');
+    await Promise.all([loadAdminExams(examRows), loadExams(examRows), loadWrongAnswerTasks(), ensureAdminTab(activeTab.value)]);
+  } catch (error) {
+    errors.initial = error.message || 'Failed to initialize the admin workspace';
+  } finally {
+    loading.initial = false;
+  }
+}
+
+watch(activeTab, (tab) => { ensureAdminTab(tab); });
 
 watch(
   () => [
@@ -3031,6 +3151,22 @@ watch(
     examReleaseFilters.pageSize,
   ],
   resetExamReleasePage,
+);
+
+watch(
+  () => [
+    examReleaseFilters.keyword,
+    examReleaseFilters.published,
+    examReleaseFilters.timeStatus,
+    examReleaseFilters.targetType,
+    examReleaseFilters.page,
+    examReleaseFilters.pageSize,
+  ],
+  () => {
+    if (activeTab.value === 'exams') {
+      syncExamReleaseFiltersToRoute();
+    }
+  },
 );
 
 watch(examReleaseTotalPages, (totalPages) => {
@@ -3067,8 +3203,12 @@ watch(classExamTotalPages, (totalPages) => {
 
 onMounted(async () => {
   document.addEventListener('click', closePaperActionMenu);
-  setNowWindow();
-  await refreshAdminData();
+  await loadInitialAdminData();
+  const releaseScrollY = Number(route.query.releaseScrollY);
+  if (activeTab.value === 'exams' && Number.isFinite(releaseScrollY) && releaseScrollY > 0) {
+    await nextTick();
+    window.requestAnimationFrame(() => window.scrollTo(0, releaseScrollY));
+  }
 });
 
 onBeforeUnmount(() => {
@@ -3080,7 +3220,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="page-shell admin-home">
         <Teleport to="body">
           <div
@@ -3101,42 +3241,44 @@ onBeforeUnmount(() => {
         <p v-if="errors.initial" class="error-text">{{ errors.initial }}</p>
 
         <AppCard class="available-exams-card" title="Available Exams" subtitle="Start a practice attempt for a published exam from this dashboard.">
-        <button
-          class="collapse-arrow-button"
-          type="button"
-          :aria-expanded="!availableExamsCollapsed"
-          :title="availableExamsCollapsed ? 'Expand available exams' : 'Collapse available exams'"
-          @click="toggleAvailableExams"
-        >
-          <svg
-            class="collapse-arrow-button__icon"
-            :class="{ 'collapse-arrow-button__icon--collapsed': availableExamsCollapsed }"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </button>
-        <button
-          class="admin-refresh-button"
-          :class="{ 'admin-refresh-button--loading': loading.initial }"
-          type="button"
-          :disabled="loading.initial"
-          aria-label="Refresh admin data"
-          title="Refresh admin data"
-          @click="refreshAdminData"
-        >
-          <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
+          <template #actions>
+            <button
+              class="admin-refresh-button"
+              :class="{ 'admin-refresh-button--loading': loading.initial }"
+              type="button"
+              :disabled="loading.initial"
+              aria-label="Refresh admin data"
+              title="Refresh admin data"
+              @click="refreshAdminData"
+            >
+              <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              class="collapse-arrow-button"
+              type="button"
+              :aria-expanded="!availableExamsCollapsed"
+              :title="availableExamsCollapsed ? 'Expand available exams' : 'Collapse available exams'"
+              @click="toggleAvailableExams"
+            >
+              <svg
+                class="collapse-arrow-button__icon"
+                :class="{ 'collapse-arrow-button__icon--collapsed': availableExamsCollapsed }"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </template>
         <template v-if="!availableExamsCollapsed">
           <div v-if="loading.adminExams" class="admin-state">Loading exams...</div>
           <div v-else-if="errors.adminExams" class="admin-state admin-state--error">{{ errors.adminExams }}</div>
@@ -3166,35 +3308,37 @@ onBeforeUnmount(() => {
       </AppCard>
 
       <AppCard class="dashboard-review-card" title="Assigned Review" subtitle="Wrong-answer review assignments you published to your classes. Open one to track student progress.">
-        <button
-          class="collapse-arrow-button"
-          type="button"
-          :aria-expanded="!assignedReviewCollapsed"
-          :title="assignedReviewCollapsed ? 'Expand assigned review' : 'Collapse assigned review'"
-          @click="toggleAssignedReview"
-        >
-          <svg
-            class="collapse-arrow-button__icon"
-            :class="{ 'collapse-arrow-button__icon--collapsed': assignedReviewCollapsed }"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
+        <template #actions>
+          <button
+            class="admin-refresh-button dashboard-review-refresh-button"
+            :class="{ 'admin-refresh-button--loading': wrongAnswerTaskLoading }"
+            type="button"
+            :disabled="wrongAnswerTaskLoading"
+            aria-label="Refresh review assignments"
+            title="Refresh review assignments"
+            @click="loadWrongAnswerTasks"
           >
-            <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </button>
-        <button
-          class="admin-refresh-button dashboard-review-refresh-button"
-          :class="{ 'admin-refresh-button--loading': wrongAnswerTaskLoading }"
-          type="button"
-          :disabled="wrongAnswerTaskLoading"
-          aria-label="Refresh review assignments"
-          title="Refresh review assignments"
-          @click="loadWrongAnswerTasks"
-        >
-          <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </button>
+            <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <button
+            class="collapse-arrow-button"
+            type="button"
+            :aria-expanded="!assignedReviewCollapsed"
+            :title="assignedReviewCollapsed ? 'Expand assigned review' : 'Collapse assigned review'"
+            @click="toggleAssignedReview"
+          >
+            <svg
+              class="collapse-arrow-button__icon"
+              :class="{ 'collapse-arrow-button__icon--collapsed': assignedReviewCollapsed }"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </template>
         <template v-if="!assignedReviewCollapsed">
         <div v-if="wrongAnswerTaskLoading" class="admin-state">Loading review assignments...</div>
         <div v-else-if="wrongAnswerTaskError" class="admin-state admin-state--error">
@@ -3277,7 +3421,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="admin-toolbar__actions">
-              <AppButton variant="secondary" :disabled="loading.papers" @click="loadPapers">
+              <AppButton variant="secondary" :disabled="loading.papers" @click="loadPapers(true)">
                 {{ loading.papers ? 'Searching...' : 'Search' }}
               </AppButton>
               <AppButton variant="secondary" @click="openGroupModal()">Create Folder</AppButton>
@@ -3287,8 +3431,9 @@ onBeforeUnmount(() => {
 
           <p v-if="notices.groupForm" class="success-text admin-toolbar__message">{{ notices.groupForm }}</p>
 
-          <div v-if="loading.papers" class="admin-state">Loading papers...</div>
-          <div v-else-if="errors.papers" class="admin-state admin-state--error">{{ errors.papers }}</div>
+          <div v-if="errors.papers && groupedPapers.length" class="admin-state admin-state--error">{{ errors.papers }}</div>
+          <div v-if="loading.papers && !groupedPapers.length" class="admin-state">Loading papers...</div>
+          <div v-else-if="errors.papers && !groupedPapers.length" class="admin-state admin-state--error">{{ errors.papers }}</div>
           <div v-else-if="hasAppliedPaperFilter && papers.length === 0 && !selectedEmptyPaperGroup" class="admin-state">
             No papers found. Try changing or clearing the filters.
           </div>
@@ -3348,7 +3493,8 @@ onBeforeUnmount(() => {
                   No papers in this folder yet.
                 </div>
 
-                <div v-if="expandedFolders[group.key] && group.papers.length > 0" class="table-wrap">
+                <div v-if="expandedFolders[group.key] && group.papers.length > 0" class="table-wrap paper-table-wrap">
+                  <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
                   <AdminDataTable class="paper-table">
                     <thead>
                         <tr>
@@ -3675,72 +3821,20 @@ onBeforeUnmount(() => {
           </div>
         </Teleport>
 
-        <Teleport to="body">
-          <div v-if="showPaperCreateModal" class="modal-backdrop" @click.self="closePaperCreateModal">
-            <form class="modal-card modal-card--wide modal-card--paper-create" novalidate @submit.prevent="submitPaperCreate">
-              <header class="modal-card__header">
-                <div>
-                  <h3>Create Paper</h3>
-                  <p>Create an SHSAT paper with the official ELA and Math structure.</p>
-                </div>
-                <button
-                  class="modal-card__close"
-                  type="button"
-                  aria-label="Close create paper dialog"
-                  @click="closePaperCreateModal"
-                >
-                  &times;
-                </button>
-              </header>
-
-              <div class="paper-structure-note">
-                <strong>Official structure included</strong>
-                <span>The paper editor will open with ELA, Math, and official question types ready.</span>
-              </div>
-
-              <div class="modal-form-grid">
-                <label class="form-field form-field--wide">
-                  <span class="form-label">Paper Name</span>
-                  <input v-model="paperEditForm.paperName" class="form-input" placeholder="e.g. SHSAT Practice Test 1" @input="errors.papers = ''" />
-                </label>
-
-                <label class="form-field form-field--wide">
-                  <span class="form-label">Description</span>
-                  <textarea v-model="paperEditForm.paperDescription" class="form-input" rows="2" placeholder="Optional note shown in paper lists"></textarea>
-                </label>
-
-                <label class="form-field">
-                  <span class="form-label">Folder</span>
-                  <select v-model="paperEditForm.paperGroupId" class="form-input">
-                    <option value="">Default Folder</option>
-                    <option
-                      v-for="group in selectablePaperGroups"
-                      :key="group.paperGroupId"
-                      :value="group.paperGroupId"
-                    >
-                      {{ group.groupName }}
-                    </option>
-                  </select>
-                </label>
-
-                <label class="form-field">
-                  <span class="form-label">Duration (minutes)</span>
-                  <input v-model.number="paperEditForm.defaultDuration" class="form-input" type="number" min="1" />
-                </label>
-              </div>
-
-              <p class="form-hint">New papers are saved as offline drafts.</p>
-              <p v-if="errors.papers" class="error-text">{{ errors.papers }}</p>
-
-              <footer class="modal-card__footer">
-                <AppButton variant="secondary" type="button" @click="closePaperCreateModal">Cancel</AppButton>
-                <AppButton type="submit" :disabled="loading.papers">
-                  {{ loading.papers ? 'Creating...' : 'Create and Edit' }}
-                </AppButton>
-              </footer>
-            </form>
-          </div>
-        </Teleport>
+        <CreatePaperDialog
+          v-if="showPaperCreateModal"
+          v-model:name="paperEditForm.paperName"
+          v-model:description="paperEditForm.paperDescription"
+          v-model:group-id="paperEditForm.paperGroupId"
+          v-model:duration="paperEditForm.defaultDuration"
+          exam-type="SHSAT"
+          :groups="selectablePaperGroups.map((group) => ({ id: group.paperGroupId, name: group.groupName }))"
+          :busy="loading.papers"
+          :error="errors.papers"
+          @close="closePaperCreateModal"
+          @clear-error="errors.papers = ''"
+          @submit="submitPaperCreate"
+        />
 
         <Teleport to="body">
           <div v-if="showPaperEditModal" class="modal-backdrop" @click.self="closePaperEditModal">
@@ -3827,7 +3921,7 @@ onBeforeUnmount(() => {
                 :disabled="loading.exams"
                 aria-label="Refresh releases"
                 title="Refresh releases"
-                @click="loadExams"
+                @click="loadExams()"
               >
                 <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
                   <path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" />
@@ -3883,6 +3977,7 @@ onBeforeUnmount(() => {
           <div v-else-if="exams.length === 0" class="admin-state">No exam releases yet.</div>
           <div v-else-if="filteredExamReleases.length === 0" class="admin-state">No active or upcoming releases match the current filters.</div>
           <div v-else class="table-wrap exam-release-table-wrap">
+            <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
             <AdminDataTable class="exam-release-table">
               <colgroup>
                 <col class="exam-release-table__title-column" />
@@ -3988,6 +4083,7 @@ onBeforeUnmount(() => {
           <div v-if="loading.exams" class="admin-state">Loading historical exams...</div>
           <div v-else-if="historicalExamReleases.length === 0" class="admin-state">No ended exams yet.</div>
           <div v-else class="table-wrap exam-release-table-wrap">
+            <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
             <AdminDataTable class="exam-release-table exam-release-table--history">
               <colgroup>
                 <col class="exam-release-table__title-column" />
@@ -4248,222 +4344,39 @@ onBeforeUnmount(() => {
           </div>
         </Teleport>
 
-        <Teleport to="body">
-          <div v-if="showExamReleaseModal" class="modal-backdrop" @click.self="closeExamReleaseModal">
-            <form class="modal-card modal-card--wide exam-release-modal" novalidate @submit.prevent="submitExam">
-              <header class="modal-card__header">
-                <div>
-                  <h3>Create Exam</h3>
-                  <p>Configure the paper, access window, attempt time limit, and audience.</p>
-                </div>
-                <button
-                  class="modal-card__close"
-                  type="button"
-                  aria-label="Close exam release dialog"
-                  :disabled="loading.submittingExam || loading.checkingExamPaperStats"
-                  @click="closeExamReleaseModal"
-                >
-                  &times;
-                </button>
-              </header>
-
-              <p v-if="errors.examForm" class="error-text" role="alert">{{ errors.examForm }}</p>
-              <div class="exam-release-form">
-                <section class="exam-release-section">
-                  <div class="exam-release-section__header">
-                    <span class="admin-eyebrow">Paper</span>
-                    <p>Choose the paper students will take.</p>
-                  </div>
-                  <div class="modal-form-grid">
-                    <label class="form-field form-field--wide">
-                      <span class="form-label">Paper</span>
-                      <select v-model="examForm.paperId" class="form-input exam-paper-select">
-                        <option value="">Select a paper</option>
-                        <optgroup
-                          v-for="group in examPaperGroups"
-                          :key="group.key"
-                          :label="`${group.groupName} (${group.papers.length})`"
-                        >
-                          <option v-for="paper in group.papers" :key="paper.paperId" :value="paper.paperId">
-                            {{ paper.paperName }}
-                          </option>
-                        </optgroup>
-                      </select>
-                    </label>
-                    <label class="form-field form-field--wide">
-                      <span class="form-label">Exam Title</span>
-                      <input v-model="examForm.examTitle" class="form-input" placeholder="e.g. Spring 2026 Mock Exam A" />
-                    </label>
-                    <label class="form-field form-field--wide">
-                      <span class="form-label">Exam Description</span>
-                      <textarea v-model="examForm.examDescription" class="form-input" rows="2" maxlength="500" placeholder="Optional note shown in admin context"></textarea>
-                    </label>
-                  </div>
-                  <p v-if="selectedPaper" class="form-hint">
-                    Selected paper default duration: {{ selectedPaper.defaultDuration || '-' }} minutes.
-                  </p>
-                </section>
-
-                <section class="exam-release-section">
-                  <div class="exam-release-section__header">
-                    <span class="admin-eyebrow">Access Window</span>
-                    <p>Start and end time control when students are allowed to start a new attempt.</p>
-                  </div>
-                  <div class="modal-form-grid">
-                    <label class="form-field">
-                      <span class="form-label">Start Time</span>
-                      <span class="datetime-picker-field">
-                        <input
-                          ref="examStartTimeInput"
-                          v-model="examForm.startTime"
-                          class="form-input datetime-picker-field__input"
-                          type="datetime-local"
-                          title="Select start date and time"
-                          aria-label="Start time"
-                          @click="openDateTimePicker($event.currentTarget)"
-                        />
-                        <button
-                          class="datetime-picker-field__button"
-                          type="button"
-                          title="Open start time picker"
-                          aria-label="Open start time picker"
-                          @click.prevent="openDateTimePicker(examStartTimeInput)"
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M7 3v3M17 3v3M4.5 9.5h15M6.5 5.5h11A2.5 2.5 0 0 1 20 8v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18V8a2.5 2.5 0 0 1 2.5-2.5Z" />
-                          </svg>
-                        </button>
-                      </span>
-                    </label>
-                    <label class="form-field">
-                      <span class="form-label">End Time</span>
-                      <span class="datetime-picker-field">
-                        <input
-                          ref="examEndTimeInput"
-                          v-model="examForm.endTime"
-                          class="form-input datetime-picker-field__input"
-                          type="datetime-local"
-                          title="Select end date and time"
-                          aria-label="End time"
-                          @click="openDateTimePicker($event.currentTarget)"
-                        />
-                        <button
-                          class="datetime-picker-field__button"
-                          type="button"
-                          title="Open end time picker"
-                          aria-label="Open end time picker"
-                          @click.prevent="openDateTimePicker(examEndTimeInput)"
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M7 3v3M17 3v3M4.5 9.5h15M6.5 5.5h11A2.5 2.5 0 0 1 20 8v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18V8a2.5 2.5 0 0 1 2.5-2.5Z" />
-                          </svg>
-                        </button>
-                      </span>
-                    </label>
-                  </div>
-                </section>
-
-                <section class="exam-release-section">
-                  <div class="exam-release-section__header">
-                    <span class="admin-eyebrow">Attempt Settings</span>
-                    <p>Attempt duration is the countdown for each student after the attempt starts.</p>
-                  </div>
-                  <div class="modal-form-grid">
-                    <label class="form-field">
-                      <span class="form-label">Attempt Duration (minutes)</span>
-                      <input v-model.number="examForm.duration" class="form-input" type="number" min="1" />
-                    </label>
-                  </div>
-                </section>
-
-                <section class="exam-release-section">
-                  <div class="exam-release-section__header">
-                    <span class="admin-eyebrow">Audience</span>
-                    <p>Decide who can see this release after it is published.</p>
-                  </div>
-                  <div class="exam-target-toggle" role="radiogroup" aria-label="Exam audience">
-                    <label v-if="!isTeacherPortal" :class="{ 'exam-target-option--active': examForm.targetType === 'ALL_STUDENTS' }" class="exam-target-option">
-                      <input v-model="examForm.targetType" type="radio" value="ALL_STUDENTS" />
-                      <span>All students</span>
-                      <small>Available to every student account.</small>
-                    </label>
-                    <label :class="{ 'exam-target-option--active': examForm.targetType === 'SPECIFIC_CLASSES' }" class="exam-target-option">
-                      <input v-model="examForm.targetType" type="radio" value="SPECIFIC_CLASSES" />
-                      <span>Specific classes</span>
-                      <small>{{ isTeacherPortal ? 'Only classes assigned to you are available.' : 'Choose one or more classes below.' }}</small>
-                    </label>
-                  </div>
-
-                  <div v-if="examForm.targetType === 'SPECIFIC_CLASSES'" class="exam-class-picker">
-                    <div class="exam-class-picker__header">
-                      <span class="form-label">Classes</span>
-                      <small>{{ selectedExamTargetClasses.length }} selected</small>
-                    </div>
-                    <input
-                      v-model="examClassFilters.keyword"
-                      class="form-input exam-class-search"
-                      placeholder="Search class, teacher, grade"
-                    />
-                    <div v-if="filteredExamTargetClasses.length > 0" class="exam-class-picker__grid">
-                      <label
-                        v-for="item in filteredExamTargetClasses"
-                        :key="item.classId"
-                        class="exam-class-option"
-                        :class="{ 'exam-class-option--selected': examForm.targetClassIds.map(String).includes(String(item.classId)) }"
-                      >
-                        <input v-model="examForm.targetClassIds" type="checkbox" :value="item.classId" />
-                        <span class="exam-class-option__main">
-                            <strong>{{ item.className }}</strong>
-                            <small>{{ item.studentCount || 0 }} students · {{ item.teacherName || '-' }}</small>
-                        </span>
-                      </label>
-                    </div>
-                    <p v-if="assignableExamClasses.length > 0 && filteredExamTargetClasses.length === 0" class="form-hint">
-                      No classes match the current search.
-                    </p>
-                    <p v-else-if="assignableExamClasses.length === 0" class="form-hint">Activate a class before creating an exam for specific classes.</p>
-                  </div>
-                </section>
-
-                <section class="exam-release-section">
-                  <div class="exam-release-section__header">
-                    <span class="admin-eyebrow">Options</span>
-                    <p>Use the standard exam behavior unless you need an exception.</p>
-                  </div>
-                  <div class="exam-option-list">
-                    <label class="exam-option-line">
-                      <input v-model="examForm.autoSubmit" type="checkbox" />
-                      <span>
-                        <strong>Auto-submit when time expires</strong>
-                        <small>Prevents unfinished attempts from staying open after the timer ends.</small>
-                      </span>
-                    </label>
-                    <label class="exam-option-line">
-                      <input v-model="examForm.allowReview" type="checkbox" />
-                      <span>
-                        <strong>Allow review</strong>
-                        <small>Students can review according to the score and answer visibility settings.</small>
-                      </span>
-                    </label>
-                  </div>
-                </section>
-              </div>
-              <footer class="modal-card__footer">
-                <AppButton
-                  variant="secondary"
-                  type="button"
-                  :disabled="loading.submittingExam || loading.checkingExamPaperStats"
-                  @click="closeExamReleaseModal"
-                >
-                  Cancel
-                </AppButton>
-                <AppButton type="submit" :disabled="loading.submittingExam || loading.checkingExamPaperStats">
-                  {{ loading.checkingExamPaperStats ? 'Checking paper...' : (loading.submittingExam ? 'Creating...' : 'Create Release') }}
-                </AppButton>
-              </footer>
-            </form>
-          </div>
-        </Teleport>
+        <ExamReleaseDialog
+          v-if="showExamReleaseModal"
+          v-model:class-ids="examForm.targetClassIds"
+          v-model:student-ids="examForm.targetStudentIds"
+          v-model:student-targets="examForm.targetStudentClasses"
+          :form="examForm"
+          :fields="examReleaseFields"
+          :paper-groups="sharedExamPaperGroups"
+          :classes="classes"
+          exam-type="SHSAT"
+          :title="pendingExamId ? 'Edit Exam Draft' : 'Create Exam'"
+          selected-scope="SPECIFIC_CLASSES"
+          :description-max-length="500"
+          :allow-all-students="false"
+          :allow-individual-directory="!isTeacherPortal"
+          :paper-locked="Boolean(pendingExamId)"
+          :busy="loading.submittingExam || loading.checkingExamPaperStats"
+          :error="errors.examForm"
+          @close="closeExamReleaseModal"
+          @submit="submitExam"
+        >
+          <template #options>
+            <section class="exam-release-section">
+              <h3>Exam options</h3>
+              <label class="exam-option-line"><input v-model="examForm.autoSubmit" type="checkbox" /><span><strong>Auto-submit when time expires</strong><small>Submit unfinished attempts when the timer ends.</small></span></label>
+              <label class="exam-option-line"><input v-model="examForm.allowReview" type="checkbox" /><span><strong>Allow review</strong><small>Students can review according to the visibility settings.</small></span></label>
+            </section>
+          </template>
+          <template #footer>
+            <AppButton variant="secondary" type="button" :disabled="loading.submittingExam || loading.checkingExamPaperStats" @click="closeExamReleaseModal">Cancel</AppButton>
+            <AppButton type="submit" form="create-exam-release-form" :disabled="loading.submittingExam || loading.checkingExamPaperStats">{{ loading.checkingExamPaperStats ? 'Checking paper...' : (loading.submittingExam ? 'Saving...' : (pendingExamId ? 'Save draft' : 'Create Release')) }}</AppButton>
+          </template>
+        </ExamReleaseDialog>
 
         <Teleport to="body">
           <div
@@ -4567,7 +4480,8 @@ onBeforeUnmount(() => {
           <div v-else-if="filteredWrongAnswerTasks.length === 0" class="admin-state">
             {{ wrongAnswerTasks.length ? 'No assignments match these filters.' : 'No review assignments have been created yet.' }}
           </div>
-          <div v-else class="table-wrap">
+          <div v-else class="table-wrap wrong-task-table-wrap">
+            <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
             <AdminDataTable class="wrong-task-table">
               <thead>
                 <tr>
@@ -4723,6 +4637,11 @@ onBeforeUnmount(() => {
             <div class="admin-toolbar">
               <div class="admin-toolbar__filters">
                 <input v-model="classFilters.keyword" class="form-input class-search-input" placeholder="Search class, teacher, grade" />
+                <select v-model="classFilters.status" class="form-input shsat-class-status-filter" aria-label="Class status">
+                  <option value="ACTIVE">Active</option>
+                  <option value="INACTIVE">Inactive</option>
+                  <option value="ALL">All statuses</option>
+                </select>
               </div>
               <div class="admin-toolbar__actions">
                 <AppButton @click="openClassModal">Create Class</AppButton>
@@ -4742,9 +4661,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div v-if="loading.classes" class="admin-state">Loading classes...</div>
-            <div v-else-if="errors.classes" class="admin-state admin-state--error">{{ errors.classes }}</div>
-            <div v-else-if="visibleClasses.length === 0" class="admin-state">No classes found.</div>
+            <div v-if="errors.classes && classes.length" class="admin-state admin-state--error">{{ errors.classes }}</div>
+            <div v-if="loading.classes && !classes.length" class="admin-state">Loading classes...</div>
+            <div v-else-if="errors.classes && !classes.length" class="admin-state admin-state--error">{{ errors.classes }}</div>
+            <div v-else-if="visibleClasses.length === 0" class="admin-state">No classes match the selected filters.</div>
               <div v-else class="class-grid" :class="{ 'class-grid--reorderable': canReorderClasses }">
                 <article
                   v-for="item in visibleClasses"
@@ -4913,7 +4833,7 @@ onBeforeUnmount(() => {
                 </select>
               </label>
               <div class="bulk-assign-summary">
-                <strong>{{ selectedUnassignedStudents.length }} students selected</strong>
+                <strong>{{ selectedUnassignedStudents.length }} {{ selectedUnassignedStudents.length === 1 ? 'student' : 'students' }} selected</strong>
                 <span>{{ selectedUnassignedStudents.slice(0, 5).map((student) => student.realName || student.username).join(', ') }}<template v-if="selectedUnassignedStudents.length > 5"> and {{ selectedUnassignedStudents.length - 5 }} more</template></span>
               </div>
               <p v-if="bulkAssignError" class="bulk-assign-error" role="alert">{{ bulkAssignError }}</p>
@@ -5027,7 +4947,7 @@ onBeforeUnmount(() => {
 
       </AdminTabPanels>
     </section>
-  </AdminLayout>
+
 </template>
 
 <style scoped>
@@ -5054,25 +4974,6 @@ onBeforeUnmount(() => {
 
 .dashboard-review-card {
   margin-top: 16px;
-}
-
-.available-exams-card > .admin-refresh-button {
-  position: absolute;
-  top: 22px;
-  right: calc(clamp(20px, 3vw, 28px) + 42px);
-}
-
-.available-exams-card > .collapse-arrow-button,
-.dashboard-review-card > .collapse-arrow-button {
-  position: absolute;
-  top: 22px;
-  right: clamp(20px, 3vw, 28px);
-}
-
-.dashboard-review-card > .dashboard-review-refresh-button {
-  position: absolute;
-  top: 22px;
-  right: calc(clamp(20px, 3vw, 28px) + 42px);
 }
 
 .card-top-actions {
@@ -5155,11 +5056,34 @@ onBeforeUnmount(() => {
   min-width: 1120px;
 }
 
+.wrong-task-table-wrap {
+  scrollbar-color: #b9c9e2 #edf3fb;
+  scrollbar-width: thin;
+}
+
+.wrong-task-table-wrap::-webkit-scrollbar {
+  height: 8px;
+}
+
+.wrong-task-table-wrap::-webkit-scrollbar-thumb {
+  border: 2px solid #edf3fb;
+  border-radius: 999px;
+  background: #b9c9e2;
+}
+
+.mobile-table-scroll-hint {
+  display: none;
+}
+
 .wrong-task-table__actions-cell { min-width: 190px; }
 
 .class-search-input {
   width: min(360px, 100%);
   min-width: 220px;
+}
+
+.shsat-class-status-filter {
+  min-width: 145px;
 }
 
 .admin-toolbar__message {
@@ -5260,22 +5184,6 @@ onBeforeUnmount(() => {
 
 .form-hint {
   color: var(--color-muted);
-}
-
-.paper-structure-note {
-  display: grid;
-  gap: 4px;
-  border: 1px solid #cfe0ff;
-  border-radius: var(--radius-md);
-  padding: 12px 14px;
-  color: #33415c;
-  background: #f5f8ff;
-  font-size: 13px;
-}
-
-.paper-structure-note strong {
-  color: var(--color-primary-strong);
-  font-size: 14px;
 }
 
 .action-toast {
@@ -5590,29 +5498,6 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 14px;
   align-content: start;
-  max-height: min(70vh, 720px);
-  overflow-y: auto;
-  padding-right: 6px;
-  overscroll-behavior: contain;
-}
-
-.class-grid::-webkit-scrollbar {
-  width: 10px;
-}
-
-.class-grid::-webkit-scrollbar-track {
-  border-radius: 999px;
-  background: #f3f6fb;
-}
-
-.class-grid::-webkit-scrollbar-thumb {
-  border: 2px solid #f3f6fb;
-  border-radius: 999px;
-  background: #c8d4e6;
-}
-
-.class-grid::-webkit-scrollbar-thumb:hover {
-  background: #aebcd2;
 }
 
 .class-grid--reorderable .class-card {
@@ -6401,101 +6286,8 @@ onBeforeUnmount(() => {
   background: #fbfdff;
 }
 
-.modal-card--paper-create {
-  width: min(620px, 100%);
-  max-height: calc(100vh - 32px);
-  gap: 12px;
-  overflow-y: auto;
-  padding: 18px;
-}
-
-.modal-card--paper-create .modal-form-grid {
-  gap: 10px 12px;
-}
-
-.modal-card--paper-create .form-input {
-  min-height: 36px;
-}
-
-.modal-card--paper-create textarea.form-input {
-  min-height: 62px;
-}
-
-.modal-card--paper-create .modal-card__footer {
-  position: sticky;
-  bottom: -18px;
-  margin: 0 -18px -18px;
-  border-top: 1px solid var(--color-border);
-  padding: 12px 18px;
-  background: #ffffff;
-}
-
-.exam-release-modal {
-  width: min(760px, 100%);
-  max-height: calc(100vh - 48px);
-  gap: 14px;
-  overflow-y: auto;
-  padding: 18px;
-}
-
-.exam-release-form {
-  display: grid;
-  gap: 12px;
-}
-
-.exam-release-section {
-  display: grid;
-  gap: 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  padding: 12px;
-  background: #fbfdff;
-}
-
-.exam-release-section__header {
-  display: grid;
-  gap: 3px;
-}
-
-.exam-release-section__header p {
-  margin: 0;
-  color: var(--color-muted);
-  font-size: 13px;
-}
-
-.exam-release-modal .modal-form-grid {
-  gap: 10px 12px;
-}
-
-.exam-release-modal .form-field {
-  gap: 5px;
-}
-
-.exam-release-modal .form-input {
-  min-height: 36px;
-  border-radius: 8px;
-  padding: 7px 10px;
-  font-size: 13px;
-}
-
-.exam-paper-select {
-  min-height: 40px;
-}
-
-.exam-paper-select optgroup {
-  color: var(--color-primary-strong);
-  font-weight: 800;
-}
-
-.exam-paper-select option {
-  color: var(--color-text);
-  font-weight: 600;
-}
-
-.exam-release-modal textarea.form-input {
-  min-height: 58px;
-  resize: vertical;
-}
+.exam-release-section { display: grid; gap: 10px; }
+.exam-release-section h3 { margin: 0; font-size: 16px; }
 
 .datetime-picker-field {
   position: relative;
@@ -6544,112 +6336,10 @@ onBeforeUnmount(() => {
   stroke-linejoin: round;
 }
 
-.exam-target-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.exam-target-option,
-.exam-class-option,
-.exam-option-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 10px 12px;
-  color: var(--color-text);
-  background: #ffffff;
-  cursor: pointer;
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease,
-    background 140ms ease;
-}
-
-.exam-target-option:hover,
-.exam-class-option:hover,
-.exam-option-line:hover {
-  border-color: #cfe0ff;
-  box-shadow: 0 8px 18px rgba(47, 111, 237, 0.08);
-}
-
-.exam-target-option--active,
-.exam-class-option--selected {
-  border-color: var(--color-primary);
-  background: #f4f8ff;
-  box-shadow: 0 8px 18px rgba(47, 111, 237, 0.1);
-}
-
-.exam-target-option input,
-.exam-class-option input,
-.exam-option-line input {
-  margin-top: 2px;
-}
-
-.exam-target-option span,
-.exam-option-line strong,
-.exam-class-option strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.exam-target-option small,
-.exam-option-line small,
-.exam-class-option small,
-.exam-class-picker__header small {
-  display: block;
-  margin-top: 2px;
-  color: var(--color-muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.exam-class-picker {
-  display: grid;
-  gap: 8px;
-}
-
-.exam-class-search {
-  width: 100%;
-}
-
-.exam-class-picker__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.exam-class-picker__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  max-height: 210px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.exam-class-option__main {
-  min-width: 0;
-}
-
-.exam-option-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.exam-release-modal .modal-card__footer {
-  position: sticky;
-  bottom: -18px;
-  margin: 0 -18px -18px;
-  border-top: 1px solid var(--color-border);
-  padding: 12px 18px;
-  background: #ffffff;
-}
+.exam-option-line { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--color-border); border-radius: 12px; padding: 10px 12px; cursor: pointer; }
+.exam-option-line span { display: grid; gap: 3px; }
+.exam-option-line strong { font-size: 13px; }
+.exam-option-line small { color: var(--color-muted); font-size: 12px; line-height: 1.35; }
 
 .modal-form-grid {
   display: grid;
@@ -6781,6 +6471,16 @@ onBeforeUnmount(() => {
 
 .table-wrap {
   overflow-x: auto;
+}
+
+@media (max-width: 760px) {
+  .mobile-table-scroll-hint {
+    display: block;
+    margin: 0 0 8px;
+    color: var(--color-muted);
+    font-size: 13px;
+    text-align: left;
+  }
 }
 
 .unassigned-students-scroll {
@@ -6987,21 +6687,6 @@ onBeforeUnmount(() => {
 
   .class-detail-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .exam-target-toggle,
-  .exam-option-list,
-  .exam-class-picker__grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .exam-target-option,
-  .exam-option-line,
-  .exam-class-option,
-  .exam-target-option > span,
-  .exam-option-line > span,
-  .exam-class-option__main {
-    min-width: 0;
   }
 
   .meta-grid--wide,

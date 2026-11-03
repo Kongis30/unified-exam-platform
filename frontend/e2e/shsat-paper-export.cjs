@@ -43,7 +43,9 @@ async function main() {
     assert.match(await page.locator('.print-material').innerText(), /Export Passage Check[\s\S]*Long passage paragraph 1/,
       'long material content remains in the printable paper');
     assert.ok(await page.locator('.print-material .formula-text__block-math').count() > 0,
-      'formula is rendered as math in the printable material');
+      'block formula is rendered as math in the printable material');
+    assert.ok(await page.locator('.print-material math-span').count() > 0,
+      'inline formula is rendered in its sentence in the printable material');
     assert.equal(await page.locator('.print-material__table').count(), 1, 'aligned material rows render as a print table');
     assert.match(await page.locator('.print-material__table').innerText(), /Year\s+Students[\s\S]*2024\s+120/,
       'table headers and values remain legible in the material');
@@ -74,6 +76,8 @@ async function main() {
     await sectionGroup.getByRole('button', { name: 'All Sections', exact: true }).click();
     assert.equal(await page.locator('.answer-key').count(), 2, 'Whole Paper answer key includes both subjects');
     assert.match((await page.locator('.answer-key').allInnerTexts()).join('\n'), /A[\s\S]*B/);
+    const wholeAnswerPdfPath = `/tmp/shsat-paper-export-answer-key-${stamp}.pdf`;
+    const wholeAnswerPdf = await printPdf(page, 'Print or save answer key PDF', wholeAnswerPdfPath);
 
     await page.getByRole('group', { name: 'Document type' }).getByRole('button', { name: 'Student Paper', exact: true }).click();
     await page.locator('.print-material img').evaluate(image => { image.src = 'data:image/png;base64,not-a-valid-image'; });
@@ -96,12 +100,13 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['accessible export controls', 'paper title and page header', 'whole-paper Student PDF', 'ELA-only Student view',
-        'ELA Answer Key PDF', 'Math Answer Key PDF', 'whole-paper Answer Key', 'image/formula/material/table PDF output',
+        'ELA Answer Key PDF', 'Math Answer Key PDF', 'whole-paper Answer Key PDF', 'image/formula/material/table PDF output',
         'missing-image warning without blocking print', '390px export layout', 'back to Paper Management'],
-      pdfBytes: { wholeStudent: wholeStudentPdf.byteLength, elaAnswer: elaAnswerPdf.byteLength, mathAnswer: mathAnswerPdf.byteLength },
+      pdfBytes: { wholeStudent: wholeStudentPdf.byteLength, elaAnswer: elaAnswerPdf.byteLength, mathAnswer: mathAnswerPdf.byteLength, wholeAnswer: wholeAnswerPdf.byteLength },
       mobileSize,
       pageErrors: pageErrors.length,
       studentPdf: `/tmp/shsat-paper-export-content-${stamp}.pdf`,
+      answerKeyPdf: wholeAnswerPdfPath,
       screenshots: [`/tmp/shsat-paper-export-desktop-${stamp}.png`, `/tmp/shsat-paper-export-mobile-${stamp}.png`],
     }));
   } finally {
@@ -140,7 +145,7 @@ function sections() {
           question('Choose the ELA answer.', 'A', 1, 'ELA'),
           question('Use the passage to answer the question.', 'B', 2, 'ELA', {
             type: 'TEXT', title: 'Export Passage Check', category: 'Reading Passage',
-          content: `\n\n| Year | Students |\n| --- | --- |\n| 2024 | 120 |\n\nThis passage verifies real print layout. The displayed formula is $$x^2 + 3x + 2 = 0$$.\n\n${Array.from({ length: 36 }, (_, index) => `Long passage paragraph ${index + 1}: The material should flow onto the next printed page without clipping or disappearing. It includes enough ordinary prose to exercise page breaks in the generated student paper.`).join('\n\n')}\n\n[[MATERIAL_IMAGE:${materialImageUrl()}]]`,
+          content: `\n\n| Year | Students |\n| --- | --- |\n| 2024 | 120 |\n\nThis passage verifies real print layout. Inline formula $x^2 + 3x + 2 = 0$ stays with the sentence.\n\n$$x^2 + 3x + 2 = 0$$\n\n${Array.from({ length: 36 }, (_, index) => `Long passage paragraph ${index + 1}: The material should flow onto the next printed page without clipping or disappearing. It includes enough ordinary prose to exercise page breaks in the generated student paper.`).join('\n\n')}\n\n[[MATERIAL_IMAGE:${materialImageUrl()}]]`,
           }, 1),
         ],
       }],

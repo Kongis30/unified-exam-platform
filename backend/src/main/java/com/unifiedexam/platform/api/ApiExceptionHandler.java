@@ -9,6 +9,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /** Keep API errors stable and in English so browser locale never changes system prompts. */
 @RestControllerAdvice
@@ -38,6 +39,12 @@ public class ApiExceptionHandler {
     public ResponseEntity<ApiError> handleUnreadableRequest(HttpMessageNotReadableException exception) {
         return ResponseEntity.badRequest()
             .body(new ApiError("INVALID_REQUEST", "The submitted information could not be read. Check the form and try again."));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiError> handleMissingResource(NoResourceFoundException exception) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+            .body(new ApiError("RESOURCE_NOT_FOUND", "The requested resource was not found."));
     }
 
     @ExceptionHandler(Exception.class)

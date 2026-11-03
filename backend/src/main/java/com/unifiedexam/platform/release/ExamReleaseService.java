@@ -84,6 +84,9 @@ public class ExamReleaseService {
         validateDescriptionLength(examTypeCode, request.description());
         validateWindow(request.opensAt(), request.closesAt());
         String targetScope = normalizeTargetScope(request.targetScope());
+        if ("ALL_STUDENTS".equals(targetScope)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select classes or students within a class.");
+        }
         Long actorId = jdbcTemplate.query("SELECT id FROM users WHERE username = ? AND status = 'ACTIVE'",
             rs -> rs.next() ? rs.getLong(1) : null, actorUsername);
         if (actorId == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Your account is no longer active.");
@@ -110,7 +113,11 @@ public class ExamReleaseService {
             (rs, rowNum) -> rs.getLong(1), examId);
         List<Long> studentIds = jdbcTemplate.query("SELECT student_user_id FROM exam_target_students WHERE exam_id = ? ORDER BY student_user_id",
             (rs, rowNum) -> rs.getLong(1), examId);
-        return new ExamDetail(summary, classIds, studentIds);
+        List<StudentClassTarget> studentTargets = jdbcTemplate.query("""
+            SELECT class_id, student_user_id FROM exam_target_student_classes
+            WHERE exam_id = ? ORDER BY class_id, student_user_id
+            """, (rs, rowNum) -> new StudentClassTarget(rs.getLong("class_id"), rs.getLong("student_user_id")), examId);
+        return new ExamDetail(summary, classIds, studentIds, studentTargets);
     }
 
     @Transactional
@@ -120,6 +127,9 @@ public class ExamReleaseService {
         validateDescriptionLength(typeCode(targetPaperId), request.description());
         validateWindow(request.opensAt(), request.closesAt());
         String targetScope = normalizeTargetScope(request.targetScope());
+        if ("ALL_STUDENTS".equals(targetScope) && !"ALL_STUDENTS".equals(examTargetScope(examId))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select classes or students within a class.");
+        }
         jdbcTemplate.update("""
             UPDATE exams SET title = ?, description = ?, target_scope = ?, opens_at = ?, closes_at = ?,
                 duration_seconds = ?, attempt_limit = ?, allow_review = COALESCE(?, allow_review),
@@ -131,6 +141,7 @@ public class ExamReleaseService {
         if ("ALL_STUDENTS".equals(targetScope)) {
             jdbcTemplate.update("DELETE FROM exam_target_classes WHERE exam_id = ?", examId);
             jdbcTemplate.update("DELETE FROM exam_target_students WHERE exam_id = ?", examId);
+            jdbcTemplate.update("DELETE FROM exam_target_student_classes WHERE exam_id = ?", examId);
         }
         return get(examId);
     }
@@ -142,12 +153,21 @@ public class ExamReleaseService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam targets all active students and does not accept a selected target list.");
         }
         List<Long> classIds = request.classIds().stream().distinct().toList();
-        List<Long> studentIds = request.studentUserIds().stream().distinct().toList();
+        List<StudentClassTarget> studentTargets = request.studentTargets() == null ? List.of() : request.studentTargets().stream().distinct().toList();
+        List<Long> studentIds = java.util.stream.Stream.concat(request.studentUserIds().stream(), studentTargets.stream().map(StudentClassTarget::studentId)).distinct().toList();
+        if (studentIds.stream().anyMatch(id -> studentTargets.stream().noneMatch(target -> target.studentId() == id))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a source class for every selected student.");
+        }
         if (classIds.isEmpty() && studentIds.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select at least one class or student.");
         }
         for (Long classId : classIds) {
-            Boolean active = jdbcTemplate.queryForObject("SELECT EXISTS(SELECT 1 FROM classes WHERE id = ? AND status = 'ACTIVE')", Boolean.class, classId);
+            Boolean active = jdbcTemplate.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM classes c
+                    JOIN class_exam_workspaces cw ON cw.class_id = c.id
+                    JOIN exams e ON e.id = ? JOIN papers p ON p.id = e.paper_id
+                    WHERE c.id = ? AND c.status = 'ACTIVE' AND cw.exam_type_code = p.exam_type_code)
+                """, Boolean.class, examId, classId);
             if (!Boolean.TRUE.equals(active)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more selected classes are unavailable.");
         }
         for (Long studentId : studentIds) {
@@ -156,10 +176,22 @@ public class ExamReleaseService {
                 """, Boolean.class, studentId);
             if (!Boolean.TRUE.equals(activeStudent)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more selected accounts are not active students.");
         }
+        for (StudentClassTarget target : studentTargets) {
+            Boolean valid = jdbcTemplate.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM class_memberships cm
+                    JOIN classes c ON c.id = cm.class_id AND c.status = 'ACTIVE'
+                    JOIN class_exam_workspaces cw ON cw.class_id = c.id
+                    JOIN exams e ON e.id = ? JOIN papers p ON p.id = e.paper_id AND p.exam_type_code = cw.exam_type_code
+                    WHERE cm.class_id = ? AND cm.student_user_id = ? AND cm.left_at IS NULL)
+                """, Boolean.class, examId, target.classId(), target.studentId());
+            if (!Boolean.TRUE.equals(valid)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more selected students are unavailable in the chosen class.");
+        }
         jdbcTemplate.update("DELETE FROM exam_target_classes WHERE exam_id = ?", examId);
         jdbcTemplate.update("DELETE FROM exam_target_students WHERE exam_id = ?", examId);
+        jdbcTemplate.update("DELETE FROM exam_target_student_classes WHERE exam_id = ?", examId);
         for (Long classId : classIds) jdbcTemplate.update("INSERT INTO exam_target_classes (exam_id, class_id) VALUES (?, ?)", examId, classId);
         for (Long studentId : studentIds) jdbcTemplate.update("INSERT INTO exam_target_students (exam_id, student_user_id) VALUES (?, ?)", examId, studentId);
+        for (StudentClassTarget target : studentTargets) jdbcTemplate.update("INSERT INTO exam_target_student_classes (exam_id, student_user_id, class_id) VALUES (?, ?, ?)", examId, target.studentId(), target.classId());
         return get(examId);
     }
 
@@ -214,6 +246,17 @@ public class ExamReleaseService {
             JOIN users u ON u.id = cm.student_user_id AND u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
             WHERE tc.exam_id = ?
             """, examId, examId, examId, examId);
+        jdbcTemplate.update("""
+            INSERT IGNORE INTO exam_participant_classes (exam_id, student_user_id, class_id)
+            SELECT tc.exam_id, cm.student_user_id, tc.class_id
+            FROM exam_target_classes tc JOIN class_memberships cm ON cm.class_id = tc.class_id AND cm.left_at IS NULL
+            JOIN users u ON u.id = cm.student_user_id AND u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
+            WHERE tc.exam_id = ?
+            UNION
+            SELECT ts.exam_id, ts.student_user_id, ts.class_id FROM exam_target_student_classes ts
+            JOIN users u ON u.id = ts.student_user_id AND u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
+            WHERE ts.exam_id = ?
+            """, examId, examId);
         if ("ALL_STUDENTS".equals(targetScope)) {
             jdbcTemplate.update("""
                 INSERT IGNORE INTO exam_participants (exam_id, student_user_id)
@@ -452,14 +495,26 @@ public class ExamReleaseService {
                               @NotNull OffsetDateTime opensAt, @NotNull OffsetDateTime closesAt,
                               @Positive Integer durationSeconds, @NotNull @Positive Integer attemptLimit,
                               String targetScope, Boolean autoSubmit, Boolean allowReview) { }
-    public record TargetRequest(@NotNull List<@Positive Long> classIds,
-                                @NotNull List<@Positive Long> studentUserIds) { }
+    public record StudentClassTarget(@Positive long classId, @Positive long studentId) { }
+    public record TargetRequest(List<@NotNull @Positive Long> classIds,
+                                List<@NotNull @Positive Long> studentUserIds,
+                                List<@NotNull @jakarta.validation.Valid StudentClassTarget> studentTargets) {
+        public TargetRequest {
+            classIds = classIds == null ? List.of() : classIds;
+            studentUserIds = studentUserIds == null ? List.of() : studentUserIds;
+            studentTargets = studentTargets == null ? List.of() : studentTargets;
+        }
+        public TargetRequest(List<Long> classIds, List<Long> studentUserIds) { this(classIds, studentUserIds, List.of()); }
+    }
     public record ExamSummary(long id, String examTypeCode, long paperId, String paperTitle, String title,
                               String description, String status, String targetScope, String opensAt,
                               String closesAt, Integer durationSeconds, int attemptLimit, boolean hasStudentAttempts,
                               boolean allowReview, boolean autoSubmit,
                               String createdAt, String updatedAt, String publishedAt, String targetSummary) { }
-    public record ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds) { }
+    public record ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds,
+                             List<StudentClassTarget> studentTargets) {
+        public ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds) { this(summary, classIds, studentUserIds, List.of()); }
+    }
     public record StudentExamView(long id, String examTypeCode, String title, String description,
                                   String opensAt, String closesAt, String paperTitle,
                                   Integer durationSeconds, int attemptLimit, int attemptsUsed, Long activeAttemptId,

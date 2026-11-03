@@ -4,9 +4,8 @@ const base = '/api/student/sat-attempts'
 
 export const examApi = {
   startExam: (examId) => apiRequest(`/api/student/exams/${examId}/sat-attempt`, { method: 'POST' }),
-  listPracticePapers: () => apiRequest('/api/student/sat-practice-papers'),
-  listPracticeHistory: (page = 1, size = 10) => apiRequest(`/api/student/sat-practice-attempts?page=${page}&size=${size}`),
-  deletePracticeAttempt: (attemptId) => apiRequest(`/api/student/sat-practice-attempts/${attemptId}`, { method: 'DELETE' }),
+  listPracticePapers: (code) => apiRequest(`/api/student/sat-practice-papers?examTypeCode=${encodeURIComponent(code)}`),
+  listPracticeHistory: (page = 1, size = 10, code = 'SAT') => apiRequest(`/api/student/sat-practice-attempts?page=${page}&size=${size}&examTypeCode=${encodeURIComponent(code)}`),
   startPractice: (paperId) => apiRequest(`/api/student/sat-practice-papers/${paperId}/attempts`, { method: 'POST' }),
   getProgress: (attemptId) => apiRequest(`${base}/${attemptId}`),
   resumeBreak: (attemptId) => apiRequest(`${base}/${attemptId}/resume-break`, { method: 'POST' }),

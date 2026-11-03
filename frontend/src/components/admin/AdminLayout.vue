@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AppButton from '@/components/AppButton.vue'
@@ -15,19 +15,27 @@ const signingOut = ref(false)
 const showSignOutConfirm = ref(false)
 const workspaces = computed(() => groupExamTypesIntoWorkspaces(examTypes.value))
 const isAdmin = computed(() => authState.user?.roleCode === 'ADMIN')
-const currentModuleCode = computed(() => route.path.match(/^\/exam-types\/([^/]+)\/admin(?:\/|$)/)?.[1] || '')
+const workspaceQueries = reactive({ SAT: {}, PSAT: {} })
+const currentModuleCode = computed(() => (route.path.match(/^\/(sat|psat|shsat)(?:\/|$)/i)?.[1]
+  || route.path.match(/^\/exam-types\/([^/]+)\/admin(?:\/|$)/)?.[1] || '').toUpperCase())
 
-onMounted(async () => {
+watch([() => authState.user?.username, () => route.fullPath], async ([username], previous) => {
+  if (previous && previous[0] !== username) { workspaceQueries.SAT = {}; workspaceQueries.PSAT = {} }
+  if (!username) { examTypes.value = []; return }
+  const code = route.name === 'sat-admin' ? 'SAT' : route.name === 'psat-admin' ? 'PSAT' : ''
+  if (code) workspaceQueries[code] = { ...route.query }
   try {
-    examTypes.value = await getExamTypes()
+    const types = await getExamTypes()
+    if (authState.user?.username === username) examTypes.value = types
   } catch {
-    examTypes.value = []
+    // 临时网络错误不清空已有导航；下次路由变化会再次尝试。
   }
-})
+}, { immediate: true })
 
 function workspaceRoute(code) {
   if (code === 'SHSAT') return { name: 'shsat-admin' }
-  if (code === 'SAT') return { name: 'sat-admin' }
+  if (code === 'SAT') return { name: 'sat-admin', query: workspaceQueries.SAT }
+  if (code === 'PSAT') return { name: 'psat-admin', query: workspaceQueries.PSAT }
   return { name: 'exam-type', params: { code } }
 }
 
@@ -50,7 +58,7 @@ async function signOut() {
     <header class="admin-layout__header">
       <RouterLink class="admin-layout__brand" to="/" exact-active-class="router-link-active">
         <span class="admin-layout__mark"><img src="/logo.png" alt="" /></span>
-        <span><strong>Unified Exam</strong><small>Assessment Platform</small></span>
+        <span><strong>Jin Exam System</strong><small>Assessment Platform</small></span>
       </RouterLink>
 
       <nav class="admin-layout__nav" aria-label="Main navigation">

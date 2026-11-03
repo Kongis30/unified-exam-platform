@@ -31,6 +31,15 @@ public class SatAdminStudentScoreService {
     }
 
     public Map<String, Object> scores(long studentId) {
+        return scores(studentId, java.util.Set.of("SAT", "PSAT"));
+    }
+
+    public Map<String, Object> scores(long studentId, java.util.Set<String> permittedTypes) {
+        return scores(studentId, permittedTypes, null, null);
+    }
+
+    /** 班级详情只读取作答时已记录归属的成绩；学生个人视图可不传班级。 */
+    public Map<String, Object> scores(long studentId, java.util.Set<String> permittedTypes, Long classId, String examType) {
         Map<String, Object> student = jdbc.query("""
             SELECT u.id, u.real_name, u.username, u.email,
                    GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS class_names
@@ -49,7 +58,13 @@ public class SatAdminStudentScoreService {
             return view;
         }, studentId);
 
-        List<Map<String, Object>> attempts = jdbc.query("""
+        String classFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ?)";
+        String typeFilter = examType == null ? "" : " AND p.exam_type_code = ?";
+        List<Object> parameters = new java.util.ArrayList<>();
+        parameters.add(studentId);
+        if (classId != null) parameters.add(classId);
+        if (examType != null) parameters.add(examType);
+        List<Map<String, Object>> attempts = jdbc.query(("""
             SELECT a.id AS attempt_id, a.exam_id, a.attempt_no, a.status, a.started_at, a.submitted_at,
                    e.title AS exam_title, e.opens_at, p.title AS paper_title, p.exam_type_code,
                    r.total_points, r.max_points, r.algorithm_version, d.source_score_json,
@@ -75,10 +90,11 @@ public class SatAdminStudentScoreService {
             LEFT JOIN sat_attempt_details d ON d.attempt_id = a.id
             LEFT JOIN sat_paper_settings s ON s.paper_id = p.id
             WHERE a.student_user_id = ? AND a.is_practice = FALSE AND p.exam_type_code IN ('SAT', 'PSAT')
-            ORDER BY COALESCE(a.submitted_at, a.started_at) DESC, a.id DESC
-            """.formatted(SatModuleScoreSql.rawScore("RW", 1), SatModuleScoreSql.rawScore("RW", 2),
-                SatModuleScoreSql.rawScore("Math", 1), SatModuleScoreSql.rawScore("Math", 2)), this::scoreRow, studentId);
+            %s %s ORDER BY COALESCE(a.submitted_at, a.started_at) DESC, a.id DESC
+            """).formatted(SatModuleScoreSql.rawScore("RW", 1), SatModuleScoreSql.rawScore("RW", 2),
+                SatModuleScoreSql.rawScore("Math", 1), SatModuleScoreSql.rawScore("Math", 2), classFilter, typeFilter), this::scoreRow, parameters.toArray());
 
+        attempts = attempts.stream().filter(row -> permittedTypes.contains(row.get("examTypeCode"))).toList();
         List<Map<String, Object>> completed = attempts.stream()
             .filter(row -> "COMPLETED".equals(row.get("status")) && row.get("rawTotalScore") != null)
             .toList();

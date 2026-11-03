@@ -298,8 +298,8 @@ export const adminApi = {
     }).then((groups) => groups.map(paperGroup));
   },
 
-  async getPapers(params = {}) {
-    const papers = (await listPapers(SHSAT)).map(paperSummary);
+  async getPapers(params = {}, { force = false } = {}) {
+    const papers = (await listPapers(SHSAT, { force })).map(paperSummary);
     return papers.filter((paper) => {
       const matchesGroup = !params.groupId || String(paper.paperGroupId || '') === String(params.groupId);
       const matchesKeyword = !params.keyword || `${paper.paperName} ${paper.paperCode}`.toLowerCase().includes(params.keyword.toLowerCase());
@@ -490,8 +490,8 @@ export const adminApi = {
     return http.post(`/admin/papers/${paperId}/solutions`, formData);
   },
 
-  async getExams(params = {}) {
-    const exams = await listExams(SHSAT);
+  async getExams(params = {}, examRows = null) {
+    const exams = await (examRows || listExams(SHSAT));
     return exams.map((exam) => ({
       examId: exam.id, id: exam.id, paperId: exam.paperId, paperTitle: exam.paperTitle,
       examTitle: exam.title, title: exam.title, description: exam.description,
@@ -505,7 +505,7 @@ export const adminApi = {
   },
 
   getExam(examId) {
-    return apiRequest(`/api/admin/exams/${examId}`).then(({ summary, classIds, studentUserIds }) => ({
+    return apiRequest(`/api/admin/exams/${examId}`).then(({ summary, classIds, studentUserIds, studentTargets }) => ({
       ...summary,
       examId: summary.id,
       examTitle: summary.title,
@@ -516,6 +516,7 @@ export const adminApi = {
       targetSummary: summary.targetSummary,
       target_ids: classIds,
       studentUserIds,
+      studentTargets,
       published: summary.status === 'PUBLISHED',
     }));
   },
@@ -531,8 +532,13 @@ export const adminApi = {
       allowReview: payload.allowReview,
     });
     if (payload.targetType === 'SPECIFIC_CLASSES') {
-      const classIds = payload.target_ids || [];
-      await saveExamTargets(created.summary.id, { classIds, studentUserIds: [] });
+      try {
+        await saveExamTargets(created.summary.id, { classIds: payload.target_ids || [], studentUserIds: payload.studentUserIds || [], studentTargets: payload.studentTargets || [] });
+      } catch (error) {
+        // 草稿已经创建，调用方重试时应更新该草稿，避免重复创建考试。
+        error.draftExamId = created.summary.id;
+        throw error;
+      }
     }
     return { examId: created.summary.id, ...created.summary };
   },
@@ -547,7 +553,7 @@ export const adminApi = {
       allowReview: payload.allowReview,
     });
     if (payload.targetType === 'SPECIFIC_CLASSES') {
-      await saveExamTargets(examId, { classIds: payload.target_ids || [], studentUserIds: [] });
+      await saveExamTargets(examId, { classIds: payload.target_ids || [], studentUserIds: payload.studentUserIds || [], studentTargets: payload.studentTargets || [] });
     }
     return { examId, ...updated.summary };
   },
@@ -624,6 +630,7 @@ export const adminApi = {
     return createPlatformUser({
       username: usernameFromFullName(payload.realName), password: DEFAULT_INITIAL_PASSWORD,
       realName: payload.realName, roleCode: payload.role, email: payload.email || null, phone: payload.phone || null,
+      workspaceCodes: ['SHSAT'],
     });
   },
 
@@ -670,8 +677,8 @@ export const adminApi = {
     return http.get(`/admin/wrong-answer-tasks/${taskId}`);
   },
 
-  getStudentAttemptHistory(studentId) {
-    return http.get(`/admin/reports/students/${studentId}/attempts`);
+  getStudentAttemptHistory(studentId, classId) {
+    return http.get(`/admin/reports/students/${studentId}/attempts`, { query: { classId } });
   },
 
   getAttemptResult(attemptId) {

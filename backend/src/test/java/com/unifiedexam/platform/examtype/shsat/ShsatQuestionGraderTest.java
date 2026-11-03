@@ -84,6 +84,12 @@ class ShsatQuestionGraderTest {
     }
 
     @Test
+    void gradesFillInBlankAnswersSubmittedAsAnArray() throws Exception {
+        assertTrue(grade("FILL_IN_BLANK", "{\"answers\":[\"86\"]}", "{\"answers\":[\"86\"]}"));
+        assertFalse(grade("FILL_IN_BLANK", "{\"answers\":[\"86\"]}", "{\"answers\":[\"68\"]}"));
+    }
+
+    @Test
     void rejectsRoundedDecimalThatOnlyApproximatesAnExactFraction() throws Exception {
         assertFalse(grade("MATH_FILL_IN_BLANK", "{\"acceptedAnswers\":[\"1/3\"]}",
             "{\"value\":\"0.333333333333\"}"));
@@ -178,6 +184,15 @@ class ShsatQuestionGraderTest {
             json("{\"selections\":{\"r1\":\"c1\"}}"), config, null));
         assertFalse(grader.grade("TABLE_GRID", json("{\"selections\":{\"r1\":\"c1\"}}"),
             json("{\"selections\":{\"r2\":\"c1\"}}"), config, null));
+    }
+
+    @Test
+    void gradesTableGridTextCellsWithHyphenatedRowIds() throws Exception {
+        JsonNode config = json("{\"questionConfig\":{\"selectionMode\":\"text\",\"rows\":[{\"id\":\"item-1\"}],\"columns\":[{\"id\":\"answer\"}]}}");
+        assertTrue(grader.grade("TABLE_GRID", json("{\"cells\":{\"item-1.answer\":\"42\"}}"),
+            json("{\"cells\":{\"item-1.answer\":\"42\"}}"), config, null));
+        assertFalse(grader.grade("TABLE_GRID", json("{\"cells\":{\"item-1.answer\":\"42\"}}"),
+            json("{\"cells\":{\"item-1.answer\":\"24\"}}"), config, null));
     }
 
     @Test

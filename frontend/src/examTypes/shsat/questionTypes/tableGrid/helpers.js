@@ -78,6 +78,22 @@ function selectedCellValues(value) {
   return ['true', '1', 'yes', 'y', 'on', 'selected', 'checked'].includes(String(value).toLowerCase());
 }
 
+function parseTextCellKey(cellId, rows, columns) {
+  const key = String(cellId || '');
+  const separators = ['.', '_', '-'];
+  for (const row of [...rows].sort((left, right) => right.id.length - left.id.length)) {
+    for (const separator of separators) {
+      const prefix = `${row.id}${separator}`;
+      if (!key.startsWith(prefix)) continue;
+      const columnId = key.slice(prefix.length);
+      if (columns.some((column) => column.id === columnId)) {
+        return { rowId: row.id, columnId };
+      }
+    }
+  }
+  return null;
+}
+
 function normalizeLegacyCells(rawCells, rows, columns) {
   if (!rawCells || Array.isArray(rawCells) || typeof rawCells !== 'object') {
     return {};
@@ -147,12 +163,12 @@ export function normalizeTableGridTextCellMap(question = {}, rawData) {
   }
 
   return Object.entries(rawCells).reduce((result, [cellId, value]) => {
-    const [rowId, columnId] = String(cellId || '').split(/[._-]/);
+    const parsedCell = parseTextCellKey(cellId, rows, columns);
     const normalizedValue = normalizeAnswerToken(value);
+    if (!parsedCell) return result;
+    const { rowId, columnId } = parsedCell;
     if (
-      rowId
-      && columnId
-      && normalizedValue
+      normalizedValue
       && (!validRows.size || validRows.has(rowId))
       && (!validColumns.size || validColumns.has(columnId))
     ) {
@@ -191,9 +207,11 @@ export function formatTableGridTextCellMap(cellMap, emptyText, question = {}) {
 
   return entries
     .map(([cellId, value]) => {
-      const [rowId, columnId] = String(cellId || '').split(/[._-]/);
-      return `${itemLabelById(rows, rowId)} / ${itemLabelById(columns, columnId)}: ${value}`;
+      const parsedCell = parseTextCellKey(cellId, rows, columns);
+      if (!parsedCell) return null;
+      return `${itemLabelById(rows, parsedCell.rowId)} / ${itemLabelById(columns, parsedCell.columnId)}: ${value}`;
     })
+    .filter(Boolean)
     .join('; ');
 }
 

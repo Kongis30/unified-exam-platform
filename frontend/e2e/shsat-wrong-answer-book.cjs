@@ -231,9 +231,14 @@ async function main() {
     await student.setViewportSize({ width: 1440, height: 900 });
     await student.screenshot({ path: `/tmp/shsat-wrong-book-practice-report-desktop-${stamp}.png` });
     await student.screenshot({ path: `/tmp/shsat-wrong-book-practice-report-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    await student.evaluate(() => window.scrollTo(0, 0));
+    const practiceReportMobileSize = await pageSize(student);
+    assert.ok(practiceReportMobileSize.page <= practiceReportMobileSize.viewport,
+      `practice report fits mobile: ${JSON.stringify(practiceReportMobileSize)}`);
+    await student.screenshot({ path: `/tmp/shsat-wrong-book-practice-report-mobile-${stamp}.png` });
 
     await student.goto(`${baseUrl}/student/systems/SHSAT`);
-    await student.setViewportSize({ width: 390, height: 844 });
     await student.getByRole('tab', { name: /Wrong Answer Book/ }).click();
     await book.scrollIntoViewIfNeeded();
     const clearMobileSize = await pageSize(student);
@@ -249,7 +254,8 @@ async function main() {
         `/tmp/shsat-wrong-book-review-${stamp}.png`, `/tmp/shsat-wrong-book-review-mobile-${stamp}.png`,
         `/tmp/shsat-wrong-book-resumed-${stamp}.png`,
         `/tmp/shsat-wrong-book-practice-report-desktop-${stamp}.png`,
-        `/tmp/shsat-wrong-book-practice-report-${stamp}.png`, `/tmp/shsat-wrong-book-cleared-mobile-${stamp}.png`,
+        `/tmp/shsat-wrong-book-practice-report-${stamp}.png`,
+        `/tmp/shsat-wrong-book-practice-report-mobile-${stamp}.png`, `/tmp/shsat-wrong-book-cleared-mobile-${stamp}.png`,
       ],
     }));
   } finally {

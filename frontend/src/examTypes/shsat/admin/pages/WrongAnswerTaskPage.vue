@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
 const route = useRoute();
@@ -122,7 +121,7 @@ onMounted(loadTask);
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="page-shell wrong-answer-task-page">
       <button class="wrong-answer-task-page__back" type="button" @click="goBack">
         <span aria-hidden="true">←</span>
@@ -225,7 +224,7 @@ onMounted(loadTask);
         </div>
       </AppCard>
     </section>
-  </AdminLayout>
+
 </template>
 
 <style scoped>

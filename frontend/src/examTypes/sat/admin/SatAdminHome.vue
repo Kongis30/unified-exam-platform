@@ -1,8 +1,12 @@
 <script setup>
 import ExamTypePage from '@/views/ExamTypePage.vue'
-import AdminLayout from '@/components/admin/AdminLayout.vue'
+import { useRoute } from 'vue-router'
+import { computed } from 'vue'
+
+const route = useRoute()
+const code = computed(() => route.name === 'psat-admin' ? 'PSAT' : 'SAT')
 </script>
 
 <template>
-  <AdminLayout><ExamTypePage code="SAT" /></AdminLayout>
+  <ExamTypePage :key="code" :code="code" />
 </template>

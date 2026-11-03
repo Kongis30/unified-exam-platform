@@ -37,5 +37,11 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 
 <style scoped>
 .admin-tab-panels { width: 100%; min-width: 0; }
-.admin-tab-panels__content { width: 100%; min-width: 0; }
+.admin-tab-panels__content {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
 </style>

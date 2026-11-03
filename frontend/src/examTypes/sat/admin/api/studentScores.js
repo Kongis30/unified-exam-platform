@@ -1,7 +1,8 @@
 import { apiRequest } from '@/api/platform'
 
-export function getSatStudentScores(studentId, options = {}) {
-  return apiRequest(`/api/admin/sat/students/${studentId}/scores`, options)
+export function getSatStudentScores(studentId, classId, examType, options = {}) {
+  const params = new URLSearchParams({ classId: String(classId), examType })
+  return apiRequest(`/api/admin/sat/students/${studentId}/scores?${params}`, options)
 }
 
 export function deleteSatStudentAttempt(studentId, attemptId, options = {}) {

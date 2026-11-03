@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import MonitorQuestionDetail from '@shsat/components/MonitorQuestionDetail.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 import { satAdminMonitorApi } from '@/examTypes/sat/admin/api/monitor';
@@ -17,7 +16,7 @@ const plotHeight = CHART_HEIGHT - PLOT.top - PLOT.bottom;
 
 const route = useRoute();
 const router = useRouter();
-const isSatMonitor = computed(() => route.name === 'sat-admin-exam-monitor');
+const isSatMonitor = computed(() => ['sat-admin-exam-monitor', 'psat-admin-exam-monitor'].includes(route.name));
 const monitorApi = computed(() => isSatMonitor.value ? satAdminMonitorApi : {
   getLive: (examId, options) => adminApi.getExamMonitorLive(examId, options),
   getAnalytics: (examId, options) => adminApi.getExamMonitorAnalytics(examId, options),
@@ -322,7 +321,8 @@ function accuracyAriaLabel(tile) {
 
 function goBack() {
   const returnTo = route.query.returnTo;
-  if (typeof returnTo === 'string' && returnTo.startsWith('/exam-types/SAT/admin')) {
+  if (typeof returnTo === 'string'
+    && (/^\/(sat|psat|shsat)(?:[/?#]|$)/.test(returnTo) || returnTo.startsWith('/exam-types/SAT/admin') || returnTo.startsWith('/exam-types/PSAT/admin') || returnTo.startsWith('/exam-types/SHSAT/admin'))) {
     router.push(returnTo);
     return;
   }
@@ -409,7 +409,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="exam-monitor page-shell" aria-label="Exam monitor">
       <button type="button" class="monitor-back-button" @click="goBack">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -485,6 +485,7 @@ onBeforeUnmount(() => {
                 <text class="chart-axis-title chart-axis-title--question" :x="CHART_WIDTH / 2" :y="CHART_HEIGHT - 10" text-anchor="middle">Question Number</text>
               </svg>
             </div>
+            <p v-if="hasCurrentDistribution" class="monitor-chart-hint">Swipe horizontally to view all questions.</p>
           </article>
 
           <article class="monitor-panel">
@@ -512,6 +513,7 @@ onBeforeUnmount(() => {
                 <text class="chart-axis-title chart-axis-title--question" :x="CHART_WIDTH / 2" :y="CHART_HEIGHT - 10" text-anchor="middle">Question Number</text>
               </svg>
             </div>
+            <p v-if="hasAverageTimeData" class="monitor-chart-hint">Swipe horizontally to view all questions.</p>
           </article>
         </section>
 
@@ -643,7 +645,7 @@ onBeforeUnmount(() => {
       <button type="button" class="question-image-preview__close" aria-label="Close image preview" @click.stop="closeImagePreview">×</button>
       <img :src="previewImageUrl" alt="Question material preview" @click.stop />
     </div>
-  </AdminLayout>
+
 </template>
 
 <style scoped>
@@ -663,6 +665,7 @@ onBeforeUnmount(() => {
 .monitor-panel h1 { margin: 0 0 18px; color: #101b2f; font-size: 26px; line-height: 1.2; letter-spacing: 0; }
 .monitor-chart-scroll { width: 100%; overflow-x: auto; }
 .monitor-chart { display: block; width: 100%; height: auto; overflow: visible; }
+.monitor-chart-hint { display: none; margin: 8px 0 0; color: #6f7884; font-size: 12px; line-height: 1.4; text-align: center; }
 .monitor-chart-empty { display: grid; min-height: 220px; place-items: center; border: 1px dashed #d5deea; border-radius: 8px; padding: 24px; color: #748198; background: #f8faff; font-size: 15px; text-align: center; }
 .chart-grid-line { stroke: #e5eaf0; stroke-width: 1; stroke-dasharray: 4 4; }
 .chart-axis { stroke: #6b7480; stroke-width: 1.4; }
@@ -719,5 +722,5 @@ onBeforeUnmount(() => {
 @keyframes monitor-spin { to { transform: rotate(360deg); } }
 @media (max-width: 980px) { .monitor-chart-grid { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { .monitor-summary-grid { grid-template-columns: repeat(2, minmax(110px, 1fr)); } .monitor-summary-item { justify-items: start; } }
-@media (max-width: 640px) { .exam-monitor { padding: 16px 12px 28px; } .exam-info-panel { align-items: flex-start; flex-direction: column; padding: 20px 16px; } .monitor-summary-grid { width: 100%; gap: 16px; } .monitor-summary-item { justify-items: start; min-width: 0; } .monitor-summary-item strong { font-size: 25px; } .monitor-summary-item span { white-space: normal; } .monitor-panel { padding: 20px 16px 16px; } .monitor-panel h1 { font-size: 21px; } .monitor-chart { width: 560px; max-width: none; } .chart-axis-title--question { display: none; } .question-detail-drawer { width: 100%; padding: 18px 14px; } }
+@media (max-width: 640px) { .exam-monitor { padding: 16px 12px 28px; } .exam-info-panel { align-items: flex-start; flex-direction: column; padding: 20px 16px; } .monitor-summary-grid { width: 100%; gap: 16px; } .monitor-summary-item { justify-items: start; min-width: 0; } .monitor-summary-item strong { font-size: 25px; } .monitor-summary-item span { white-space: normal; } .monitor-panel { padding: 20px 16px 16px; } .monitor-panel h1 { font-size: 21px; } .monitor-chart { width: 560px; max-width: none; } .monitor-chart-hint { display: block; } .chart-axis-title--question { display: none; } .question-detail-drawer { width: 100%; padding: 18px 14px; } }
 </style>

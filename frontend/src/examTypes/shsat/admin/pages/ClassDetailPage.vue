@@ -5,7 +5,6 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
 import ClassExamScoreTrend from '@/components/admin/ClassExamScoreTrend.vue';
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
 const route = useRoute();
@@ -653,13 +652,6 @@ function formatClassExamMeta(exam) {
 }
 
 function getClassExamStatus(exam) {
-  if (exam?.published === false) {
-    return {
-      label: 'Hidden',
-      className: 'exam-status-pill--hidden',
-    };
-  }
-
   const now = Date.now();
   const startTime = getTimeValue(exam?.startTime);
   const endTime = getTimeValue(exam?.endTime);
@@ -668,6 +660,13 @@ function getClassExamStatus(exam) {
     return {
       label: 'Ended',
       className: 'exam-status-pill--ended',
+    };
+  }
+
+  if (exam?.published === false) {
+    return {
+      label: 'Hidden',
+      className: 'exam-status-pill--hidden',
     };
   }
 
@@ -808,7 +807,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="page-shell class-detail-page">
       <Teleport to="body">
         <div v-if="classToast" class="class-detail-toast" role="status" aria-live="polite">
@@ -1279,7 +1278,7 @@ onBeforeUnmount(() => {
         </div>
       </Teleport>
     </section>
-  </AdminLayout>
+
 </template>
 
 <style scoped>

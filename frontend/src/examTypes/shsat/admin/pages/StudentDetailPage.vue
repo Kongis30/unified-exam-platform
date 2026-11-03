@@ -1,10 +1,9 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
 const route = useRoute();
@@ -13,12 +12,8 @@ const router = useRouter();
 const loading = ref(false);
 const errorMessage = ref('');
 const attempts = ref([]);
-const trendChartElement = ref(null);
-const trendScoreMode = ref('RAW');
+const hoveredTrendPoint = ref(null);
 const historySort = ref({ key: null, direction: 'desc' });
-let trendChart = null;
-let echartsModulePromise = null;
-let pageIsMounted = false;
 const SHSAT_SECTION_RAW_MAX = 50;
 const SHSAT_TOTAL_RAW_MAX = SHSAT_SECTION_RAW_MAX * 2;
 
@@ -51,10 +46,11 @@ function unwrapResponse(response, fallbackMessage) {
 async function loadHistory() {
   loading.value = true;
   errorMessage.value = '';
+  hoveredTrendPoint.value = null;
 
   try {
     const records = unwrapResponse(
-      await adminApi.getStudentAttemptHistory(studentId.value),
+      await adminApi.getStudentAttemptHistory(studentId.value, classId.value),
       'Failed to load student exam history'
     );
     attempts.value = [...records].sort((left, right) => {
@@ -123,10 +119,9 @@ function openAttemptReport(attempt) {
 }
 
 function getAvailableScore(attempt) {
-  const value = hasScaledScoring(attempt)
-    ? Number(attempt.compositeScore ?? attempt.totalScaledScore)
-    : Number(attempt.rawTotalScore ?? attempt.totalScore);
-  return Number.isFinite(value) ? value : null;
+  return numberOrNull(hasScaledScoring(attempt)
+    ? attempt.compositeScore ?? attempt.totalScaledScore
+    : attempt.rawTotalScore ?? attempt.totalScore);
 }
 
 function getAvailableScoreMax(attempt) {
@@ -178,33 +173,48 @@ const stats = computed(() => {
   };
 });
 
-const trendSeries = computed(() => {
-  const useScaled = trendScoreMode.value === 'SCALED';
-  const score = (attempt, section) => {
-    if (section === 'TOTAL') {
-      return useScaled ? getScaledScore(attempt) : numberOrNull(attempt.rawTotalScore ?? attempt.totalScore);
-    }
-
-    const value = section === 'ELA'
-      ? (useScaled ? attempt.elaScaledScore ?? attempt.section1ScaledScore : attempt.elaRawScore ?? attempt.section1Score)
-      : (useScaled ? attempt.mathScaledScore ?? attempt.section2ScaledScore : attempt.mathRawScore ?? attempt.section2Score);
-    return numberOrNull(value);
-  };
-
-  return completedAttempts.value
+// 按原 SHSAT 图表的口径展示可用总分，并以实际最小值和最大值确定纵轴范围。
+const chart = computed(() => {
+  const rows = completedAttempts.value
     .map((attempt) => ({
-      attempt,
+      id: attempt.attemptId,
+      score: getAvailableScore(attempt),
+      scoreMax: getAvailableScoreMax(attempt),
+      scoreLabel: hasScaledScoring(attempt) ? 'Scaled score' : 'Raw score',
       date: attempt.submittedAt || attempt.startedAt,
       title: attempt.examTitle || 'Exam',
-      total: score(attempt, 'TOTAL'),
-      ela: score(attempt, 'ELA'),
-      math: score(attempt, 'MATH'),
     }))
-    .filter((item) => item.date)
+    .filter((item) => item.score !== null && item.date && getTimeValue(item.date))
     .sort((left, right) => getTimeValue(left.date) - getTimeValue(right.date));
+  const width = Math.max(760, 72 * (rows.length - 1) + 72);
+  const height = 320;
+  const padding = { top: 28, right: 24, bottom: 48, left: 48 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  let min = Math.floor(Math.min(...rows.map((row) => row.score)));
+  let max = Math.ceil(Math.max(...rows.map((row) => row.score)));
+  if (!rows.length) min = max = 0;
+  if (min === max) {
+    min = Math.max(0, min - 1);
+    max += 1;
+  }
+  const range = max - min;
+  const points = rows.map((row, index) => ({
+    ...row,
+    x: padding.left + (rows.length > 1 ? innerWidth * index / (rows.length - 1) : innerWidth / 2),
+    y: padding.top + innerHeight - (row.score - min) / range * innerHeight,
+  }));
+  const tickCount = Math.min(6, range + 1);
+  const ticks = Array.from({ length: tickCount }, (_, index) => {
+    const value = Math.round(min + range * index / (tickCount - 1));
+    return { value, y: padding.top + innerHeight - (value - min) / range * innerHeight };
+  });
+  return {
+    width, height, padding, points, ticks,
+    baseline: padding.top + innerHeight,
+    line: points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' '),
+  };
 });
-
-const hasTrendScores = computed(() => trendSeries.value.some((item) => item.total !== null || item.ela !== null || item.math !== null));
 
 function getTimeValue(value) {
   const time = value ? new Date(value).getTime() : 0;
@@ -215,16 +225,6 @@ function numberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function escapeTooltipText(value) {
-  return String(value).replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character]);
 }
 
 function formatDateTime(value) {
@@ -258,22 +258,6 @@ function formatShortDate(value) {
 
 function formatScore(value) {
   return value === null || value === undefined || value === '' || value === '-' ? '-' : Number(value).toString();
-}
-
-// 依据当前成绩跨度选取易读的纵轴刻度，避免单次记录时出现长小数标签。
-function getScoreAxisBounds(minimum, maximum) {
-  const range = Math.max(maximum - minimum, 1);
-  const roughInterval = range / 5;
-  const magnitude = 10 ** Math.floor(Math.log10(roughInterval));
-  const normalizedInterval = roughInterval / magnitude;
-  const intervalFactor = normalizedInterval <= 1 ? 1 : normalizedInterval <= 2 ? 2 : normalizedInterval <= 5 ? 5 : 10;
-  const interval = intervalFactor * magnitude;
-
-  return {
-    interval,
-    min: Math.max(0, Math.floor(minimum / interval) * interval),
-    max: Math.ceil(maximum / interval) * interval,
-  };
 }
 
 function getScaledScore(attempt) {
@@ -405,115 +389,11 @@ function formatStatus(status) {
   return labels[text] || status || '-';
 }
 
-async function renderTrendChart() {
-  if (!trendChartElement.value || !hasTrendScores.value) {
-    trendChart?.dispose();
-    trendChart = null;
-    return;
-  }
-
-  echartsModulePromise ||= Promise.all([
-    import('echarts/core'),
-    import('echarts/charts'),
-    import('echarts/components'),
-    import('echarts/renderers'),
-  ]).then(([core, charts, components, renderers]) => {
-    core.use([
-      charts.LineChart,
-      components.TitleComponent,
-      components.TooltipComponent,
-      components.LegendComponent,
-      components.GridComponent,
-      renderers.CanvasRenderer,
-    ]);
-    return core;
-  });
-  const echartsCore = await echartsModulePromise;
-  if (!pageIsMounted || !trendChartElement.value || !hasTrendScores.value) return;
-  if (!trendChart) trendChart = echartsCore.init(trendChartElement.value);
-
-  const rows = trendSeries.value;
-  const scaled = trendScoreMode.value === 'SCALED';
-  const chartScores = rows
-    .flatMap((row) => [row.total, row.ela, row.math])
-    .filter((score) => score !== null && Number.isFinite(Number(score)))
-    .map(Number);
-  const scoreMin = Math.min(...chartScores);
-  const scoreMax = Math.max(...chartScores);
-  const scorePadding = Math.max(1, (scoreMax - scoreMin) * 0.08, Math.abs(scoreMin) * 0.02);
-  const scoreAxis = getScoreAxisBounds(Math.max(0, scoreMin - scorePadding), scoreMax + scorePadding);
-  trendChart.setOption({
-    title: {
-      text: 'Score Trend Over Time',
-      left: 'center',
-      textStyle: { fontSize: 16, fontWeight: 'normal', color: '#303133' },
-    },
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' },
-      formatter(items) {
-        const row = rows[items[0]?.dataIndex];
-        const date = row ? formatDateTime(row.date) : '';
-        const details = items
-          .filter((item) => item.value !== null && item.value !== undefined)
-          .map((item) => `${item.marker} ${item.seriesName}: <strong>${item.value}</strong>`);
-        return [`<strong>${escapeTooltipText(row?.title || 'Exam')}</strong>`, escapeTooltipText(date), ...details].join('<br>');
-      },
-    },
-    legend: { data: ['Total Score', 'ELA', 'Math'], top: 30 },
-    grid: { left: '5%', right: '5%', bottom: '8%', top: '22%', containLabel: true },
-    xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: rows.map((item) => formatShortDate(item.date)),
-      axisLabel: { rotate: 45, fontSize: 11, hideOverlap: true },
-    },
-    yAxis: {
-      type: 'value',
-      name: trendChart.getWidth() < 480 ? '' : scaled ? 'Scaled Score' : 'Raw Score',
-      min: scoreAxis.min,
-      max: scoreAxis.max,
-      interval: scoreAxis.interval,
-      axisLabel: {
-        formatter: (value) => Number.isInteger(value) ? String(value) : Number(value.toFixed(1)).toString(),
-      },
-    },
-    series: [
-      { name: 'Total Score', type: 'line', data: rows.map((item) => item.total), itemStyle: { color: '#409EFF' }, lineStyle: { width: 3 }, symbol: 'circle', symbolSize: rows.length === 1 ? 10 : 7, showSymbol: true, label: { show: rows.length === 1, position: 'top', color: '#409EFF', fontWeight: 600 }, connectNulls: false },
-      { name: 'ELA', type: 'line', data: rows.map((item) => item.ela), itemStyle: { color: '#67C23A' }, lineStyle: { width: 2 }, symbol: 'circle', symbolSize: rows.length === 1 ? 9 : 6, showSymbol: true, label: { show: rows.length === 1, position: 'top', color: '#67C23A', fontWeight: 600 }, connectNulls: false },
-      { name: 'Math', type: 'line', data: rows.map((item) => item.math), itemStyle: { color: '#E6A23C' }, lineStyle: { width: 2 }, symbol: 'circle', symbolSize: rows.length === 1 ? 9 : 6, showSymbol: true, label: { show: rows.length === 1, position: 'top', color: '#E6A23C', fontWeight: 600 }, connectNulls: false },
-    ],
-  }, true);
-}
-
-function resizeTrendChart() {
-  trendChart?.resize();
-  void renderTrendChart();
-}
-
-watch([attempts, trendScoreMode, loading], async () => {
-  await nextTick();
-  await renderTrendChart();
-}, { deep: true });
-
-onMounted(async () => {
-  pageIsMounted = true;
-  await loadHistory();
-  await nextTick();
-  await renderTrendChart();
-  window.addEventListener('resize', resizeTrendChart);
-});
-
-onBeforeUnmount(() => {
-  pageIsMounted = false;
-  window.removeEventListener('resize', resizeTrendChart);
-  trendChart?.dispose();
-  trendChart = null;
-});
+onMounted(loadHistory);
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="page-shell student-detail">
       <div class="student-detail__hero">
         <div>
@@ -578,28 +458,38 @@ onBeforeUnmount(() => {
           </dl>
         </AppCard>
 
-        <AppCard title="Score Trend" subtitle="Performance over time across all exams.">
-          <div class="trend-chart-toolbar" role="group" aria-label="Score type">
-            <span>Score type</span>
-            <div class="trend-chart-toggle">
-              <button
-                type="button"
-                :class="{ 'is-active': trendScoreMode === 'RAW' }"
-                :aria-pressed="trendScoreMode === 'RAW'"
-                @click="trendScoreMode = 'RAW'"
-              >Raw</button>
-              <button
-                type="button"
-                :class="{ 'is-active': trendScoreMode === 'SCALED' }"
-                :aria-pressed="trendScoreMode === 'SCALED'"
-                @click="trendScoreMode = 'SCALED'"
-              >Scaled</button>
+        <AppCard title="Score Trend" subtitle="Available score over time, ordered from earliest to latest.">
+          <div v-if="!chart.points.length" class="student-detail__empty">No completed attempts to chart yet.</div>
+          <template v-else>
+          <p class="score-chart-scroll-hint">Swipe horizontally to view all scores.</p>
+          <div class="score-chart-scroll" tabindex="0" aria-label="Score trend chart">
+            <div class="score-chart-frame" :style="{ minWidth: `${chart.width}px` }">
+              <svg class="score-chart" :viewBox="`0 0 ${chart.width} ${chart.height}`" role="img" aria-label="Score trend over time">
+                <g class="chart-grid">
+                  <line v-for="tick in chart.ticks" :key="`line-${tick.value}`" :x1="chart.padding.left" :x2="chart.width - chart.padding.right" :y1="tick.y" :y2="tick.y" />
+                  <text v-for="tick in chart.ticks" :key="`tick-${tick.value}`" class="chart-axis-label" :x="chart.padding.left - 10" :y="tick.y" text-anchor="end" dominant-baseline="middle">{{ tick.value }}</text>
+                </g>
+                <path v-if="chart.points.length > 1" class="chart-line" :d="chart.line" />
+                <g v-for="point in chart.points" :key="point.id" class="chart-point-group" tabindex="0" role="img"
+                  :aria-label="`${point.title}, ${formatDateTime(point.date)}, ${point.scoreLabel} ${formatScore(point.score)}`"
+                  @mouseenter="hoveredTrendPoint = point" @mouseleave="hoveredTrendPoint = null"
+                  @focus="hoveredTrendPoint = point" @blur="hoveredTrendPoint = null">
+                  <circle :cx="point.x" :cy="point.y" r="12" class="chart-point-hit" />
+                  <circle :cx="point.x" :cy="point.y" r="5" class="chart-point" />
+                  <text class="chart-point-value" :x="point.x" :y="point.y - 12" text-anchor="middle">{{ formatScore(point.score) }}</text>
+                  <text class="chart-axis-label" :x="point.x" :y="chart.baseline + 18" text-anchor="middle">{{ formatShortDate(point.date) }}</text>
+                </g>
+              </svg>
+              <div v-if="hoveredTrendPoint" class="score-chart-tooltip" role="tooltip"
+                :class="{ 'is-below': hoveredTrendPoint.y < 75, 'is-left': hoveredTrendPoint.x > chart.width * 0.75, 'is-right': hoveredTrendPoint.x < chart.width * 0.25 }"
+                :style="{ left: `${hoveredTrendPoint.x / chart.width * 100}%`, top: `${hoveredTrendPoint.y / chart.height * 100}%` }">
+                <strong>{{ hoveredTrendPoint.title }}</strong>
+                <span>{{ formatDateTime(hoveredTrendPoint.date) }}</span>
+                <span>{{ hoveredTrendPoint.scoreLabel }}: {{ formatScore(hoveredTrendPoint.score) }}<template v-if="hoveredTrendPoint.scoreMax"> / {{ formatScore(hoveredTrendPoint.scoreMax) }}</template></span>
+              </div>
             </div>
           </div>
-          <div v-if="!hasTrendScores" class="student-detail__empty">
-            {{ trendScoreMode === 'SCALED' ? 'No scaled scores are available for completed attempts yet.' : 'No completed attempts to chart yet.' }}
-          </div>
-          <div v-else ref="trendChartElement" class="score-chart"></div>
+          </template>
         </AppCard>
 
         <AppCard title="Score History" subtitle="All exam attempts, latest first.">
@@ -708,7 +598,7 @@ onBeforeUnmount(() => {
         </AppCard>
       </template>
     </section>
-  </AdminLayout>
+
 </template>
 
 <style scoped>
@@ -827,49 +717,25 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.trend-chart-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  margin: -2px 0 10px;
-  color: var(--color-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.trend-chart-toggle {
-  display: inline-flex;
-  gap: 2px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 3px;
-  background: #f7faff;
-}
-
-.trend-chart-toggle button {
-  border: 0;
-  border-radius: 6px;
-  padding: 5px 10px;
-  color: var(--color-muted);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-
-.trend-chart-toggle button.is-active {
-  color: var(--color-primary-strong);
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(23, 32, 51, 0.12);
-}
-
-.score-chart {
-  width: 100%;
-  height: 400px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: #ffffff;
-}
+.score-chart-scroll-hint { display: none; margin: 0 0 8px; color: var(--color-muted); font-size: 12px; }
+.score-chart-scroll { max-width: 100%; overflow-x: auto; }
+.score-chart-frame { position: relative; width: 100%; }
+.score-chart { display: block; width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #fbfdff; }
+.chart-grid line { stroke: var(--color-border); stroke-width: 1; }
+.chart-axis-label { fill: var(--color-muted); font-size: 11px; }
+.chart-line { fill: none; stroke: var(--color-primary); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.chart-point-hit { fill: transparent; cursor: pointer; }
+.chart-point { fill: var(--color-primary); stroke: #fff; stroke-width: 2; pointer-events: none; }
+.chart-point-value { fill: var(--color-text); font-size: 12px; font-weight: 700; pointer-events: none; }
+.chart-point-group:focus { outline: none; }
+.chart-point-group:focus-visible .chart-point { stroke: #173f91; stroke-width: 3; }
+.score-chart-tooltip { position: absolute; z-index: 2; display: grid; gap: 4px; min-width: 150px; max-width: 240px; border: 1px solid var(--color-border); border-radius: 8px; padding: 9px 11px; color: var(--color-text); background: #fff; box-shadow: 0 8px 24px rgba(23, 32, 51, .14); font-size: 12px; line-height: 1.4; pointer-events: none; transform: translate(-50%, calc(-100% - 10px)); }
+.score-chart-tooltip span { color: var(--color-muted); }
+.score-chart-tooltip.is-below { transform: translate(-50%, 12px); }
+.score-chart-tooltip.is-left { transform: translate(calc(-100% + 10px), calc(-100% - 10px)); }
+.score-chart-tooltip.is-right { transform: translate(-10px, calc(-100% - 10px)); }
+.score-chart-tooltip.is-left.is-below { transform: translate(calc(-100% + 10px), 12px); }
+.score-chart-tooltip.is-right.is-below { transform: translate(-10px, 12px); }
 
 .table-wrap {
   overflow-x: auto;
@@ -1076,6 +942,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 780px) {
+  .score-chart-scroll-hint { display: block; }
   .student-detail :deep(.app-card) { padding: 20px; }
 
   .student-detail__hero {
@@ -1092,7 +959,6 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .score-chart { height: 300px; }
 }
 
 @media (max-width: 420px) {

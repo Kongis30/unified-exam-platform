@@ -3,6 +3,7 @@ package com.unifiedexam.platform.examtype.shsat.admin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -25,8 +26,8 @@ public class ShsatAdminReportController {
     }
 
     @GetMapping("/students/{studentId}/attempts")
-    public List<Map<String, Object>> studentAttemptHistory(@PathVariable long studentId) {
-        return reportService.studentAttemptHistory(studentId);
+    public List<Map<String, Object>> studentAttemptHistory(@PathVariable long studentId, @RequestParam(required = false) Long classId) {
+        return classId == null ? reportService.studentAttemptHistory(studentId) : reportService.studentAttemptHistory(studentId, classId);
     }
 
     @GetMapping("/attempts/{attemptId}/result")

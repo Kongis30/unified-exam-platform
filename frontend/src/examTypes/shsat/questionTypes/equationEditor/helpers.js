@@ -157,7 +157,10 @@ export function formatEquationPreview(value = '') {
   }
 
   return text
-    .replace(/\\frac\s*\{([^{}]+)}\s*\{([^{}]+)}/g, '($1) ÷ ($2)')
+    .replace(/\\frac\s*(?:\{([^{}]+)}|([A-Za-z0-9]))\s*(?:\{([^{}]+)}|([A-Za-z0-9]))/g,
+      (_, bracedNumerator, plainNumerator, bracedDenominator, plainDenominator) => (
+        `(${bracedNumerator || plainNumerator}) ÷ (${bracedDenominator || plainDenominator})`
+      ))
     .replace(/\\sqrt\s*\{([^{}]+)}/g, '√($1)')
     .replace(/\\left\|([^|]+)\\right\|/g, '|$1|')
     .replace(/\\leq?|≤/g, ' ≤ ')

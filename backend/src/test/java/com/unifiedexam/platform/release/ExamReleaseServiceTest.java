@@ -43,7 +43,7 @@ class ExamReleaseServiceTest {
             .thenReturn(true);
         var request = new ExamReleaseService.ExamRequest("Exam", "D".repeat(501),
             java.time.OffsetDateTime.parse("2026-10-28T09:00:00Z"), java.time.OffsetDateTime.parse("2026-10-28T12:00:00Z"),
-            7200, 1, "ALL_STUDENTS", true, true);
+            7200, 1, "SELECTED", true, true);
 
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
             () -> service.create(12L, request, "admin"));
@@ -77,7 +77,7 @@ class ExamReleaseServiceTest {
             invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
         var request = new ExamReleaseService.ExamRequest("Exam", description,
             java.time.OffsetDateTime.parse("2026-10-28T09:00:00Z"), java.time.OffsetDateTime.parse("2026-10-28T12:00:00Z"),
-            7200, 1, "ALL_STUDENTS", true, true);
+            7200, 1, "SELECTED", true, true);
 
         var created = service.create(12L, request, "admin");
 
@@ -140,7 +140,7 @@ class ExamReleaseServiceTest {
 
         service.create(12L, new ExamReleaseService.ExamRequest("Exam", null,
             java.time.OffsetDateTime.parse("2026-10-24T09:00:00Z"), java.time.OffsetDateTime.parse("2026-10-24T12:00:00Z"),
-            7200, 1, "ALL_STUDENTS", true, true), "admin");
+            7200, 1, "SELECTED", true, true), "admin");
 
         org.mockito.ArgumentCaptor<String> sql = forClass(String.class);
         verify(jdbc).update(sql.capture(), any(Object[].class));
@@ -309,6 +309,52 @@ class ExamReleaseServiceTest {
 
         assertEquals(404, error.getStatusCode().value());
         verify(jdbc, never()).update(any(String.class), eq(41L));
+    }
+
+    @Test
+    void selectedClassMustBelongToTheExamsWorkspace() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        when(jdbc.query(argThat(sql -> sql != null && sql.contains("SELECT status FROM exams")), any(ResultSetExtractor.class), eq(41L)))
+            .thenReturn("DRAFT");
+        when(jdbc.query(argThat(sql -> sql != null && sql.contains("SELECT target_scope FROM exams")), any(ResultSetExtractor.class), eq(41L)))
+            .thenReturn("SELECTED");
+        when(jdbc.queryForObject(argThat(sql -> sql.contains("class_exam_workspaces")), eq(Boolean.class), eq(41L), eq(7L)))
+            .thenReturn(false);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+            () -> service.saveTargets(41L, new ExamReleaseService.TargetRequest(List.of(7L), List.of())));
+
+        assertEquals(400, error.getStatusCode().value());
+        verify(jdbc, never()).update(any(String.class), any(Object[].class));
+    }
+
+    @Test
+    void selectedStudentRequiresExplicitClassSource() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        when(jdbc.query(argThat(sql -> sql != null && sql.contains("SELECT status FROM exams")), any(ResultSetExtractor.class), eq(41L))).thenReturn("DRAFT");
+        when(jdbc.query(argThat(sql -> sql != null && sql.contains("SELECT target_scope FROM exams")), any(ResultSetExtractor.class), eq(41L))).thenReturn("SELECTED");
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+            () -> service.saveTargets(41L, new ExamReleaseService.TargetRequest(List.of(), List.of(11L))));
+        assertEquals(400, error.getStatusCode().value());
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+    }
+
+    @Test
+    void selectedStudentMustBelongToTheSelectedClassInTheExamWorkspace() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        when(jdbc.query(argThat(sql -> sql != null && sql.contains("SELECT status FROM exams")), any(ResultSetExtractor.class), eq(41L))).thenReturn("DRAFT");
+        when(jdbc.query(argThat(sql -> sql != null && sql.contains("SELECT target_scope FROM exams")), any(ResultSetExtractor.class), eq(41L))).thenReturn("SELECTED");
+        when(jdbc.queryForObject(argThat(sql -> sql.contains("FROM users WHERE id")), eq(Boolean.class), eq(11L))).thenReturn(true);
+        when(jdbc.queryForObject(argThat(sql -> sql.contains("FROM class_memberships cm")), eq(Boolean.class), eq(41L), eq(7L), eq(11L))).thenReturn(false);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.saveTargets(41L,
+            new ExamReleaseService.TargetRequest(List.of(), List.of(11L), List.of(new ExamReleaseService.StudentClassTarget(7L, 11L)))));
+        assertEquals(400, error.getStatusCode().value());
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
     }
 
     @Test

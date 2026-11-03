@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import { readEditorSelection, writeEditorSelection } from '@/utils/editorSelectionStorage';
 import MixedContent from '@shsat/components/MixedContent.vue';
 import MonitorQuestionDetail from '@shsat/components/MonitorQuestionDetail.vue';
@@ -3290,7 +3289,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="paper-edit page-shell">
       <Teleport to="body">
         <div v-if="noticeMessage" class="notice" :class="`notice--${noticeType}`" role="status" aria-live="polite">
@@ -4503,7 +4502,7 @@ onBeforeUnmount(() => {
         </div>
       </Teleport>
     </section>
-  </AdminLayout>
+
 </template>
 
 <style scoped>

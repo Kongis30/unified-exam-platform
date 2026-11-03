@@ -78,6 +78,94 @@ async function main() {
     const questionNumber = student.locator('.question-number');
     await questionNumber.filter({ hasText: 'Question 1' }).waitFor();
     const timerAtQuestionStart = parseTimer(await student.locator('.timer-display').innerText());
+    await student.waitForTimeout(1_600);
+    await student.evaluate(() => document.exitFullscreen());
+    const focusWarning = student.locator('.focus-violation-modal');
+    const fullscreenOverlay = student.locator('.fullscreen-required-overlay');
+    await focusWarning.getByRole('heading', { name: 'Warning', exact: true }).waitFor();
+    await focusWarning.getByText(/You left the exam page\. This is the 1 time and has been recorded/).waitFor();
+    await fullscreenOverlay.waitFor({ state: 'detached' });
+    let recordedViolationCount = 0;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const state = await api(student, `/api/student/attempts/${attemptId}`);
+      recordedViolationCount = Number(state.progressState?.focusViolationCount || 0);
+      if (recordedViolationCount === 1) break;
+      await student.waitForTimeout(100);
+    }
+    assert.equal(recordedViolationCount, 1,
+      'leaving fullscreen opens the warning and records the violation on the server');
+    await student.screenshot({ path: `/tmp/shsat-exam-focus-warning-desktop-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    assert.ok(await student.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      'the focus warning fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-exam-focus-warning-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 900 });
+
+    await student.evaluate(() => { window.__failNextFullscreenRequest = true; });
+    await focusWarning.getByRole('button', { name: 'OK, Continue', exact: true }).click();
+    await focusWarning.getByText(/Fullscreen could not start/).waitFor();
+    await focusWarning.getByRole('button', { name: 'Retry Fullscreen', exact: true }).waitFor();
+    assert.equal(await student.evaluate(() => Boolean(document.fullscreenElement)), false,
+      'a rejected fullscreen request keeps the active exam locked');
+    await focusWarning.getByRole('button', { name: 'Retry Fullscreen', exact: true }).click();
+    await focusWarning.waitFor({ state: 'hidden' });
+    await fullscreenOverlay.waitFor({ state: 'detached' });
+    assert.equal(await student.evaluate(() => Boolean(document.fullscreenElement)), true,
+      'continuing from the warning restores fullscreen before resuming');
+    await student.waitForTimeout(1_600);
+    await questionNumber.filter({ hasText: 'Question 1' }).waitFor();
+    assert.equal(parseTimer(await student.locator('.timer-display').innerText()) <= timerAtQuestionStart, true,
+      'the exam remains on the same question and its timer continues after restoring fullscreen');
+    await student.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await focusWarning.getByText(/You left the exam page\. This is the 2 time and has been recorded/).waitFor();
+    let hiddenViolationCount = 0;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const state = await api(student, `/api/student/attempts/${attemptId}`);
+      hiddenViolationCount = Number(state.progressState?.focusViolationCount || 0);
+      if (hiddenViolationCount === 2) break;
+      await student.waitForTimeout(100);
+    }
+    assert.equal(hiddenViolationCount, 2,
+      'a sustained hidden-page visibility event is recorded after its debounce delay');
+    await student.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await focusWarning.getByRole('button', { name: 'OK, Continue', exact: true }).click();
+    await focusWarning.waitFor({ state: 'hidden' });
+    assert.equal(await student.evaluate(() => Boolean(document.fullscreenElement)), true,
+      'the student can continue after returning from a hidden page');
+    await student.waitForTimeout(1_600);
+    await student.evaluate(() => {
+      const originalSetTimeout = window.setTimeout;
+      window.setTimeout = (callback, delay, ...args) => (
+        delay === 1_200 ? 0 : originalSetTimeout(callback, delay, ...args)
+      );
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await student.waitForTimeout(1_300);
+    await student.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await focusWarning.getByText(/You left the exam page\. This is the 3 time and has been recorded/).waitFor();
+    let throttledViolationCount = 0;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const state = await api(student, `/api/student/attempts/${attemptId}`);
+      throttledViolationCount = Number(state.progressState?.focusViolationCount || 0);
+      if (throttledViolationCount === 3) break;
+      await student.waitForTimeout(100);
+    }
+    assert.equal(throttledViolationCount, 3,
+      'returning from a sustained hidden state records a violation when the background timer was throttled');
+    await focusWarning.getByRole('button', { name: 'OK, Continue', exact: true }).click();
+    await focusWarning.waitFor({ state: 'hidden' });
+    assert.equal(await student.evaluate(() => Boolean(document.fullscreenElement)), true,
+      'the student can resume after a violation detected on return');
     const choices = student.locator('.choice-answer__option');
     assert.ok(await choices.count() >= 2, 'Question 1 renders the multiple-choice answer control');
     assert.equal(await choices.first().locator('input[type="radio"]').isChecked(), true,
@@ -221,6 +309,9 @@ async function main() {
     assert.deepEqual(pageErrors, []);
     console.log(JSON.stringify({ result: 'PASS', checks: ['in-progress exam exposes Continue on student home',
       'Continue restores the active attempt and saved answer', 'change an existing answer then clear it',
+      'exit fullscreen records a violation, shows a warning, and resumes in fullscreen',
+      'sustained hidden-page visibility records one violation and allows the student to continue',
+      'returning after a sustained hidden state records a violation even when the background timer is throttled',
       'clear answer remains local after a failed save and persists on retry', 'cleared answer survives refresh',
       'refresh resumes the remaining server-backed timer', 'countdown auto-submits when time expires',
       'auto-submit disabled shows the English time-up message', '390px active exam layout',
@@ -286,6 +377,10 @@ async function installFullscreenMock(page) {
     Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => activeElement });
     Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: true });
     document.documentElement.requestFullscreen = async function () {
+      if (window.__failNextFullscreenRequest) {
+        window.__failNextFullscreenRequest = false;
+        throw new DOMException('Fullscreen denied for this attempt', 'NotAllowedError');
+      }
       activeElement = this;
       document.dispatchEvent(new Event('fullscreenchange'));
     };

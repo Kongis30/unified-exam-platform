@@ -42,7 +42,7 @@ const chart = computed(() => {
   const highestScore = points.reduce((score, point) => Math.max(score, point.averageScore), points[0]?.averageScore ?? 0)
   const dataRange = highestScore - lowestScore
   const scorePadding = dataRange === 0 ? (scoreMetric.value === 'scaled' ? 10 : 1) : dataRange * 0.12
-  const step = niceStep((dataRange + scorePadding * 2) / 5)
+  const step = Math.max(1, niceStep((dataRange + scorePadding * 2) / 5))
   const min = Math.max(scoreMetric.value === 'raw' ? 0 : -Infinity,
     Math.floor((lowestScore - scorePadding) / step) * step)
   const max = Math.ceil((highestScore + scorePadding) / step) * step
@@ -51,11 +51,18 @@ const chart = computed(() => {
     const value = min + step * index
     return { value, y: padding.top + plotHeight - ((value - min) / range) * plotHeight }
   })
-  const plottedPoints = points.map((point, index) => ({
-    ...point,
-    x: padding.left + (points.length > 1 ? (plotWidth / (points.length - 1)) * index : plotWidth / 2),
-    y: padding.top + plotHeight - ((point.averageScore - min) / range) * plotHeight,
-  }))
+  const plottedPoints = points.map((point, index) => {
+    const x = padding.left + (points.length > 1 ? (plotWidth / (points.length - 1)) * index : plotWidth / 2)
+    const isFirstPoint = points.length > 1 && index === 0
+    const isLastPoint = points.length > 1 && index === points.length - 1
+    return {
+      ...point,
+      x,
+      y: padding.top + plotHeight - ((point.averageScore - min) / range) * plotHeight,
+      valueLabelX: isFirstPoint ? x + 12 : isLastPoint ? x - 12 : x,
+      valueLabelAnchor: isFirstPoint ? 'start' : isLastPoint ? 'end' : 'middle',
+    }
+  })
 
   return {
     width, height, padding, yTicks, points: plottedPoints,
@@ -100,11 +107,11 @@ function tooltipStyle(point) {
 }
 
 function formatNumber(value) {
-  return Number(value).toFixed(2).replace(/\.00$/, '')
+  return String(Math.round(Number(value)))
 }
 
 function formatAxisNumber(value) {
-  return Number(value).toFixed(1).replace(/\.0$/, '')
+  return String(Math.round(Number(value)))
 }
 
 function formatDate(value) {
@@ -175,7 +182,7 @@ watch(scoreMetric, () => { hoveredPoint.value = null })
             @focus="hoveredPoint = point" @blur="hoveredPoint = null"
           >
             <circle class="class-score-chart__point" :cx="point.x" :cy="point.y" r="5" />
-            <text class="class-score-chart__value" :x="point.x" :y="point.y - 12" text-anchor="middle">{{ formatNumber(point.averageScore) }}</text>
+            <text class="class-score-chart__value" :x="point.valueLabelX" :y="point.y - 12" :text-anchor="point.valueLabelAnchor">{{ formatNumber(point.averageScore) }}</text>
             <text class="class-score-chart__axis-label" :x="point.x" :y="chart.baselineY + 18" text-anchor="middle">{{ formatDate(point.examDate) }}</text>
           </g>
         </svg>

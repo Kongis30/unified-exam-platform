@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="paper-export__print-hint no-print">
-      In print settings, turn off “Headers and footers” to omit the browser date and URL. The document includes the paper name and page number.
+      The document includes the paper name and page number.
     </p>
     <p v-if="noticeMessage" class="paper-export__notice no-print" role="alert">{{ noticeMessage }}</p>
     <p v-if="hasOtherQuestions" class="paper-export__notice no-print">
@@ -515,7 +515,8 @@ onBeforeUnmount(() => {
 
 @page {
   size: letter;
-  margin: .72in .72in .62in;
+  /* 页眉页脚留白不足以容纳浏览器自动添加的时间和网址。 */
+  margin: .18in .72in;
 
   @top-center {
     content: "";
@@ -534,7 +535,7 @@ onBeforeUnmount(() => {
   html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
   .paper-export { min-height: 0; padding: 0; background: #fff; }
   .no-print { display: none !important; }
-  .paper-export__document-scroll { width: auto; max-width: none; margin: 0; overflow: visible; }
+  .paper-export__document-scroll { width: auto; max-width: none; margin: 0; padding: .54in 0 .44in; overflow: visible; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
   .print-cover, .print-blank-page, .print-section { width: auto; min-height: 9.66in; margin: 0; padding: .16in 0 .3in; box-shadow: none; }
   .answer-document-heading, .answer-key, .answer-details { width: auto; margin: 0; padding-right: 0; padding-left: 0; }
   .answer-key__grid { grid-template-rows: repeat(var(--answer-key-rows, 25), auto); }

@@ -1,10 +1,11 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { authState } from './auth'
 import { getExamTypes, logout } from './api/platform'
 import AccountMenu from './components/AccountMenu.vue'
+import AdminLayout from './components/admin/AdminLayout.vue'
 import { groupExamTypesIntoWorkspaces } from './examTypes/workspaces'
 
 const router = useRouter()
@@ -15,28 +16,30 @@ const isExamRoute = computed(() => [
   'student-exam', 'shsat-student-exam', 'sat-student-exam', 'sat-exam-break',
   'sat-module-wait', 'sat-report-wait',
 ].includes(route.name))
-const isStaffReportRoute = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode)
-  && ['sat-student-scores', 'sat-exam-results', 'sat-report'].includes(route.name))
-const hasOwnAdminLayout = computed(() => route.name?.startsWith('admin-')
-  || ['shsat-admin', 'sat-admin', 'sat-paper-edit', 'sat-admin-exam-monitor', 'sat-student-scores',
-    'sat-exam-results', 'student-attempt-report'].includes(route.name)
-  || isStaffReportRoute.value)
+const isStaff = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode))
+const isPaperView = computed(() => ['sat-paper-preview', 'psat-paper-preview', 'sat-paper-export',
+  'psat-paper-export', 'admin-paper-preview', 'admin-paper-export'].includes(route.name))
 
 function workspaceRoute(code) {
   if (['ADMIN', 'TEACHER'].includes(authState.user?.roleCode)) {
-    return { name: code === 'SHSAT' ? 'shsat-admin' : 'sat-admin' }
+    return ['SHSAT', 'SAT', 'PSAT'].includes(code)
+      ? { name: `${code.toLowerCase()}-admin` }
+      : { name: 'exam-type', params: { code } }
   }
   return { name: 'student-workspace', params: { code } }
 }
 
 // 主导航按注册表声明的工作区归并项目，新增系统后无需再改写导航。
-onMounted(async () => {
+watch([() => authState.user?.username, () => route.fullPath], async ([username], previous) => {
+  if (previous?.[0] !== username) examTypes.value = []
+  if (!username || isStaff.value) return
   try {
-    examTypes.value = await getExamTypes()
+    const types = await getExamTypes()
+    if (authState.user?.username === username) examTypes.value = types
   } catch {
-    examTypes.value = []
+    if (authState.user?.username === username) examTypes.value = []
   }
-})
+}, { immediate: true })
 
 async function signOut() {
   try {
@@ -51,13 +54,14 @@ async function signOut() {
 
 <template>
   <RouterView v-if="$route.name === 'login'" />
-  <RouterView v-else-if="hasOwnAdminLayout" />
+  <RouterView v-else-if="isPaperView" />
+  <AdminLayout v-else-if="isStaff && !isExamRoute"><RouterView /></AdminLayout>
   <div v-else class="main-layout" :class="{ 'main-layout--exam': isExamRoute }">
     <header v-if="!isExamRoute" class="main-layout__header">
-      <RouterLink class="main-layout__brand" to="/" aria-label="Unified Exam Platform home">
+      <RouterLink class="main-layout__brand" to="/" aria-label="Jin Exam System home">
         <span class="main-layout__mark"><img src="/logo.png" alt="" /></span>
         <span>
-          <strong>Unified Exam</strong>
+          <strong>Jin Exam System</strong>
           <small>Assessment Platform</small>
         </span>
       </RouterLink>

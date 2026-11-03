@@ -190,7 +190,6 @@ async function main() {
       ['/api/student/sat-practice-papers', 'GET'],
       ['/api/student/sat-practice-attempts?page=1&size=10', 'GET'],
       [`/api/student/sat-practice-papers/${paperId}/attempts`, 'POST'],
-      ['/api/student/sat-practice-attempts/999999999', 'DELETE'],
     ];
     for (const [path, method] of practiceEndpoints) {
       const response = await raw(admin, path, method);
@@ -378,6 +377,9 @@ async function main() {
       'practice results do not enter formal SAT score history');
     assert.equal(scoresAfterPractice.statistics.sat.attempts, 2,
       'practice results do not change formal SAT attempt statistics');
+    const studentPracticeDelete = await raw(student,
+      `/api/student/sat-practice-attempts/${practiceAttemptId}`, 'DELETE');
+    assert.equal(studentPracticeDelete.status, 404, 'students cannot delete a completed practice report');
     await teacher.goto(`${baseUrl}/exam-types/SAT/admin/classes/${classId}/students/${studentId}/scores?scoreMode=RAW`);
     await teacher.getByRole('heading', { name: 'SAT Parity Student' }).waitFor();
     const teacherScoreRows = teacher.locator('.sat-score-history-table tbody tr');
@@ -390,6 +392,10 @@ async function main() {
     await student.goto(`${baseUrl}/student/systems/SAT`);
     const practiceRow = student.locator('.practice-history-row').filter({ hasText: practicePaper.title });
     await practiceRow.waitFor();
+    assert.equal(await practiceRow.getByRole('button', { name: 'Delete' }).count(), 0,
+      'completed practice history does not expose a report deletion action');
+    assert.equal(await practiceRow.getByRole('button', { name: 'View report' }).count(), 1,
+      'the completed practice report remains available');
     await practiceRow.getByRole('button', { name: 'View report' }).click();
     await student.getByRole('heading', { name: 'Score Report' }).waitFor({ timeout: 15_000 });
     await student.locator('.mode-badge', { hasText: 'Practice' }).waitFor();

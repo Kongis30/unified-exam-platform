@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
 
 /** 按新版 SHSAT 题型结构评分；未作答、需人工评分或题型尚未支持时返回 null。 */
 @Component
-final class ShsatQuestionGrader {
+public final class ShsatQuestionGrader {
 
     private static final String[] MAX_SELECTION_FIELDS = {"selectionLimit", "maxSelections", "maxSelected"};
     private static final String[] EXACT_SELECTION_FIELDS = {"requiredSelections", "exactSelections", "selectCount", "selectionCount"};
@@ -59,7 +59,7 @@ final class ShsatQuestionGrader {
         return false;
     }
 
-    boolean hasMeaningfulAnswer(String rawType, JsonNode answer) {
+    public boolean hasMeaningfulAnswer(String rawType, JsonNode answer) {
         if (normalize(rawType).equals("SOLUTION_SET")) return solution(answer) != null;
         return hasMeaningfulAnswer(answer);
     }
@@ -145,6 +145,12 @@ final class ShsatQuestionGrader {
 
     private boolean textAnswer(String type, JsonNode key, JsonNode answer, JsonNode config) {
         String submitted = text(first(answer, "value", "answer", "text"));
+        if (submitted.isBlank()) {
+            JsonNode submittedAnswers = first(answer, "answers", "values");
+            if (submittedAnswers != null && submittedAnswers.isArray() && !submittedAnswers.isEmpty()) {
+                submitted = text(submittedAnswers.get(0));
+            }
+        }
         if (submitted.isBlank() && answer != null && answer.isValueNode()) submitted = answer.asText("");
         if (submitted.isBlank()) return false;
         JsonNode accepted = first(key, "acceptedAnswers", "answers", "values", "value", "answer", "correct");
@@ -253,17 +259,22 @@ final class ShsatQuestionGrader {
     }
 
     private boolean tableGrid(JsonNode key, JsonNode answer, JsonNode config) {
-        boolean textMode = Set.of("text", "fill", "fill_blank", "table_fill_blank")
-            .contains(token(text(first(config, "selectionMode", "mode")).toLowerCase(Locale.ROOT)));
+        boolean textMode = Set.of("TEXT", "FILL", "FILL_BLANK", "TABLE_FILL_BLANK")
+            .contains(token(text(first(config, "selectionMode", "mode"))));
         Map<String, Set<String>> expected = tableRows(key, textMode);
         Map<String, Set<String>> submitted = tableRows(answer, textMode);
         if (expected.isEmpty() || !expected.equals(submitted)
-            || duplicateTableSelections(key) > 0 || duplicateTableSelections(answer) > 0) return false;
+            || duplicateTableSelections(key) > 0 || duplicateTableSelections(answer) > 0) {
+            return false;
+        }
         Set<String> rowIds = ids(array(config, "rows", "tableRows"));
         Set<String> colIds = ids(array(config, "columns", "tableColumns"));
         for (Map.Entry<String, Set<String>> row : expected.entrySet()) {
             if (!rowIds.isEmpty() && !rowIds.contains(row.getKey())) return false;
-            for (String col : row.getValue()) if (!colIds.isEmpty() && !colIds.contains(col)) return false;
+            for (String cell : row.getValue()) {
+                String columnId = textMode ? cell.substring(0, cell.indexOf('=')) : cell;
+                if (!colIds.isEmpty() && !colIds.contains(columnId)) return false;
+            }
         }
         return true;
     }

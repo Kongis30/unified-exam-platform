@@ -33,4 +33,10 @@ class ShsatWrongAnswerTaskPolicyTest {
         assertEquals("RETRY_REQUIRED", ShsatWrongAnswerTaskPolicy.studentStatus("PUBLISHED", "SUBMITTED", "IN_PROGRESS", 1));
         assertEquals("NOT_STARTED", ShsatWrongAnswerTaskPolicy.studentStatus("PUBLISHED", null, "NOT_STARTED", 2));
     }
+
+    @Test
+    void emptyAssignmentsKeepTheirSourceEligibilityState() {
+        assertEquals("NO_SOURCE_ATTEMPT", ShsatWrongAnswerTaskPolicy.studentStatus("PUBLISHED", null, "NO_SOURCE_ATTEMPT", 0));
+        assertEquals("NO_WRONG_ANSWERS", ShsatWrongAnswerTaskPolicy.studentStatus("PUBLISHED", null, "NO_WRONG_ANSWERS", 0));
+    }
 }

@@ -1,5 +1,5 @@
 <template>
-  <component :is="isStaff ? AdminLayout : 'div'" class="report-page" :class="{ 'report-page--admin': isStaff }">
+  <div class="report-page" :class="{ 'report-page--admin': isStaff }">
     <header v-if="!isStaff" class="topbar">
       <div class="brand">JIN SAT&amp;PSAT System</div>
       <nav class="actions">
@@ -16,7 +16,7 @@
           Export PDF
         </button>
           <a v-if="isStaff" class="home" href="/">Return to Home</a>
-          <RouterLink v-else class="home" :to="{ name: 'student-workspace', params: { code: 'SAT' } }">Back to SAT exams</RouterLink>
+          <RouterLink v-else class="home" :to="{ name: 'student-workspace', params: { code: reportData.scoringType } }">Back to {{ reportData.scoringType }} exams</RouterLink>
       </nav>
     </header>
 
@@ -223,14 +223,13 @@
       </section>
 
     </main>
-  </component>
+  </div>
 </template>
 
 <script>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { authState } from '@/auth'
-import AdminLayout from '@/components/admin/AdminLayout.vue'
 
 export default {
   name: 'Report',
@@ -256,7 +255,7 @@ export default {
     const isStaff = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode))
     const staffReturnPath = computed(() => {
       const path = router.currentRoute.value.query.returnTo
-      return typeof path === 'string' && path.startsWith('/exam-types/SAT/admin/') ? path : ''
+      return typeof path === 'string' && (/^\/(sat|psat)\/admin\//.test(path) || path.startsWith('/exam-types/SAT/admin/') || path.startsWith('/exam-types/PSAT/admin/')) ? path : ''
     })
 
     const returnToStaffPage = () => {
@@ -559,7 +558,6 @@ export default {
       exportToPDF,
       openQuestion,
       retryReport,
-      AdminLayout,
       formatPercent,
       accuracyClass,
       knowledgeKey,
@@ -900,29 +898,7 @@ export default {
 .bad { color: #F56C6C; font-weight: 600; }
 .unknown { color: #909399; }
 
-@media print {
-  .topbar {
-    display: none;
-  }
 
-  .report-heading-actions { display: none; }
-
-  .report-page {
-    min-height: auto;
-    color: #000;
-  }
-
-  .content {
-    max-width: none;
-    margin: 0;
-  }
-
-  .report-info,
-  .card {
-    box-shadow: none;
-    break-inside: avoid;
-  }
-}
 
 @media (max-width: 820px) {
   .content {

@@ -543,6 +543,12 @@ public class PaperService {
         long newPaperId = insertPaper(source.summary().examTypeCode(), source.groupId(), code, nextVersion,
             source.summary().title(), source.description(), source.summary().defaultDurationSeconds(),
             sourcePaperId, userId(actorUsername));
+        jdbcTemplate.update("""
+            UPDATE papers AS new_paper
+            JOIN papers AS source_paper ON source_paper.id = ?
+            SET new_paper.default_scoring_profile_id = source_paper.default_scoring_profile_id
+            WHERE new_paper.id = ?
+            """, sourcePaperId, newPaperId);
         saveStructure(newPaperId, new SaveStructureRequest(source.sections().stream().map(this::toRequest).toList(),
             source.materials().stream().map(MaterialWriteRequest::from).toList()));
         if (isSatWorkspaceType(source.summary().examTypeCode())) {

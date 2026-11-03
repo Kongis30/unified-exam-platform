@@ -47,36 +47,35 @@ public class ClassAdminController {
     public List<ClassView> listClasses(@RequestParam(required = false) List<String> examTypeCodes) {
         List<String> types = validateExamTypeCodes(examTypeCodes);
         List<Object> parameters = new java.util.ArrayList<>(types);
+        parameters.addAll(types);
         String typeFilter = examTypeFilter(types);
+        String workspaceFilter = classWorkspaceFilter(types);
         return jdbcTemplate.query("""
             SELECT c.id, c.name, c.description, c.status, c.sort_order,
                    meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
-                (SELECT COUNT(*) FROM class_memberships m WHERE m.class_id = c.id AND m.left_at IS NULL) AS student_count,
+                (SELECT COUNT(*) FROM class_memberships m JOIN users u ON u.id = m.student_user_id
+                 WHERE m.class_id = c.id AND m.left_at IS NULL AND u.role_code = 'STUDENT') AS student_count,
                 CASE WHEN NOT EXISTS (
                     SELECT 1 FROM class_memberships active_members
                     WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
                 ) AND NOT EXISTS (
                     SELECT 1 FROM shsat_wrong_answer_tasks review_tasks WHERE review_tasks.class_id = c.id
-                ) THEN TRUE ELSE FALSE END AS deletable,
+                ) AND NOT EXISTS (SELECT 1 FROM class_membership_periods p WHERE p.class_id = c.id)
+                  AND NOT EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.class_id = c.id)
+                  AND NOT EXISTS (SELECT 1 FROM exam_participant_classes pc WHERE pc.class_id = c.id)
+                  AND NOT EXISTS (SELECT 1 FROM exam_target_student_classes st WHERE st.class_id = c.id)
+                THEN TRUE ELSE FALSE END AS deletable,
                 (SELECT COUNT(DISTINCT a.exam_id)
-                 FROM class_memberships m
-                 JOIN attempts a ON a.student_user_id = m.student_user_id
+                 FROM attempt_classes ac
+                 JOIN attempts a ON a.id = ac.attempt_id
                  JOIN exams e ON e.id = a.exam_id
                  JOIN papers p ON p.id = e.paper_id
-                 WHERE m.class_id = c.id
-                   AND m.joined_at <= a.started_at
-                   AND (m.left_at IS NULL OR a.started_at <= m.left_at)
-                   AND a.is_practice = FALSE
-                   AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
-                       SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = c.id
-                   ) OR EXISTS (
-                       SELECT 1 FROM exam_target_students ts
-                       WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
-                   ))
+                 WHERE ac.class_id = c.id AND a.is_practice = FALSE
                    %s) AS exam_count
             FROM classes c LEFT JOIN shsat_class_metadata meta ON meta.class_id = c.id
+            WHERE 1 = 1 %s
             ORDER BY c.sort_order, c.id DESC
-            """.formatted(typeFilter), (rs, rowNum) -> classView(rs), parameters.toArray());
+            """.formatted(typeFilter, workspaceFilter), (rs, rowNum) -> classView(rs), parameters.toArray());
     }
 
     @GetMapping("/available-students")
@@ -122,10 +121,8 @@ public class ClassAdminController {
             FROM exams e JOIN papers p ON p.id = e.paper_id
             WHERE p.exam_type_code IN (%s) AND EXISTS (
                 SELECT 1 FROM attempts a
-                JOIN class_memberships cm ON cm.student_user_id = a.student_user_id
-                WHERE a.exam_id = e.id AND a.is_practice = FALSE AND cm.class_id = ?
-                  AND cm.joined_at <= a.started_at
-                  AND (cm.left_at IS NULL OR a.started_at <= cm.left_at)
+                JOIN attempt_classes ac ON ac.attempt_id = a.id
+                WHERE a.exam_id = e.id AND a.is_practice = FALSE AND ac.class_id = ?
             ) AND NOT EXISTS (
                 SELECT 1 FROM sat_exam_settings ses
                 WHERE ses.exam_id = e.id AND ses.is_practice_archive = TRUE
@@ -173,8 +170,8 @@ public class ClassAdminController {
                            PARTITION BY e.id, a.student_user_id
                            ORDER BY a.submitted_at DESC, a.id DESC
                        ) AS attempt_rank
-                FROM class_memberships cm
-                JOIN attempts a ON a.student_user_id = cm.student_user_id
+                FROM attempt_classes ac
+                JOIN attempts a ON a.id = ac.attempt_id
                 JOIN attempt_results r ON r.attempt_id = a.id
                 LEFT JOIN sat_attempt_details d ON d.attempt_id = a.id
                 JOIN exams e ON e.id = a.exam_id
@@ -190,19 +187,10 @@ public class ClassAdminController {
                     WHERE breakdown_code IN ('ELA', 'MATH')
                     GROUP BY attempt_id
                 ) shsat ON shsat.attempt_id = a.id AND p.exam_type_code = 'SHSAT'
-                WHERE cm.class_id = ?
+                WHERE ac.class_id = ?
                   AND a.status IN ('SUBMITTED', 'COMPLETED')
                   AND a.is_practice = FALSE
                   AND p.exam_type_code IN (%s)
-                  AND cm.joined_at <= COALESCE(a.submitted_at, a.started_at)
-                  AND (cm.left_at IS NULL OR COALESCE(a.submitted_at, a.started_at) <= cm.left_at)
-                  AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
-                      SELECT 1 FROM exam_target_classes tc
-                      WHERE tc.exam_id = e.id AND tc.class_id = cm.class_id
-                  ) OR EXISTS (
-                      SELECT 1 FROM exam_target_students ts
-                      WHERE ts.exam_id = e.id AND ts.student_user_id = cm.student_user_id
-                  ))
             )
             SELECT * FROM ranked_attempts
             WHERE attempt_rank = 1
@@ -300,7 +288,7 @@ public class ClassAdminController {
     public List<ClassView> reorderClasses(@Valid @RequestBody ReorderClassesRequest request,
                                            @RequestParam(required = false) List<String> examTypeCodes) {
         List<String> types = validateExamTypeCodes(examTypeCodes);
-        List<Long> current = jdbcTemplate.query("SELECT id FROM classes ORDER BY id", (rs, rowNum) -> rs.getLong(1));
+        List<Long> current = listClasses(types).stream().map(ClassView::id).toList();
         List<Long> requested = request.classIds().stream().distinct().toList();
         if (requested.size() != request.classIds().size()
                 || current.size() != requested.size()
@@ -321,6 +309,10 @@ public class ClassAdminController {
         jdbcTemplate.update("INSERT INTO classes (name, description, sort_order, status) VALUES (?, ?, ?, ?)",
             request.name(), request.description(), request.sortOrder(), status);
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        List<String> types = validateExamTypeCodes(examTypeCodes);
+        for (String type : types.isEmpty() ? List.of("SAT", "SHSAT") : types) {
+            jdbcTemplate.update("INSERT INTO class_exam_workspaces (class_id, exam_type_code) VALUES (?, ?)", id, type);
+        }
         if (examTypeCodes != null && examTypeCodes.contains("SHSAT")) {
             saveShsatClassMetadata(id, request);
         }
@@ -330,7 +322,7 @@ public class ClassAdminController {
     @PatchMapping("/{classId}")
     public ClassView updateClass(@PathVariable long classId, @Valid @RequestBody SaveClassRequest request,
                                  @RequestParam(required = false) List<String> examTypeCodes) {
-        requireClass(classId);
+        findClass(classId, validateExamTypeCodes(examTypeCodes));
         jdbcTemplate.update("""
             UPDATE classes SET name = ?, description = ?, sort_order = ?,
                 status = COALESCE(?, status) WHERE id = ?
@@ -365,6 +357,15 @@ public class ClassAdminController {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "Reassign or remove this class's SHSAT review tasks before deleting the class.");
         }
+        Boolean hasHistory = jdbcTemplate.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM class_membership_periods WHERE class_id = ?)
+                OR EXISTS(SELECT 1 FROM attempt_classes WHERE class_id = ?)
+                OR EXISTS(SELECT 1 FROM exam_participant_classes WHERE class_id = ?)
+                OR EXISTS(SELECT 1 FROM exam_target_student_classes WHERE class_id = ?)
+            """, Boolean.class, classId, classId, classId, classId);
+        if (Boolean.TRUE.equals(hasHistory)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This class has historical records. Archive it to preserve its history.");
+        }
 
         // 先解除会阻止班级删除的关系；学生账户和考试参与记录继续保留。
         jdbcTemplate.update("DELETE FROM exam_target_classes WHERE class_id = ?", classId);
@@ -390,10 +391,10 @@ public class ClassAdminController {
             LEFT JOIN shsat_student_profiles sp ON sp.student_user_id = u.id
             LEFT JOIN shsat_student_accommodations sa ON sa.student_user_id = u.id
             LEFT JOIN (
-                SELECT m2.student_user_id, COUNT(*) AS exam_count,
+                SELECT a.student_user_id, COUNT(*) AS exam_count,
                        AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END) AS average_score
-                FROM class_memberships m2
-                JOIN attempts a ON a.student_user_id = m2.student_user_id
+                FROM attempt_classes ac
+                JOIN attempts a ON a.id = ac.attempt_id
                 JOIN exams e ON e.id = a.exam_id
                 JOIN papers p ON p.id = e.paper_id
                 JOIN attempt_results ar ON ar.attempt_id = a.id
@@ -404,19 +405,11 @@ public class ClassAdminController {
                     WHERE parent_breakdown_code IS NULL
                     GROUP BY attempt_id
                 ) scaled ON scaled.attempt_id = a.id
-                WHERE m2.class_id = ?
-                  AND m2.joined_at <= a.started_at
-                  AND (m2.left_at IS NULL OR a.started_at <= m2.left_at)
+                WHERE ac.class_id = ?
                   AND a.status IN ('SUBMITTED', 'COMPLETED')
                   AND a.is_practice = FALSE
-                  AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
-                      SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = m2.class_id
-                  ) OR EXISTS (
-                      SELECT 1 FROM exam_target_students ts
-                      WHERE ts.exam_id = e.id AND ts.student_user_id = m2.student_user_id
-                  ))
                   %s
-                GROUP BY m2.student_user_id
+                GROUP BY a.student_user_id
             ) stats ON stats.student_user_id = m.student_user_id
             WHERE m.class_id = ? AND m.left_at IS NULL ORDER BY u.real_name, u.id
             """.formatted(examTypeFilter(types)), (rs, rowNum) -> new StudentView(rs.getLong("id"), rs.getString("username"),
@@ -459,6 +452,8 @@ public class ClassAdminController {
             VALUES (?, ?, CURRENT_TIMESTAMP(6), NULL)
             ON DUPLICATE KEY UPDATE joined_at = IF(left_at IS NULL, joined_at, CURRENT_TIMESTAMP(6)), left_at = NULL
             """, targetClassId, studentUserId);
+        recordMembershipPeriod(targetClassId, studentUserId);
+        if (!Boolean.FALSE.equals(request.active())) grantLiveExamEligibility(targetClassId, studentUserId);
         return findStudent(targetClassId, studentUserId);
     }
 
@@ -481,6 +476,7 @@ public class ClassAdminController {
     }
 
     @DeleteMapping("/{classId}/students/{studentUserId}")
+    @Transactional
     public void removeStudent(@PathVariable long classId, @PathVariable long studentUserId) {
         int updated = jdbcTemplate.update("""
             UPDATE class_memberships SET left_at = CURRENT_TIMESTAMP(6)
@@ -489,6 +485,10 @@ public class ClassAdminController {
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "That student is not currently in this class.");
         }
+        jdbcTemplate.update("""
+            UPDATE class_membership_periods SET left_at = CURRENT_TIMESTAMP(6)
+            WHERE class_id = ? AND student_user_id = ? AND left_at IS NULL
+            """, classId, studentUserId);
     }
 
     private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
@@ -501,32 +501,29 @@ public class ClassAdminController {
         List<ClassView> classes = jdbcTemplate.query("""
             SELECT c.id, c.name, c.description, c.status, c.sort_order,
                 meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
-                (SELECT COUNT(*) FROM class_memberships m WHERE m.class_id = c.id AND m.left_at IS NULL) AS student_count,
+                (SELECT COUNT(*) FROM class_memberships m JOIN users u ON u.id = m.student_user_id
+                 WHERE m.class_id = c.id AND m.left_at IS NULL AND u.role_code = 'STUDENT') AS student_count,
                 CASE WHEN NOT EXISTS (
                     SELECT 1 FROM class_memberships active_members
                     WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
                 ) AND NOT EXISTS (
                     SELECT 1 FROM shsat_wrong_answer_tasks review_tasks WHERE review_tasks.class_id = c.id
-                ) THEN TRUE ELSE FALSE END AS deletable,
+                ) AND NOT EXISTS (SELECT 1 FROM class_membership_periods p WHERE p.class_id = c.id)
+                  AND NOT EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.class_id = c.id)
+                  AND NOT EXISTS (SELECT 1 FROM exam_participant_classes pc WHERE pc.class_id = c.id)
+                  AND NOT EXISTS (SELECT 1 FROM exam_target_student_classes st WHERE st.class_id = c.id)
+                THEN TRUE ELSE FALSE END AS deletable,
                 (SELECT COUNT(DISTINCT a.exam_id)
-                 FROM class_memberships m
-                 JOIN attempts a ON a.student_user_id = m.student_user_id
+                 FROM attempt_classes ac
+                 JOIN attempts a ON a.id = ac.attempt_id
                  JOIN exams e ON e.id = a.exam_id
                  JOIN papers p ON p.id = e.paper_id
-                 WHERE m.class_id = c.id
-                   AND m.joined_at <= a.started_at
-                   AND (m.left_at IS NULL OR a.started_at <= m.left_at)
-                   AND a.is_practice = FALSE
-                   AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
-                       SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = c.id
-                   ) OR EXISTS (
-                       SELECT 1 FROM exam_target_students ts
-                       WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
-                   ))
+                 WHERE ac.class_id = c.id AND a.is_practice = FALSE
                    %s) AS exam_count
-            FROM classes c LEFT JOIN shsat_class_metadata meta ON meta.class_id = c.id WHERE c.id = ?
-            """.formatted(typeFilter), (rs, rowNum) -> classView(rs), examTypeCodes.isEmpty()
-                ? new Object[] { id } : Stream.concat(examTypeCodes.stream().map(code -> (Object) code), Stream.of(id)).toArray());
+            FROM classes c LEFT JOIN shsat_class_metadata meta ON meta.class_id = c.id WHERE c.id = ? %s
+            """.formatted(typeFilter, classWorkspaceFilter(examTypeCodes)), (rs, rowNum) -> classView(rs),
+            Stream.concat(Stream.concat(examTypeCodes.stream().map(code -> (Object) code), Stream.of(id)),
+                examTypeCodes.stream().map(code -> (Object) code)).toArray());
         if (classes.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Class not found.");
         }
@@ -536,8 +533,8 @@ public class ClassAdminController {
         averageParameters.addAll(examTypeCodes);
         java.math.BigDecimal averageScore = jdbcTemplate.queryForObject("""
             SELECT AVG(CASE WHEN scaled.total_score > 0 THEN scaled.total_score ELSE ar.total_points END)
-            FROM class_memberships m
-            JOIN attempts a ON a.student_user_id = m.student_user_id
+            FROM attempt_classes ac
+            JOIN attempts a ON a.id = ac.attempt_id
             JOIN exams e ON e.id = a.exam_id
             JOIN papers p ON p.id = e.paper_id
             JOIN attempt_results ar ON ar.attempt_id = a.id
@@ -548,17 +545,9 @@ public class ClassAdminController {
                 WHERE parent_breakdown_code IS NULL
                 GROUP BY attempt_id
             ) scaled ON scaled.attempt_id = a.id
-            WHERE m.class_id = ?
-              AND m.left_at IS NULL
-              AND m.joined_at <= a.started_at
+            WHERE ac.class_id = ?
               AND a.status IN ('SUBMITTED', 'COMPLETED')
               AND a.is_practice = FALSE
-              AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
-                  SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = m.class_id
-              ) OR EXISTS (
-                  SELECT 1 FROM exam_target_students ts
-                  WHERE ts.exam_id = e.id AND ts.student_user_id = m.student_user_id
-              ))
               %s
             """.formatted(examTypeFilter(examTypeCodes)), java.math.BigDecimal.class, averageParameters.toArray());
         return new ClassView(classroom.id(), classroom.name(), classroom.description(), classroom.status(),
@@ -629,6 +618,12 @@ public class ClassAdminController {
             VALUES (?, ?, CURRENT_TIMESTAMP(6), NULL)
             ON DUPLICATE KEY UPDATE joined_at = IF(left_at IS NULL, joined_at, CURRENT_TIMESTAMP(6)), left_at = NULL
             """, classId, studentUserId);
+        recordMembershipPeriod(classId, studentUserId);
+        grantLiveExamEligibility(classId, studentUserId);
+    }
+
+    /** 学生在开放期间加入整班目标时，同时记录考试资格及其班级来源。 */
+    private void grantLiveExamEligibility(long classId, long studentUserId) {
         jdbcTemplate.update("""
             INSERT IGNORE INTO exam_participants (exam_id, student_user_id)
             SELECT tc.exam_id, ? FROM exam_target_classes tc
@@ -636,6 +631,25 @@ public class ClassAdminController {
             WHERE tc.class_id = ? AND e.status = 'PUBLISHED'
                 AND e.opens_at <= CURRENT_TIMESTAMP(6) AND e.closes_at > CURRENT_TIMESTAMP(6)
             """, studentUserId, classId);
+        jdbcTemplate.update("""
+            INSERT IGNORE INTO exam_participant_classes (exam_id, student_user_id, class_id)
+            SELECT tc.exam_id, ?, tc.class_id FROM exam_target_classes tc
+            JOIN exams e ON e.id = tc.exam_id
+            JOIN exam_participants ep ON ep.exam_id = tc.exam_id AND ep.student_user_id = ? AND ep.revoked_at IS NULL
+            WHERE tc.class_id = ? AND e.status = 'PUBLISHED'
+                AND e.opens_at <= CURRENT_TIMESTAMP(6) AND e.closes_at > CURRENT_TIMESTAMP(6)
+            """, studentUserId, studentUserId, classId);
+    }
+
+    /** 保留每次入班区间；重复添加现有成员时不创建第二条开放区间。 */
+    private void recordMembershipPeriod(long classId, long studentUserId) {
+        jdbcTemplate.update("""
+            INSERT INTO class_membership_periods (class_id, student_user_id, joined_at)
+            SELECT m.class_id, m.student_user_id, m.joined_at FROM class_memberships m
+            WHERE m.class_id = ? AND m.student_user_id = ? AND m.left_at IS NULL
+              AND NOT EXISTS (SELECT 1 FROM class_membership_periods p
+                              WHERE p.class_id = m.class_id AND p.student_user_id = m.student_user_id AND p.left_at IS NULL)
+            """, classId, studentUserId);
     }
 
     /** 校验模块传入的考试类型，空列表表示跨类型统计。 */
@@ -646,6 +660,13 @@ public class ClassAdminController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid exam type selection.");
         }
         return examTypeCodes.stream().distinct().toList();
+    }
+
+    // 班级所属工作区与成绩统计的考试类型分别过滤，避免新建班级出现在其他模块。
+    private String classWorkspaceFilter(List<String> examTypeCodes) {
+        if (examTypeCodes.isEmpty()) return "";
+        return "AND EXISTS (SELECT 1 FROM class_exam_workspaces cw WHERE cw.class_id = c.id AND cw.exam_type_code IN ("
+            + String.join(", ", Collections.nCopies(examTypeCodes.size(), "?")) + "))";
     }
 
     private String examTypeFilter(List<String> examTypeCodes) {

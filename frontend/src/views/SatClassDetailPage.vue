@@ -31,7 +31,9 @@ const classForm = reactive({ name: '', description: '' })
 const addStudentSearch = ref('')
 const selectedStudentIds = ref([])
 
+const workspaceCode = computed(() => route.name === 'psat-class-detail' ? 'PSAT' : 'SAT')
 const classId = computed(() => route.params.classId)
+const canMonitorExams = computed(() => authState.user?.roleCode === 'ADMIN')
 const studentsToAdd = computed(() => {
   const memberIds = new Set(students.value.map((student) => student.id))
   return studentOptions.value.filter((student) => !memberIds.has(student.id))
@@ -49,7 +51,7 @@ async function loadPage() {
   error.value = ''
   try {
     const [classRow, studentRows, availableRows, examRows] = await Promise.all([
-      getClass(classId.value, ['SAT', 'PSAT']), listClassStudents(classId.value, ['SAT', 'PSAT']), listAvailableStudents(), listClassExams(classId.value, ['SAT', 'PSAT']),
+      getClass(classId.value, [workspaceCode.value]), listClassStudents(classId.value, [workspaceCode.value]), listAvailableStudents(), listClassExams(classId.value, [workspaceCode.value]),
     ])
     classroom.value = classRow
     students.value = studentRows
@@ -64,11 +66,29 @@ async function loadPage() {
 
 function goBack() {
   const returnTo = route.query.returnTo
-  if (typeof returnTo === 'string' && returnTo.startsWith('/exam-types/SAT/admin')) {
+  if (typeof returnTo === 'string' && (returnTo === `/${workspaceCode.value.toLowerCase()}` || returnTo.startsWith(`/${workspaceCode.value.toLowerCase()}?`) || returnTo.startsWith(`/${workspaceCode.value.toLowerCase()}/`) || returnTo.startsWith(`/exam-types/${workspaceCode.value}/admin`))) {
     router.push(returnTo)
     return
   }
-  router.push({ name: 'exam-type', params: { code: 'SAT' }, query: { tab: 'classes' } })
+  router.push({ name: workspaceCode.value === 'PSAT' ? 'psat-admin' : 'sat-admin', query: { tab: 'classes' } })
+}
+
+function openExamResults(exam) {
+  if (!exam?.examId) return
+  router.push({
+    name: `${workspaceCode.value.toLowerCase()}-exam-results`,
+    params: { examId: String(exam.examId) },
+    query: { returnTo: route.fullPath, classId: classId.value },
+  })
+}
+
+function openExamMonitor(exam) {
+  if (!canMonitorExams.value || !exam?.examId) return
+  router.push({
+    name: `${workspaceCode.value.toLowerCase()}-admin-exam-monitor`,
+    params: { examId: String(exam.examId) },
+    query: { returnTo: route.fullPath },
+  })
 }
 
 function openEditDialog() {
@@ -84,7 +104,7 @@ async function saveClass() {
       name: classForm.name.trim(),
       description: classForm.description.trim(),
       sortOrder: classroom.value.sortOrder,
-    }, ['SAT', 'PSAT'])
+    }, [workspaceCode.value])
     editOpen.value = false
     notifyOperation('Class details updated.')
     await loadPage()
@@ -159,7 +179,7 @@ function toggleStudentSelection(studentId, checked) {
 
 function openStudentScores(student) {
   router.push({
-    name: 'sat-student-scores',
+    name: workspaceCode.value === 'PSAT' ? 'psat-student-scores' : 'sat-student-scores',
     params: { classId: classId.value, studentId: student.id },
     query: {
       className: classroom.value?.name || '',
@@ -202,7 +222,7 @@ onMounted(loadPage)
       <div v-if="classroom" class="sat-class-detail-page__actions">
         <AppButton variant="secondary" @click="openEditDialog">Edit class</AppButton>
         <AppButton variant="secondary" @click="toggleClassStatus">{{ classroom.status === 'ACTIVE' ? 'Archive class' : 'Reopen class' }}</AppButton>
-        <AppButton v-if="authState.user?.roleCode === 'ADMIN'" variant="danger" @click="deleteClassOpen = true">Delete class</AppButton>
+        <AppButton v-if="authState.user?.roleCode === 'ADMIN'" variant="danger" :disabled="!classroom.deletable" title="Only empty classes without history can be deleted; archive other classes instead." @click="deleteClassOpen = true">Delete class</AppButton>
       </div>
     </div>
 
@@ -218,7 +238,7 @@ onMounted(loadPage)
         </dl>
       </AppCard>
 
-      <ClassExamScoreTrend :class-id="classId" :exam-type-codes="['SAT', 'PSAT']" />
+      <ClassExamScoreTrend :class-id="classId" :exam-type-codes="[workspaceCode]" />
 
       <AppCard class="sat-class-detail-section" title="Exam Releases" subtitle="Review releases targeted to this class, including drafts and published exams.">
         <div v-if="isLoading" class="admin-state">Loading exam records...</div>
@@ -226,7 +246,7 @@ onMounted(loadPage)
         <p v-else class="mobile-table-scroll-hint">Swipe horizontally to see all columns.</p>
         <div v-if="!isLoading && exams.length" class="admin-table-scroll" tabindex="0" aria-label="Exam releases table. Scroll horizontally to see all columns.">
           <AdminDataTable>
-            <thead><tr><th>Exam</th><th>Paper</th><th>Exam Window</th><th>Status</th><th>Duration</th></tr></thead>
+            <thead><tr><th>Exam</th><th>Paper</th><th>Exam Window</th><th>Status</th><th>Duration</th><th>Actions</th></tr></thead>
             <tbody>
               <tr v-for="exam in exams" :key="exam.examId">
                 <td><strong>{{ exam.examTitle }}</strong></td>
@@ -237,6 +257,10 @@ onMounted(loadPage)
                 </td>
                 <td>{{ exam.status === 'PUBLISHED' ? 'Published' : 'Draft' }}</td>
                 <td>{{ exam.duration ? `${Math.round(exam.duration / 60)} min` : '—' }}</td>
+                <td class="sat-class-exam-actions">
+                  <AppButton type="button" @click="openExamResults(exam)">View Results</AppButton>
+                  <AppButton v-if="canMonitorExams" type="button" variant="secondary" @click="openExamMonitor(exam)">Monitor</AppButton>
+                </td>
               </tr>
             </tbody>
           </AdminDataTable>
@@ -370,6 +394,8 @@ onMounted(loadPage)
 .class-exam-window { min-width: 250px; white-space: nowrap; }
 .class-exam-window span { display: flex; align-items: baseline; gap: 8px; }
 .class-exam-window small { min-width: 42px; color: #71819a; font-size: 11px; font-weight: 650; }
+.sat-class-exam-actions { min-width: 190px; white-space: nowrap; }
+.sat-class-exam-actions .app-button { margin: 3px; padding-inline: 12px; font-size: 13px; }
 @media (max-width: 640px) {
   .sat-class-detail-page { width: min(100% - 24px, 1180px); padding-top: 20px; }
   .sat-class-detail-page__topbar { align-items: flex-start; flex-direction: column; }

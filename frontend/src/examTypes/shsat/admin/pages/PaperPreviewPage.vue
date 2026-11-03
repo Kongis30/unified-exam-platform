@@ -5174,6 +5174,67 @@ onBeforeUnmount(() => {
   background: linear-gradient(180deg, #3a83eb 0%, #155abd 100%);
 }
 
+.section-choice {
+  display: grid;
+  gap: 18px;
+}
+
+.section-choice__intro {
+  margin: 0;
+  color: var(--color-muted);
+  line-height: 1.55;
+}
+
+.section-choice__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.section-choice__button {
+  display: flex;
+  min-height: 100px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  color: var(--color-text);
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.section-choice__button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 4px 14px rgba(31, 102, 194, 0.1);
+}
+
+.section-choice__button:focus-visible {
+  outline: 3px solid rgba(31, 102, 194, 0.24);
+  outline-offset: 2px;
+}
+
+.section-choice__button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.section-choice__button span {
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.section-choice__button small {
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .review-panel.dropdown,
 .tool-dropdown {
   position: absolute;
@@ -6024,6 +6085,15 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .section-choice__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .section-choice__button {
+    min-height: 76px;
+    padding: 14px 16px;
+  }
+
   .student-exam__summary {
     display: grid;
     grid-template-columns: 1fr;

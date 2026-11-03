@@ -84,6 +84,7 @@ const SCREEN_DIAGNOSTIC_MAX_VISIBILITY_CHANGES = 20;
 const SCREEN_DIAGNOSTIC_RESIZE_DELAY_MS = 350;
 const SCREEN_DIAGNOSTIC_MIN_SIZE_CHANGE_PX = 80;
 let pageHiddenViolationTimer = 0;
+let pageHiddenStartedAt = 0;
 let fullscreenExitConfirmTimer = 0;
 let screenResizeTimer = 0;
 let screenDiagnosticsStarted = false;
@@ -1051,6 +1052,10 @@ function answerDraftStorageKey() {
   return attemptId.value ? `shsat-exam:answer-drafts:${attemptId.value}` : '';
 }
 
+function timeDraftStorageKey() {
+  return attemptId.value ? `shsat-exam:time-drafts:${attemptId.value}` : '';
+}
+
 function readLocalAnswerDrafts() {
   const key = answerDraftStorageKey();
   if (!key) return {};
@@ -1071,6 +1076,58 @@ function persistLocalAnswerDraft(questionNumber, value) {
     localStorage.setItem(key, JSON.stringify(drafts));
   } catch {
     // Storage can be disabled or full; in-memory answers remain available for the current page.
+  }
+}
+
+function readLocalTimeDrafts() {
+  const key = timeDraftStorageKey();
+  if (!key) return {};
+  try {
+    const drafts = JSON.parse(localStorage.getItem(key) || '{}');
+    return drafts && typeof drafts === 'object' && !Array.isArray(drafts) ? drafts : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistLocalTimeDrafts() {
+  const key = timeDraftStorageKey();
+  if (!key) return;
+  try {
+    const drafts = Object.fromEntries(Object.entries(timeSpentByQuestion.value).filter(([, seconds]) => seconds > 0));
+    if (Object.keys(drafts).length) {
+      localStorage.setItem(key, JSON.stringify(drafts));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Storage can be unavailable; current-session timing still works in memory.
+  }
+}
+
+function clearLocalTimeDraft(questionNumber) {
+  const key = timeDraftStorageKey();
+  if (!key) return;
+  try {
+    const drafts = readLocalTimeDrafts();
+    delete drafts[questionNumber];
+    if (Object.keys(drafts).length) {
+      localStorage.setItem(key, JSON.stringify(drafts));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Keep the exam flow usable when local storage is unavailable.
+  }
+}
+
+function clearLocalTimeDrafts() {
+  const key = timeDraftStorageKey();
+  if (!key) return;
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Keep the exam flow usable when local storage is unavailable.
   }
 }
 
@@ -1589,8 +1646,11 @@ function getAdvanceBlockedMessage(targetQuestion) {
 async function saveQuestions(targetQuestions) {
   const dirtyQuestions = targetQuestions.filter((question) => {
     const questionNumber = question.questionNumber;
-    return pendingClearedQuestionNumbers.value.has(questionNumber)
+    const hasAnswerToSave = pendingClearedQuestionNumbers.value.has(questionNumber)
       || (hasMeaningfulAnswerValue(getAnswer(questionNumber)) && !isQuestionSaved(questionNumber));
+    const hasTimeToSave = hasMeaningfulAnswerValue(getAnswer(questionNumber))
+      && (timeSpentByQuestion.value[questionNumber] || 0) > 0;
+    return hasAnswerToSave || hasTimeToSave;
   });
 
   for (const question of dirtyQuestions) {
@@ -1599,11 +1659,13 @@ async function saveQuestions(targetQuestions) {
 }
 
 async function saveCurrentAnswerForFreeNavigation() {
-  if (!currentQuestion.value || !attemptId.value || isQuestionSaved(currentQuestion.value.questionNumber)) {
+  if (!currentQuestion.value || !attemptId.value) {
     return;
   }
-  if (!hasMeaningfulAnswerValue(getAnswer(currentQuestion.value.questionNumber))
-    && !pendingClearedQuestionNumbers.value.has(currentQuestion.value.questionNumber)) {
+  const questionNumber = currentQuestion.value.questionNumber;
+  if (isQuestionSaved(questionNumber) && (timeSpentByQuestion.value[questionNumber] || 0) <= 0) return;
+  if (!hasMeaningfulAnswerValue(getAnswer(questionNumber))
+    && !pendingClearedQuestionNumbers.value.has(questionNumber)) {
     return;
   }
 
@@ -1756,6 +1818,7 @@ function recordCurrentQuestionTime() {
     ...timeSpentByQuestion.value,
     [questionNumber]: (timeSpentByQuestion.value[questionNumber] || 0) + elapsedSeconds,
   };
+  persistLocalTimeDrafts();
   activeQuestionEnteredAt = Date.now();
 }
 
@@ -2451,6 +2514,9 @@ function handleExamVisibilityChange() {
       logExamScreenDiagnostic('exam-screen.visibility-change', { state: 'hidden' });
     }
     stopPresenceTracking();
+    if (!pageHiddenStartedAt) {
+      pageHiddenStartedAt = Date.now();
+    }
     // 系统通知、权限弹窗等会瞬时把页面置为 hidden；持续一段时间才计违规，避免误报。
     window.clearTimeout(pageHiddenViolationTimer);
     pageHiddenViolationTimer = window.setTimeout(() => {
@@ -2460,8 +2526,14 @@ function handleExamVisibilityChange() {
     }, PAGE_HIDDEN_VIOLATION_DELAY_MS);
     return;
   }
+  const hiddenDuration = pageHiddenStartedAt ? Date.now() - pageHiddenStartedAt : 0;
   window.clearTimeout(pageHiddenViolationTimer);
   pageHiddenViolationTimer = 0;
+  pageHiddenStartedAt = 0;
+  // 后台标签的定时器可能被浏览器节流；切回时按实际隐藏时长补记，避免漏报。
+  if (hiddenDuration >= PAGE_HIDDEN_VIOLATION_DELAY_MS) {
+    registerExamFocusViolation('page-hidden');
+  }
   if (loggedVisibilityChanges < SCREEN_DIAGNOSTIC_MAX_VISIBILITY_CHANGES) {
     loggedVisibilityChanges += 1;
     logExamScreenDiagnostic('exam-screen.visibility-change', { state: 'visible' });
@@ -3136,7 +3208,8 @@ async function loadReviewAttempt() {
     answers: [],
     questions: reviewResult.questions || [],
   };
-  if (reviewResult.paperId) {
+  // 报告跳题优先使用 attempt 快照，避免请求学生端不开放的试卷详情接口并显示误导提示。
+  if (reviewResult.paperId && !(reviewResult.questions || []).length) {
     await loadPaper(reviewResult.paperId);
   }
   initializeAnswersFromResult(reviewResult);
@@ -3219,6 +3292,11 @@ function initializeAnswers(attemptData) {
   }
 
   answers.value = nextAnswers;
+  timeSpentByQuestion.value = Object.fromEntries(Object.entries(readLocalTimeDrafts())
+    .map(([questionNumber, seconds]) => [questionNumber, Math.max(0, Math.floor(Number(seconds) || 0))])
+    .filter(([questionNumber, seconds]) => Number.isFinite(Number(questionNumber))
+      && Number(questionNumber) > 0 && seconds > 0
+      && questions.value.some((question) => question.questionNumber === Number(questionNumber))));
   savedQuestionNumbers.value = nextSaved;
   persistedQuestionNumbers.value = nextPersisted;
   pendingClearedQuestionNumbers.value = pendingCleared;
@@ -3267,7 +3345,8 @@ function setInitialQuestion() {
   const questionNumber = Number(route.query.questionNumber);
   let index = questions.value.findIndex((question) => question.questionNumber === questionNumber);
 
-  if (index >= 0) {
+  const requestedAccess = index >= 0 ? getQuestionAccess(questionNumber) : null;
+  if (index >= 0 && (isReviewMode.value || (requestedAccess.accessible && !requestedAccess.locked))) {
     currentIndex.value = index;
     persistLastViewedQuestion();
     startQuestionTimer();
@@ -3277,7 +3356,8 @@ function setInitialQuestion() {
   // 刷新/恢复时优先回到上次浏览的题目（同一浏览器），仅当该题当前仍可访问时使用。
   const savedNumber = Number(localStorage.getItem(lastViewedQuestionStorageKey()));
   index = questions.value.findIndex((question) => question.questionNumber === savedNumber);
-  if (index >= 0 && getQuestionAccess(savedNumber).accessible) {
+  const savedAccess = index >= 0 ? getQuestionAccess(savedNumber) : null;
+  if (index >= 0 && (isReviewMode.value || (savedAccess.accessible && !savedAccess.locked))) {
     currentIndex.value = index;
     startQuestionTimer();
     return;
@@ -3287,6 +3367,15 @@ function setInitialQuestion() {
   const openIndex = questions.value.findIndex((question) => question.questionNumber === openQuestionNumber);
   if (openIndex >= 0) {
     currentIndex.value = openIndex;
+    startQuestionTimer();
+    return;
+  }
+
+  // section 已提交但尚未建立新题组时，按服务端当前科目恢复，不能退回整张卷子的第一题。
+  const sectionQuestion = getFirstQuestionInSection(currentSectionCode.value);
+  const sectionIndex = questions.value.findIndex((question) => question === sectionQuestion);
+  if (sectionIndex >= 0) {
+    currentIndex.value = sectionIndex;
     startQuestionTimer();
     return;
   }
@@ -3301,6 +3390,12 @@ async function saveCurrentAnswer() {
   if (!currentQuestion.value || !attemptId.value || isReadOnlyMode.value) {
     return true;
   }
+  const questionNumber = currentQuestion.value.questionNumber;
+  if (isQuestionSaved(questionNumber)
+    && !pendingClearedQuestionNumbers.value.has(questionNumber)
+    && (timeSpentByQuestion.value[questionNumber] || 0) <= 0) {
+    return true;
+  }
   if (isQuestionLocked(currentQuestion.value.questionNumber)) {
     errorMessage.value = 'This question is locked for the current attempt.';
     return false;
@@ -3308,10 +3403,6 @@ async function saveCurrentAnswer() {
   if (!buildCurrentAnswerPayload()) {
     return true;
   }
-  if (isQuestionSaved(currentQuestion.value.questionNumber)) {
-    return true;
-  }
-
   try {
     await saveAnswer(currentQuestion.value);
     return true;
@@ -3337,6 +3428,8 @@ async function saveAnswer(question) {
     nextPendingCleared.delete(question.questionNumber);
     pendingClearedQuestionNumbers.value = nextPendingCleared;
     clearLocalAnswerDraft(question.questionNumber);
+    timeSpentByQuestion.value = { ...timeSpentByQuestion.value, [question.questionNumber]: 0 };
+    clearLocalTimeDraft(question.questionNumber);
     savedQuestionNumbers.value = new Set([...savedQuestionNumbers.value, question.questionNumber]);
     persistedQuestionNumbers.value = new Set([...persistedQuestionNumbers.value, question.questionNumber]);
     saveMessage.value = `Question ${question.questionNumber} saved`;
@@ -3374,7 +3467,8 @@ async function submitExam({ autoSubmitted = false, skipConfirm = false } = {}) {
 
   try {
     await saveQuestions(questions.value.filter((question) =>
-      pendingClearedQuestionNumbers.value.has(question.questionNumber)));
+      pendingClearedQuestionNumbers.value.has(question.questionNumber)
+      || (timeSpentByQuestion.value[question.questionNumber] || 0) > 0));
 
     if (!autoSubmitted) {
       const unansweredNumbers = getUnansweredQuestionNumbers();
@@ -3417,7 +3511,8 @@ async function submitExam({ autoSubmitted = false, skipConfirm = false } = {}) {
 
     submitLoading.value = true;
     await saveQuestions(questions.value.filter((question) =>
-      pendingClearedQuestionNumbers.value.has(question.questionNumber)));
+      pendingClearedQuestionNumbers.value.has(question.questionNumber)
+      || (timeSpentByQuestion.value[question.questionNumber] || 0) > 0));
     if (!autoSubmitted && !(await saveCurrentAnswer())) {
       return;
     }
@@ -3431,6 +3526,7 @@ async function submitExam({ autoSubmitted = false, skipConfirm = false } = {}) {
       'Failed to submit the exam'
     );
     clearLocalAnswerDrafts();
+    clearLocalTimeDrafts();
     attempt.value = {
       ...attempt.value,
       status: result.value.status,
@@ -3503,6 +3599,7 @@ function formatRemainingTime(seconds) {
 
 onMounted(() => {
   loadExam();
+  window.addEventListener('pagehide', recordCurrentQuestionTime);
   window.addEventListener('resize', keepNotesInViewport);
   window.addEventListener('resize', handleExamScreenResize);
   window.visualViewport?.addEventListener('resize', handleExamScreenResize);
@@ -3515,6 +3612,9 @@ onMounted(() => {
   handleFullscreenChange();
 });
 onBeforeUnmount(() => {
+  if (attempt.value?.status === 'IN_PROGRESS') {
+    recordCurrentQuestionTime();
+  }
   resolveConfirmation(false);
   clearCountdown();
   stopPresenceTracking();
@@ -3528,6 +3628,7 @@ onBeforeUnmount(() => {
   // 正常离开页面时退出全屏，不计入切屏违规。
   exitExamFullscreen();
   window.removeEventListener('resize', keepNotesInViewport);
+  window.removeEventListener('pagehide', recordCurrentQuestionTime);
   window.removeEventListener('resize', handleExamScreenResize);
   window.visualViewport?.removeEventListener('resize', handleExamScreenResize);
   document.removeEventListener('visibilitychange', handleExamVisibilityChange);
@@ -3942,14 +4043,14 @@ onBeforeUnmount(() => {
               class="exam-confirm__button exam-confirm__button--primary"
               @click="dismissFocusViolationModal"
             >
-              OK, Continue
+              {{ fullscreenError ? 'Retry Fullscreen' : 'OK, Continue' }}
             </button>
           </div>
         </div>
       </div>
 
       <div
-        v-if="fullscreenRequiredOverlay && !isReviewMode && !isPreviewMode"
+        v-if="fullscreenRequiredOverlay && !focusViolationModalOpen && !isReviewMode && !isPreviewMode"
         class="fullscreen-required-overlay"
         role="dialog"
         aria-modal="true"
@@ -5285,6 +5386,67 @@ onBeforeUnmount(() => {
   background: linear-gradient(180deg, #3a83eb 0%, #155abd 100%);
 }
 
+.section-choice {
+  display: grid;
+  gap: 18px;
+}
+
+.section-choice__intro {
+  margin: 0;
+  color: var(--color-muted);
+  line-height: 1.55;
+}
+
+.section-choice__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.section-choice__button {
+  display: flex;
+  min-height: 100px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  color: var(--color-text);
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.section-choice__button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 4px 14px rgba(31, 102, 194, 0.1);
+}
+
+.section-choice__button:focus-visible {
+  outline: 3px solid rgba(31, 102, 194, 0.24);
+  outline-offset: 2px;
+}
+
+.section-choice__button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.section-choice__button span {
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.section-choice__button small {
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .review-panel.dropdown,
 .tool-dropdown {
   position: absolute;
@@ -6125,6 +6287,15 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .section-choice__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .section-choice__button {
+    min-height: 76px;
+    padding: 14px 16px;
+  }
+
   .student-exam__summary {
     display: grid;
     grid-template-columns: 1fr;
@@ -6134,6 +6305,14 @@ onBeforeUnmount(() => {
     gap: 8px;
     padding: 8px 10px;
     overflow-x: auto;
+  }
+
+  /* Keep selector menus outside the horizontally scrolling toolbar clipping area. */
+  .font-selector .tool-dropdown,
+  .width-selector .tool-dropdown {
+    position: fixed;
+    top: 80px;
+    right: 8px;
   }
 
   .toolbar-center {

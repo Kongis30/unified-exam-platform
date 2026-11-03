@@ -24,7 +24,6 @@ async function main() {
   const otherStudent = await otherStudentContext.newPage();
   const pageErrors = [];
   [admin, student, otherStudent].forEach(page => page.on('pageerror', error => pageErrors.push(error.message)));
-
   const stamp = Date.now();
   const suffix = String(stamp).slice(-6);
   const username = `shsat_equation_${stamp}`;
@@ -95,14 +94,18 @@ async function main() {
               categoryId: null, sortOrder: 1, displayNumber: 59, maxPoints: 1, scoringSectionCode: 'MATH',
             }, {
               questionTypeCode: 'TABLE_GRID', payloadSchemaVersion: 1,
-              stem: 'Select the correct value for the item.',
+              stem: 'Enter the correct values for both items.',
               render: { questionConfig: {
-                selectionMode: 'single',
-                rows: [{ id: 'item-1', label: 'Item 1' }],
-                columns: [{ id: 'no', label: 'No' }, { id: 'yes', label: 'Yes' }],
+                selectionMode: 'text',
+                rows: [
+                  { id: 'item_row-1', label: 'Item Row 1' },
+                  { id: 'item-row_2', label: 'Item Row 2' },
+                ],
+                columns: [{ id: 'answer_column', label: 'Answer Column' }],
                 shsatSkillTag: { subjectCode: 'MATH', domainCode: 'MATH_STATISTICS', skillCode: 'MATH_STATISTICS_DESCRIPTIVE' },
               }, validationRules: {} },
-              answerKey: { answers: { 'item-1': 'yes' } }, grading: {}, explanation: 'Yes is correct.',
+              answerKey: { cells: { 'item_row-1.answer_column': '42', 'item-row_2.answer_column': '24' } },
+              grading: {}, explanation: 'Both values are correct.',
               categoryId: null, sortOrder: 2, displayNumber: 60, maxPoints: 1, scoringSectionCode: 'MATH',
             }, {
               questionTypeCode: 'DRAG_AND_DROP', payloadSchemaVersion: 1,
@@ -156,14 +159,18 @@ async function main() {
               questionTypeCode: 'MULTIPLE_CHOICE', payloadSchemaVersion: 1,
               stem: 'This question should be answered incorrectly.',
               render: { options: [{ key: 'A', text: 'Correct answer' }, { key: 'B', text: 'Other answer' }], questionConfig: {
-                shsatSkillTag: { subjectCode: 'MATH', domainCode: 'MATH_ALGEBRA', skillCode: 'MATH_ALGEBRA_INEQUALITIES' },
+                // Conflicting legacy metadata must resolve from the canonical SHSAT skill code.
+                shsatSkillTag: { subjectCode: 'ELA', domainCode: 'ELA_READING_COMPREHENSION', skillCode: 'MATH_ALGEBRA_INEQUALITIES' },
               }, validationRules: {} },
               answerKey: { answers: ['A'] }, grading: {}, explanation: 'A is correct.', categoryId: null,
               sortOrder: 7, displayNumber: 65, maxPoints: 1, scoringSectionCode: 'MATH',
             }, {
               questionTypeCode: 'MULTIPLE_CHOICE', payloadSchemaVersion: 1,
               stem: 'This question should remain unanswered.',
-              render: { options: [{ key: 'A', text: 'Correct answer' }, { key: 'B', text: 'Other answer' }], questionConfig: {}, validationRules: {} },
+              render: { options: [{ key: 'A', text: 'Correct answer' }, { key: 'B', text: 'Other answer' }], questionConfig: {
+                // SAT-only codes are intentionally unknown to the SHSAT report taxonomy.
+                shsatSkillTag: { subjectCode: 'SAT', domainCode: 'SAT_READING_AND_WRITING', skillCode: 'SAT_CRAFT_AND_STRUCTURE' },
+              }, validationRules: {} },
               answerKey: { answers: ['A'] }, grading: {}, explanation: 'A is correct.', categoryId: null,
               sortOrder: 8, displayNumber: 66, maxPoints: 1, scoringSectionCode: 'MATH',
             }],
@@ -291,15 +298,23 @@ async function main() {
     });
     await student.getByRole('button', { name: 'Next', exact: true }).click();
     assert.equal((await graphSave).status(), 200, 'the plotted point is saved before moving to the table grid');
-    await student.getByText('Select the correct value for the item.', { exact: true }).waitFor();
+    await student.getByText('Enter the correct values for both items.', { exact: true }).waitFor();
     await student.waitForTimeout(1_100);
     const tableItem = (attempt.items || attempt.questions || []).find(item => item.questionTypeCode === 'TABLE_GRID');
     assert.ok(tableItem, 'the table grid item is included in the active student attempt');
-    const correctTableCell = student.locator('.table-grid-answer__cell').filter({ has: student.getByRole('radio', { name: 'Item 1: Yes' }) });
-    await correctTableCell.locator('label.table-grid-answer__choice').click();
-    assert.equal(await student.getByRole('radio', { name: 'Item 1: Yes' }).isChecked(), true,
-      'the visible table-grid choice records the selected answer');
+    const tableGridSave = student.waitForResponse(response => response.url().endsWith(`/api/student/attempts/${attemptId}/answers/${tableItem.paperItemId || tableItem.id}`)
+      && response.request().method() === 'PUT');
+    const tableGridFirstInput = student.getByRole('textbox', { name: 'Item Row 1: Answer Column', exact: true });
+    const tableGridSecondInput = student.getByRole('textbox', { name: 'Item Row 2: Answer Column', exact: true });
+    await tableGridFirstInput.fill('42');
+    await tableGridSecondInput.fill('24');
+    assert.deepEqual(
+      [await tableGridFirstInput.inputValue(), await tableGridSecondInput.inputValue()],
+      ['42', '24'],
+      'row and column IDs containing underscores and hyphens retain text-cell input values'
+    );
     await student.getByRole('button', { name: 'Next', exact: true }).click();
+    assert.equal((await tableGridSave).status(), 200, 'the text-grid value saves before moving to the next question');
     await student.getByText('Sort each number by parity.', { exact: true }).waitFor();
     await student.waitForTimeout(1_100);
     const dragItem = (attempt.items || attempt.questions || []).find(item => item.questionTypeCode === 'DRAG_AND_DROP');
@@ -539,6 +554,8 @@ async function main() {
     assert.ok(knowledgeSkills.includes('Number Properties'), 'valid arithmetic tags remain in the SHSAT skill taxonomy');
     assert.equal(await reportPage.locator('.knowledge-score-item').count(), 5,
       'only the five valid tagged SHSAT skill areas appear in the report');
+    assert.equal(await reportPage.locator('.knowledge-score-item__header strong').filter({ hasText: 'Craft and Structure' }).count(), 0,
+      'SAT-only skill codes do not appear in the SHSAT knowledge report');
     const expectedSkillResults = {
       'Main Idea': ['100%', 'Multiple Choice, Multi Select, Fixed Multi Select, Inline Choice · 4 questions, 4 correct', '0 wrong, 0 unanswered', 'Q1, Q2, Q3, Q4'],
       'Inequalities': ['75%', 'Equation Editor, Drag and Drop, Solution Set, Multiple Choice · 4 questions, 3 correct', '1 wrong, 0 unanswered', 'Q58, Q61, Q62, Q65'],
@@ -560,6 +577,9 @@ async function main() {
     await reportPage.getByText('1 question does not have a knowledge tag yet.', { exact: true }).waitFor();
     assert.deepEqual(await reportPage.locator('.knowledge-score-subject > h3').allTextContents(), ['Reading and Writing', 'Math'],
       'SHSAT skill hierarchy separates ELA and Math and does not introduce SAT domains');
+    const inequalitiesRow = reportPage.locator('.knowledge-score-item').filter({ hasText: 'Inequalities' });
+    assert.equal(await inequalitiesRow.count(), 1,
+      'a valid SHSAT skill code overrides contradictory subject and domain metadata');
     const reportFilters = (await reportPage.locator('.review-filter').allTextContents())
       .map(label => label.replace(/\s+/g, ' ').trim());
     assert.deepEqual(reportFilters, ['All Questions13', 'Needs Review2', 'Unanswered1', 'Answered12'],
@@ -587,6 +607,13 @@ async function main() {
       'Drag and Drop', 'Equation Editor', 'Fill in the Blank', 'Fixed Multi Select',
       'Hot Text', 'Inline Choice', 'Multi Select', 'Multiple Choice', 'Point Graph', 'Solution Set', 'Table Grid',
     ], 'question review renders each of the eleven SHSAT answer types in the submitted report');
+    const tableGridReportRow = reportPage.getByRole('button', { name: 'Question 60', exact: true }).locator('xpath=ancestor::tr');
+    assert.deepEqual(await tableGridReportRow.locator('.table-grid-report').evaluateAll(tables => tables.map(table =>
+      [...table.querySelectorAll('tbody tr')]
+        .flatMap(row => [...row.querySelectorAll('td')].map(cell => cell.textContent.trim()))
+        .filter(Boolean)
+    )), [['42', '24'], ['42', '24']],
+    'student and correct-answer report grids retain each value when row/column IDs contain separators');
     const reportOutcomes = await reportPage.locator('.question-table tbody tr').evaluateAll(rows => Object.fromEntries(rows.map(row => {
       const questionNumber = row.querySelector('.question-link')?.textContent.match(/\d+/)?.[0];
       return [questionNumber, row.querySelector('.result-pill')?.textContent.trim()];
@@ -594,6 +621,9 @@ async function main() {
     assert.equal(reportOutcomes['1'], 'Correct');
     assert.equal(reportOutcomes['65'], 'Needs Review');
     assert.equal(reportOutcomes['66'], 'Unanswered');
+    await reportPage.locator('.question-table-wrap').last().scrollIntoViewIfNeeded();
+    await admin.screenshot({ path: `/tmp/shsat-question-review-desktop-${stamp}.png` });
+    await admin.evaluate(() => window.scrollTo(0, 0));
     const totalTimeText = await reportPage.locator('.time-analysis-card').filter({ hasText: 'Total Time' }).locator('strong').textContent();
     const totalTime = totalTimeText?.match(/(\d+)\s*min\s*(\d+)\s*sec/i);
     assert.ok(totalTime && Number(totalTime[1]) * 60 + Number(totalTime[2]) > 0,
@@ -620,7 +650,18 @@ async function main() {
     await admin.getByRole('button', { name: 'Refresh report' }).click();
     await admin.getByRole('heading', { name: 'Unable to Load Report', exact: true }).waitFor();
     await admin.getByRole('button', { name: 'Retry', exact: true }).waitFor();
+    await admin.locator('.attempt-report__hero').waitFor({ state: 'detached' });
+    assert.equal(await admin.locator('.attempt-report__hero').count(), 0,
+      'the error state should not show placeholder student or exam details');
+    assert.equal(await admin.getByRole('button', { name: 'Back to Student Detail', exact: true }).count(), 1,
+      'the error state keeps the correct return path');
     await admin.screenshot({ path: `/tmp/shsat-admin-report-error-${stamp}.png` });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const reportErrorMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(reportErrorMobileSize.page <= reportErrorMobileSize.viewport,
+      'the report error state fits a 390px viewport');
+    await admin.screenshot({ path: `/tmp/shsat-admin-report-error-mobile-${stamp}.png` });
+    await admin.setViewportSize({ width: 1440, height: 1000 });
     await admin.getByRole('button', { name: 'Retry', exact: true }).click();
     await admin.getByText('Result Summary', { exact: true }).waitFor();
     await admin.unroute(reportEndpoint);
@@ -847,6 +888,16 @@ async function main() {
       'a malformed solution-set endpoint is recorded as ungraded, matching the independent SHSAT grader');
     assert.equal(malformedSolutionReport.unansweredCount, 13,
       'invalid solution-set and empty drag-and-drop answers are both classified as unanswered');
+    assert.equal(malformedSolutionReport.correctCount, 0,
+      'an unanswered attempt reports no correct responses');
+    assert.equal(malformedSolutionReport.totalScore, 0,
+      'an unanswered attempt has a zero raw score');
+    assert.equal(malformedSolutionReport.totalMaxScore, 13,
+      'an unanswered attempt preserves the full raw score maximum');
+    assert.equal(Number(malformedSolutionReport.completionRate), 0,
+      'an unanswered attempt has zero completion');
+    assert.equal(malformedSolutionReport.accuracy, null,
+      'accuracy is unavailable when the student has no valid answers');
     assert.equal(malformedSolutionReport.questions.find(question => Number(question.questionNumber) === 61).correct, null,
       'an empty drag-and-drop structure is classified as unanswered instead of wrong');
     assert.equal(malformedSolutionReport.wrongCount, 0,
@@ -859,14 +910,65 @@ async function main() {
       'after exam close the student report still presents the malformed answer as unanswered');
     assert.equal(malformedStudentReport.questions.find(question => Number(question.questionNumber) === 61).correct, null,
       'after exam close the student report still presents the empty drag-and-drop response as unanswered');
+    await student.goto(`${baseUrl}/student/attempts/${malformedSolutionAttemptId}/report`);
+    await student.getByText('Result Summary', { exact: true }).waitFor();
+    const emptyReportSummary = student.locator('.result-summary-card');
+    const summaryValue = async label => emptyReportSummary.locator('.summary-field')
+      .filter({ hasText: label }).locator('.summary-field__value').innerText();
+    assert.equal(await summaryValue('Raw Total'), '0 / 13');
+    assert.equal(await summaryValue('Unanswered'), '13');
+    assert.equal(await summaryValue('Accuracy'), 'Not available yet');
+    const emptyTimeAnalysis = student.locator('.time-analysis-grid');
+    assert.deepEqual(await emptyTimeAnalysis.locator('.time-analysis-card strong').allTextContents(), ['-', '-', '-', '-'],
+      'zero recorded time is shown as unavailable instead of a misleading zero-duration analysis');
+    assert.deepEqual((await emptyTimeAnalysis.locator('.time-analysis-card span').allTextContents())
+      .map(value => value.replace(/\s+/g, ' ').trim()), ['0 answered · avg -', '0 answered · avg -'],
+    'ELA and Math time cards clearly show that no answers have recorded time');
+    const emptyReviewFilterLabels = (await student.locator('.review-filter').allTextContents())
+      .map(value => value.replace(/\s+/g, ' ').trim());
+    assert.deepEqual(emptyReviewFilterLabels, ['All Questions13', 'Needs Review13', 'Unanswered13', 'Answered0'],
+      'invalid and empty response payloads remain unanswered in student review filters');
+    const emptyInequalitiesCard = student.locator('.knowledge-score-item').filter({ hasText: 'Inequalities' });
+    await emptyInequalitiesCard.waitFor();
+    const emptyInequalitiesText = (await emptyInequalitiesCard.innerText()).replace(/\s+/g, ' ');
+    assert.match(emptyInequalitiesText, /0%.*4 questions, 0 correct/);
+    assert.match(emptyInequalitiesText, /0 wrong, 4 unanswered/);
+    await student.locator('.time-analysis-grid').scrollIntoViewIfNeeded();
+    await student.screenshot({ path: `/tmp/shsat-empty-answer-time-analysis-${stamp}.png` });
+    await admin.goto(`${baseUrl}/student/attempts/${malformedSolutionAttemptId}/report`);
+    await admin.getByRole('heading', { name: 'Result Summary', exact: true }).waitFor();
+    assert.deepEqual(await admin.locator('.time-analysis-grid .time-analysis-card strong').allTextContents(), ['-', '-', '-', '-'],
+      'the administrator report uses the same zero-time presentation');
+    assert.deepEqual((await admin.locator('.review-filter').allTextContents()).map(value => value.replace(/\s+/g, ' ').trim()),
+      ['All Questions13', 'Needs Review13', 'Unanswered13', 'Answered0'],
+      'the administrator report classifies invalid and empty responses consistently');
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const adminEmptyReportMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(adminEmptyReportMobileSize.page <= adminEmptyReportMobileSize.viewport,
+      'the administrator zero-time report fits a 390px viewport');
+    await admin.locator('.time-analysis-grid').scrollIntoViewIfNeeded();
+    await admin.screenshot({ path: `/tmp/shsat-admin-empty-answer-time-analysis-mobile-${stamp}.png` });
+    await student.setViewportSize({ width: 1440, height: 900 });
+    const emptyReportDesktopSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(emptyReportDesktopSize.page <= emptyReportDesktopSize.viewport,
+      'the all-unanswered report fits a 1440px viewport');
+    await student.screenshot({ path: `/tmp/shsat-empty-answer-report-${stamp}.png` });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const emptyReportMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(emptyReportMobileSize.page <= emptyReportMobileSize.viewport,
+      'the all-unanswered report fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-empty-answer-report-mobile-${stamp}.png` });
 
     assert.deepEqual(pageErrors, [], 'the student exam and report have no browser errors');
 
     console.log(JSON.stringify({
       result: 'PASS', scoringProfileCode, totalScore: result.totalScore, compositeScore: result.compositeScore,
       questionResults: result.questions.map(question => [question.partCode, question.correct]),
-      mobileSize, dragMobileSize, adminReportMobileSize, studentDetailMobileSize, mobileChartMetrics, pageErrors: pageErrors.length,
+      mobileSize, dragMobileSize, adminReportMobileSize, studentDetailMobileSize, mobileChartMetrics,
+      emptyReportDesktopSize, emptyReportMobileSize, pageErrors: pageErrors.length,
+      adminEmptyReportMobileSize,
       screenshots: [`/tmp/shsat-equation-report-${stamp}.png`, `/tmp/shsat-equation-report-mobile-${stamp}.png`,
+        `/tmp/shsat-question-review-desktop-${stamp}.png`,
         `/tmp/shsat-drag-and-drop-report-mobile-${stamp}.png`,
         `/tmp/shsat-student-report-answers-visible-${stamp}.png`, `/tmp/shsat-student-report-answers-visible-mobile-${stamp}.png`,
         `/tmp/shsat-admin-report-${stamp}.png`, `/tmp/shsat-admin-report-mobile-${stamp}.png`,
@@ -879,6 +981,10 @@ async function main() {
         questionCount: restrictedReport.questions.length }, restrictedReportMobile,
       restrictedReportScreenshots: [`/tmp/shsat-student-report-review-disabled-${stamp}.png`,
         `/tmp/shsat-student-report-review-disabled-mobile-${stamp}.png`],
+      emptyReportScreenshots: [`/tmp/shsat-empty-answer-report-${stamp}.png`,
+        `/tmp/shsat-empty-answer-report-mobile-${stamp}.png`,
+        `/tmp/shsat-empty-answer-time-analysis-${stamp}.png`,
+        `/tmp/shsat-admin-empty-answer-time-analysis-mobile-${stamp}.png`],
     }));
   } finally {
     if (malformedSolutionExamId) await api(admin, `/api/admin/exams/${malformedSolutionExamId}`, 'DELETE').catch(() => {});

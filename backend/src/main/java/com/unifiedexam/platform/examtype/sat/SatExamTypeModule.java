@@ -22,7 +22,7 @@ public class SatExamTypeModule implements ExamTypeModule {
 
     @Override
     public ExamTypeDefinition definition() {
-        return new ExamTypeDefinition("SAT", "SAT", "SAT and PSAT assessments", 10, "SAT", "SAT");
+        return new ExamTypeDefinition("SAT", "SAT", "SAT practice and exams", 10, "SAT", "SAT");
     }
 
     /** SAT/PSAT 正式考试与练习复用原答案字段评分；其余新题型留给对应模块实现。 */

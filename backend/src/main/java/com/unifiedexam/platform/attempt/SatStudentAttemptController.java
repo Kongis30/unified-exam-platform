@@ -5,7 +5,6 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -16,6 +15,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.unifiedexam.platform.identity.WorkspaceAccessService;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 /** SAT/PSAT 专属正式考试接口；权限只开放给学生，管理员教师继续走练习模式。 */
 @RestController
@@ -23,9 +25,11 @@ import java.util.Map;
 public class SatStudentAttemptController {
 
     private final SatStudentAttemptService attempts;
+    private final WorkspaceAccessService workspaceAccess;
 
-    public SatStudentAttemptController(SatStudentAttemptService attempts) {
+    public SatStudentAttemptController(SatStudentAttemptService attempts, WorkspaceAccessService workspaceAccess) {
         this.attempts = attempts;
+        this.workspaceAccess = workspaceAccess;
     }
 
     @PostMapping("/exams/{examId}/sat-attempt")
@@ -39,20 +43,31 @@ public class SatStudentAttemptController {
     }
 
     @GetMapping("/sat-practice-papers")
-    public List<SatStudentAttemptService.PracticePaperView> practicePapers(Authentication authentication) {
-        return attempts.practicePapers(authentication.getName());
+    public List<SatStudentAttemptService.PracticePaperView> practicePapers(@RequestParam(required = false) String examTypeCode, Authentication authentication) {
+        return attempts.practicePapers(authentication.getName(), practiceWorkspace(examTypeCode, authentication));
     }
 
     @GetMapping("/sat-practice-attempts")
     public SatStudentAttemptService.PracticeHistoryPage practiceHistory(
             @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int size,
-            Authentication authentication) {
-        return attempts.practiceHistory(authentication.getName(), page, size);
+            @RequestParam(required = false) String examTypeCode, Authentication authentication) {
+        return attempts.practiceHistory(authentication.getName(), page, size, practiceWorkspace(examTypeCode, authentication));
     }
 
-    @DeleteMapping("/sat-practice-attempts/{attemptId}")
-    public void deletePracticeAttempt(@PathVariable long attemptId, Authentication authentication) {
-        attempts.deletePracticeAttempt(attemptId, authentication.getName());
+    private String practiceWorkspace(String code, Authentication authentication) {
+        if (code == null || code.isBlank()) {
+            var allowed = workspaceAccess.accessibleExamTypes(authentication);
+            boolean sat = allowed.contains("SAT"), psat = allowed.contains("PSAT");
+            if (sat && psat) return null;
+            if (sat) return "SAT";
+            if (psat) return "PSAT";
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You do not have access to this exam system.");
+        }
+        if (!"SAT".equals(code) && !"PSAT".equals(code)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select an exam system.");
+        }
+        workspaceAccess.requireExamType(authentication, code);
+        return code;
     }
 
     @GetMapping("/sat-attempts/{attemptId}")

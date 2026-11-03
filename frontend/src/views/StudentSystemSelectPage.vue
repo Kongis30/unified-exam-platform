@@ -42,7 +42,7 @@ onMounted(async () => {
     </section>
     <p v-if="isLoading" class="loading-state"><span class="loading-rule"></span>Loading exam systems…</p>
     <p v-else-if="error" class="form-error page-message" role="alert">{{ error }}</p>
-    <p v-else-if="!systems.length" class="table-empty">No exam systems are available.</p>
+    <p v-else-if="!systems.length" class="table-empty">No exam systems are available for your account. Please contact an administrator.</p>
   </main>
 </template>
 

@@ -27,11 +27,18 @@ async function main() {
   try {
     await login(admin, adminUsername, adminPassword);
     await admin.getByRole('heading', { name: 'Platform overview', exact: true }).waitFor();
+    assert.equal(await admin.getByText('Platform status', { exact: true }).count(), 0,
+      'the administrator overview focuses on exam workspaces without a redundant platform status card');
+    await admin.getByRole('heading', { name: 'Exam workspaces', exact: true }).waitFor();
     await admin.screenshot({ path: `/tmp/shsat-system-select-admin-${stamp}.png` });
     await enterWorkspace(admin, 'ADMIN');
     await admin.locator('.available-exams-card').getByText(
       'Start a practice attempt for a published exam from this dashboard.', { exact: true }
     ).waitFor();
+    await admin.reload();
+    await admin.getByRole('tab', { name: 'Paper Management', exact: true }).waitFor();
+    assert.equal(await admin.getByRole('tab', { name: 'Classes', exact: true }).count(), 1,
+      'refresh preserves the administrator session and full SHSAT navigation');
     await admin.screenshot({ path: `/tmp/shsat-system-select-admin-workspace-${stamp}.png` });
 
     const teacherAccount = await api(admin, '/api/admin/users', 'POST', {
@@ -145,7 +152,7 @@ async function main() {
       result: 'PASS',
       checks: ['admin opens SHSAT from platform overview', 'teacher opens SHSAT with role-specific tabs',
         'student chooses SHSAT from the unified system selector', 'SAT and PSAT appear as one workspace',
-        'wrong password English message', 'teacher and student refresh preserve sessions',
+        'wrong password English message', 'admin, teacher and student refresh preserve sessions',
         'administrator/teacher sign-out cancel and confirmation; all roles invalidate sessions and return to login',
         'missing-session redirect',
         'stale server session returns 401 and redirects all roles to sign-in',

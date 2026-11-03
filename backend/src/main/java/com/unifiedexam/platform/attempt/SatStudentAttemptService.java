@@ -61,6 +61,11 @@ public class SatStudentAttemptService {
 
     /** 提供可练习试卷；只列出已封存且包含题目的 SAT/PSAT 版本。 */
     public List<PracticePaperView> practicePapers(String username) {
+        return practicePapers(username, null);
+    }
+
+    public List<PracticePaperView> practicePapers(String username, String examTypeCode) {
+        validatePracticeType(examTypeCode);
         requireStudent(username);
         return jdbc.query("""
             SELECT p.id, p.title, p.description, p.exam_type_code, p.default_duration_seconds,
@@ -68,27 +73,32 @@ public class SatStudentAttemptService {
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id
             JOIN paper_sections s ON s.paper_id = p.id
             LEFT JOIN paper_items pi ON pi.section_id = s.id
-            WHERE p.exam_type_code IN ('SAT', 'PSAT') AND p.status = 'READY'
+            WHERE p.exam_type_code IN ('SAT', 'PSAT') AND (? IS NULL OR p.exam_type_code = ?) AND p.status = 'READY'
             GROUP BY p.id, p.title, p.description, p.exam_type_code, p.default_duration_seconds, g.name
             HAVING COUNT(pi.id) > 0
             ORDER BY g.sort_order, g.name, p.title, p.id
             """, (rs, row) -> new PracticePaperView(rs.getLong("id"), rs.getString("title"),
                 rs.getString("description"), rs.getString("exam_type_code"), rs.getString("group_name"),
-                nullableInt(rs, "default_duration_seconds"), rs.getInt("question_count")));
+                nullableInt(rs, "default_duration_seconds"), rs.getInt("question_count")), examTypeCode, examTypeCode);
     }
 
     /** 返回学生本人已完成的练习历史，避免练习成绩混入正式考试成绩。 */
     public PracticeHistoryPage practiceHistory(String username, int page, int size) {
+        return practiceHistory(username, page, size, null);
+    }
+
+    public PracticeHistoryPage practiceHistory(String username, int page, int size, String examTypeCode) {
+        validatePracticeType(examTypeCode);
         requireStudent(username);
         int currentPage = Math.max(1, page);
         int pageSize = Math.max(1, Math.min(100, size));
         long studentId = jdbc.queryForObject("SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT'", Long.class, username);
         Long total = jdbc.queryForObject("""
-            SELECT COUNT(*) FROM attempts a
-            WHERE a.student_user_id = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
+            SELECT COUNT(*) FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
+            WHERE (? IS NULL OR p.exam_type_code = ?) AND a.student_user_id = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
               AND (EXISTS(SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = a.exam_id)
                 OR EXISTS(SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = a.exam_id))
-            """, Long.class, studentId);
+            """, Long.class, examTypeCode, examTypeCode, studentId);
         List<PracticeAttemptView> records = jdbc.query("""
             SELECT a.id AS attempt_id, e.paper_id, p.title AS paper_title, p.exam_type_code, a.started_at,
                    a.submitted_at, ar.total_points, ar.max_points,
@@ -96,7 +106,7 @@ public class SatStudentAttemptService {
             FROM attempts a JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             LEFT JOIN attempt_results ar ON ar.attempt_id = a.id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = a.id
-            WHERE a.student_user_id = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
+            WHERE (? IS NULL OR p.exam_type_code = ?) AND a.student_user_id = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
               AND (EXISTS(SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = a.exam_id)
                 OR EXISTS(SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = a.exam_id))
             GROUP BY a.id, e.paper_id, p.title, p.exam_type_code, a.started_at, a.submitted_at, ar.total_points, ar.max_points
@@ -105,24 +115,16 @@ public class SatStudentAttemptService {
                 rs.getString("paper_title"), rs.getString("exam_type_code"), toInstant(rs.getTimestamp("started_at")),
                 toInstant(rs.getTimestamp("submitted_at")), rs.getBigDecimal("total_points"),
                 rs.getBigDecimal("max_points"), rs.getLong("time_spent_seconds")),
-            studentId, pageSize, (currentPage - 1) * pageSize);
+            examTypeCode, examTypeCode, studentId, pageSize, (currentPage - 1) * pageSize);
         long count = total == null ? 0 : total;
         return new PracticeHistoryPage(currentPage, pageSize, count, records);
     }
 
-    /** 只允许删除本人已提交的 SAT/PSAT 练习；数据库级联清除答案、结果和模块状态。 */
-    @Transactional
-    public void deletePracticeAttempt(long attemptId, String username) {
-        requireStudent(username);
-        List<Long> owned = jdbc.query("""
-            SELECT a.id FROM attempts a JOIN users u ON u.id = a.student_user_id
-            WHERE a.id = ? AND u.username = ? AND a.is_practice = TRUE AND a.status = 'SUBMITTED'
-              AND (EXISTS(SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = a.exam_id)
-                OR EXISTS(SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = a.exam_id))
-            FOR UPDATE
-            """, (rs, row) -> rs.getLong(1), attemptId, username);
-        if (owned.isEmpty()) throw notFound("Practice record not found.");
-        jdbc.update("DELETE FROM attempts WHERE id = ?", attemptId);
+    // 旧调用仍可请求两个类型；工作区入口只接收明确的 SAT 或 PSAT。
+    private void validatePracticeType(String code) {
+        if (code != null && !List.of("SAT", "PSAT").contains(code)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported practice exam type.");
+        }
     }
 
     private long practiceExamId(long paperId, String username) {

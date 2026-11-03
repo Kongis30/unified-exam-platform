@@ -113,6 +113,9 @@ async function main() {
     const scoreRows = await api(admin, `/api/admin/reports/exams/${examId}/classes/${classId}`);
     assert.equal(scoreRows.length, 3, 'all three assigned students appear in class results');
     assert.deepEqual(scoreRows.map(row => row.status).sort(), ['COMPLETED', 'IN_PROGRESS', 'NOT_STARTED']);
+    const notStartedScore = scoreRows.find(row => row.studentName === `Not Started ${stamp}`);
+    assert.equal(notStartedScore.attemptId, null, 'a student without an attempt has no result record');
+    assert.equal(notStartedScore.unansweredCount, null, 'an unattempted student has no answer counts');
 
     await admin.locator('.class-exam-table tbody tr').filter({ hasText: examTitle })
       .getByRole('button', { name: 'View Results', exact: true }).click();
@@ -122,6 +125,11 @@ async function main() {
       const row = admin.locator('.result-table tbody tr').filter({ hasText: `${student.state} ${stamp}` });
       await row.getByText(student.state, { exact: true }).waitFor();
     }
+    const notStartedRow = admin.locator('.result-table tbody tr').filter({ hasText: `Not Started ${stamp}` });
+    assert.equal(await notStartedRow.getByText('No result', { exact: true }).count(), 6,
+      'an unattempted student sees no-result placeholders instead of zero scores');
+    assert.equal(await notStartedRow.getByText(/0 wrong, 0 blank/).count(), 0,
+      'an unattempted student is not presented as having submitted blank answers');
     await admin.getByText('Across 1 completed students in this class release', { exact: true }).waitFor();
     await admin.getByText('33%', { exact: true }).waitFor();
     await admin.screenshot({ path: `/tmp/shsat-class-results-states-desktop-${stamp}.png` });
@@ -133,7 +141,8 @@ async function main() {
     await admin.screenshot({ path: `/tmp/shsat-class-results-states-mobile-${stamp}.png` });
     assert.deepEqual(pageErrors, []);
     console.log(JSON.stringify({ result: 'PASS', checks: ['Not Started / In Progress / Completed rows match API',
-      'summary includes only completed results', '33% completion count', '390px layout', 'no page errors'], mobile }));
+      'no-attempt rows show no-result values', 'summary includes only completed results', '33% completion count',
+      '390px layout', 'no page errors'], mobile }));
   } finally {
     if (examId) await api(admin, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     for (const userId of studentAccounts) {

@@ -154,24 +154,29 @@ public class ShsatWrongAnswerTaskService {
         LocalDateTime now = LocalDateTime.now();
         List<AssignmentView> assignments = jdbcTemplate.query("""
             SELECT a.id, a.task_id, a.student_user_id, u.real_name, a.source_attempt_id,
-                   a.practice_attempt_id,
+                   a.practice_attempt_id, practice.started_at AS practice_started_at,
+                   t.status AS task_status,
                    CASE WHEN (t.status = 'ENDED' OR (t.ends_at IS NOT NULL AND t.ends_at <= ?))
                              AND a.status IN ('NOT_STARTED', 'RETRY_REQUIRED') THEN 'ENDED' ELSE a.status END AS status,
                    JSON_LENGTH(a.question_numbers_json) AS question_count, a.created_at
             FROM shsat_wrong_answer_assignments a
             JOIN users u ON u.id = a.student_user_id
             JOIN shsat_wrong_answer_tasks t ON t.id = a.task_id
+            LEFT JOIN attempts practice ON practice.id = a.practice_attempt_id
             WHERE a.task_id = ? ORDER BY u.real_name, u.id
             """, (rs, rowNum) -> {
                 long assignmentId = rs.getLong("id");
                 Long practiceAttemptId = nullableLong(rs, "practice_attempt_id");
                 int questionCount = rs.getInt("question_count");
                 AssignmentMetrics metrics = assignmentMetrics(assignmentId, practiceAttemptId, questionCount);
+                int remaining = Math.max(0, questionCount - metrics.cleared());
+                String status = ShsatWrongAnswerTaskPolicy.studentStatus(rs.getString("task_status"),
+                    metrics.attemptStatus(), rs.getString("status"), remaining);
                 return new AssignmentView(assignmentId, rs.getLong("task_id"), rs.getLong("student_user_id"),
                     rs.getString("real_name"), null, nullableLong(rs, "source_attempt_id"), null, practiceAttemptId,
-                    rs.getString("status"), questionCount, Math.max(0, questionCount - metrics.cleared()), metrics.cleared(),
+                    status, questionCount, remaining, metrics.cleared(),
                     metrics.roundCount(), metrics.answered(), metrics.correct(), metrics.wrong(), metrics.unanswered(),
-                    metrics.accuracy(), localDateTime(rs, "created_at"), metrics.completedAt());
+                    metrics.accuracy(), localDateTime(rs.getTimestamp("practice_started_at")), metrics.completedAt());
             }, now, taskId);
         return new TaskDetail(task, assignments);
     }
@@ -264,7 +269,7 @@ public class ShsatWrongAnswerTaskService {
     }
 
     private AssignmentMetrics assignmentMetrics(long assignmentId, Long practiceAttemptId, int questionCount) {
-        if (practiceAttemptId == null) return new AssignmentMetrics(0, questionCount, 0, 0, 0, questionCount, null, null);
+        if (practiceAttemptId == null) return new AssignmentMetrics(0, questionCount, 0, 0, 0, questionCount, null, null, null);
         return jdbcTemplate.query("""
             SELECT
                 (SELECT COUNT(*) FROM JSON_TABLE(a.question_numbers_json, '$[*]' COLUMNS (question_number INT PATH '$')) assigned
@@ -276,25 +281,36 @@ public class ShsatWrongAnswerTaskService {
                       AND linked.status IN ('SUBMITTED','COMPLETED','EXPIRED')
                       AND JSON_CONTAINS(linked.shsat_wrong_answer_questions_json, JSON_ARRAY(assigned.question_number))
                       AND pi.display_number = assigned.question_number AND aa.is_correct = TRUE)) AS cleared_count,
-                (SELECT COUNT(*) FROM attempt_items WHERE attempt_id = current_attempt.id) AS round_count,
-                (SELECT COUNT(*) FROM attempt_answers WHERE attempt_id = current_attempt.id) AS answered_count,
+                CASE
+                    WHEN current_attempt.shsat_wrong_answer_questions_json IS NOT NULL
+                        THEN JSON_LENGTH(current_attempt.shsat_wrong_answer_questions_json)
+                    WHEN JSON_CONTAINS_PATH(details.runtime_state_json, 'one', '$.practiceQuestionNumbers')
+                        THEN COALESCE(JSON_LENGTH(JSON_EXTRACT(details.runtime_state_json,
+                            '$.practiceQuestionNumbers')), 0)
+                    ELSE (SELECT COUNT(*) FROM attempt_items WHERE attempt_id = current_attempt.id)
+                END AS round_count,
+                (SELECT COUNT(*) FROM attempt_answers answer
+                 WHERE answer.attempt_id = current_attempt.id
+                   AND NOT (JSON_CONTAINS_PATH(answer.answer_json, 'one', '$.legacyAnswer')
+                     AND (JSON_TYPE(JSON_EXTRACT(answer.answer_json, '$.legacyAnswer')) = 'NULL'
+                       OR (JSON_TYPE(JSON_EXTRACT(answer.answer_json, '$.legacyAnswer')) = 'STRING'
+                         AND JSON_UNQUOTE(JSON_EXTRACT(answer.answer_json, '$.legacyAnswer')) = '')))) AS answered_count,
                 (SELECT COUNT(*) FROM attempt_answers WHERE attempt_id = current_attempt.id AND is_correct = TRUE) AS correct_count,
-                (SELECT COUNT(*) FROM attempt_answers WHERE attempt_id = current_attempt.id AND is_correct = FALSE) AS wrong_count,
-                (SELECT COUNT(*) FROM attempt_items ai LEFT JOIN attempt_answers aa
-                    ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
-                 WHERE ai.attempt_id = current_attempt.id AND aa.paper_item_id IS NULL) AS unanswered_count,
-                current_attempt.submitted_at
+                current_attempt.submitted_at, current_attempt.status AS attempt_status
             FROM shsat_wrong_answer_assignments a JOIN attempts current_attempt ON current_attempt.id = ?
+            LEFT JOIN shsat_attempt_record_details details ON details.attempt_id = current_attempt.id
             WHERE a.id = ?
             """, rs -> {
-                if (!rs.next()) return new AssignmentMetrics(0, questionCount, 0, 0, 0, questionCount, null, null);
+                if (!rs.next()) return new AssignmentMetrics(0, questionCount, 0, 0, 0, questionCount, null, null, null);
                 int answered = rs.getInt("answered_count");
                 int correct = rs.getInt("correct_count");
+                int roundCount = rs.getInt("round_count");
+                int wrong = Math.max(0, answered - correct);
                 java.math.BigDecimal accuracy = answered == 0 ? null
                     : java.math.BigDecimal.valueOf(correct * 100.0 / answered).setScale(2, java.math.RoundingMode.HALF_UP);
-                return new AssignmentMetrics(rs.getInt("cleared_count"), rs.getInt("round_count"), answered,
-                    correct, rs.getInt("wrong_count"), rs.getInt("unanswered_count"), accuracy,
-                    localDateTime(rs.getTimestamp("submitted_at")));
+                return new AssignmentMetrics(rs.getInt("cleared_count"), roundCount, answered,
+                    correct, wrong, Math.max(0, roundCount - answered), accuracy,
+                    localDateTime(rs.getTimestamp("submitted_at")), rs.getString("attempt_status"));
             }, practiceAttemptId, assignmentId);
     }
 
@@ -352,5 +368,5 @@ public class ShsatWrongAnswerTaskService {
     private record StudentAssignment(long id, long studentId, String status, Long sourceAttemptId,
             String questionNumbersJson, String taskStatus, LocalDateTime startsAt, LocalDateTime endsAt) { }
     private record AssignmentMetrics(int cleared, int roundCount, int answered, int correct, int wrong,
-            int unanswered, java.math.BigDecimal accuracy, LocalDateTime completedAt) { }
+            int unanswered, java.math.BigDecimal accuracy, LocalDateTime completedAt, String attemptStatus) { }
 }

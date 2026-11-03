@@ -77,7 +77,8 @@ async function main() {
 
     await student.locator('.exam-transition-card__button').click();
     await student.getByText('Choose the correct language answer.', { exact: true }).waitFor();
-    await verifyExamToolbar(student);
+    await verifyToolbarKeyboardTraversal(student);
+    const toolbarScreenshots = await verifyExamToolbar(student, stamp);
     await student.locator('.choice-answer__option').first().click();
     await student.getByRole('button', { name: 'Submit Section', exact: true }).click();
     await student.getByRole('dialog').getByRole('button', { name: 'Submit Section', exact: true }).click();
@@ -89,6 +90,38 @@ async function main() {
       const image = document.querySelector('.hot-spot-answer__stage img');
       return image?.complete && image.naturalWidth === 320;
     });
+    await student.locator('.material-display__image-button').click();
+    const materialImageDialog = student.getByRole('dialog', { name: 'Material image preview' });
+    await materialImageDialog.waitFor();
+    const materialPreviewImage = materialImageDialog.locator('img');
+    const imagePreviewDesktopScreenshot = `/tmp/shsat-student-image-preview-${stamp}.png`;
+    await student.screenshot({ path: imagePreviewDesktopScreenshot });
+    await student.setViewportSize({ width: 390, height: 844 });
+    const imagePreviewMobileSize = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(imagePreviewMobileSize.page <= imagePreviewMobileSize.viewport,
+      `the student image preview fits a 390px viewport: ${JSON.stringify(imagePreviewMobileSize)}`);
+    const imagePreviewDialogWidth = await materialImageDialog.evaluate(element => element.getBoundingClientRect().width);
+    assert.ok(imagePreviewDialogWidth <= 390, 'the student image preview dialog fits a 390px viewport');
+    const imagePreviewMobileScreenshot = `/tmp/shsat-student-image-preview-mobile-${stamp}.png`;
+    await student.screenshot({ path: imagePreviewMobileScreenshot });
+    await student.setViewportSize({ width: 1440, height: 900 });
+    await materialImageDialog.getByRole('button', { name: 'Zoom In', exact: true }).click();
+    assert.match(await materialPreviewImage.getAttribute('style'), /scale\(1\.6\)/,
+      'the student exam image preview can be enlarged');
+    const materialPreviewBounds = await materialPreviewImage.boundingBox();
+    assert.ok(materialPreviewBounds, 'the enlarged student material image can be dragged');
+    await student.mouse.move(materialPreviewBounds.x + 35, materialPreviewBounds.y + 30);
+    await student.mouse.down();
+    await student.mouse.move(materialPreviewBounds.x + 75, materialPreviewBounds.y + 65, { steps: 3 });
+    await student.mouse.up();
+    const pannedMaterialImageStyle = await materialPreviewImage.getAttribute('style');
+    assert.match(pannedMaterialImageStyle, /translate3d\((?!0px, 0px)[^)]+\) scale\(1\.6\)/,
+      `dragging pans the student material image without zooming it again: ${pannedMaterialImageStyle}`);
+    await materialImageDialog.getByRole('button', { name: 'Reset', exact: true }).click();
+    assert.match(await materialPreviewImage.getAttribute('style'), /translate3d\(0px, 0px, 0px\) scale\(1\)/,
+      'Reset restores the student image position and zoom');
+    await materialImageDialog.getByRole('button', { name: 'Close image preview', exact: true }).click();
+    await materialImageDialog.waitFor({ state: 'detached' });
     await verifyDrawingTool(student);
 
     await student.setViewportSize({ width: 390, height: 844 });
@@ -141,7 +174,8 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS', score: report.totalScore, mobileSize, reportMobileSize, pageErrors: pageErrors.length,
-      screenshots: [`/tmp/shsat-hotspot-active-${stamp}.png`, `/tmp/shsat-hotspot-active-mobile-${stamp}.png`,
+      screenshots: [imagePreviewDesktopScreenshot, imagePreviewMobileScreenshot, ...toolbarScreenshots,
+        `/tmp/shsat-hotspot-active-${stamp}.png`, `/tmp/shsat-hotspot-active-mobile-${stamp}.png`,
         `/tmp/shsat-hotspot-report-${stamp}.png`, `/tmp/shsat-hotspot-report-mobile-${stamp}.png`],
     }));
   } finally {
@@ -156,8 +190,33 @@ async function main() {
   }
 }
 
+// 键盘 Tab 顺序按页面上的可操作控件顺序逐一检查，避免只测脚本 focus。
+async function verifyToolbarKeyboardTraversal(page) {
+  const toolbarButtons = page.locator('.toolbar-tools button');
+  const buttonNames = await toolbarButtons.evaluateAll(buttons => buttons
+    .filter(button => !button.disabled && button.getClientRects().length > 0)
+    .map(button => button.getAttribute('aria-label') || button.title || button.innerText.trim()));
+  assert.ok(buttonNames.length > 0, 'the exam toolbar has keyboard-accessible controls');
+
+  await page.getByRole('button', { name: buttonNames[0], exact: true }).focus();
+  for (const expectedName of buttonNames.slice(1)) {
+    await page.keyboard.press('Tab');
+    const focusedName = await page.evaluate(() => {
+      const button = document.activeElement;
+      return button?.getAttribute('aria-label') || button?.title || button?.innerText?.trim() || '';
+    });
+    assert.equal(focusedName, expectedName,
+      `Tab reaches the next enabled exam tool: expected ${expectedName}, got ${focusedName}`);
+  }
+}
+
 // SHSAT 考试工具栏回归：确认工具切换只影响显示/标记，不会改写当前答案。
-async function verifyExamToolbar(page) {
+async function verifyExamToolbar(page, stamp) {
+  const fullscreen = page.getByRole('button', { name: 'Fullscreen', exact: true });
+  assert.equal(await fullscreen.isDisabled(), true, 'Fullscreen cannot be exited from the toolbar during an active exam');
+  assert.equal(await fullscreen.getAttribute('title'), 'Fullscreen is required during the exam',
+    'the disabled Fullscreen control explains why fullscreen must remain active');
+
   const bookmark = page.getByRole('button', { name: 'Bookmark', exact: true });
   await bookmark.click();
   assert.match(await bookmark.getAttribute('class'), /active/, 'Bookmark marks the current question');
@@ -217,19 +276,65 @@ async function verifyExamToolbar(page) {
   await page.locator('.line-reader__strip').waitFor({ state: 'detached' });
 
   const examShell = page.locator('.exam-question-shell');
-  const fontMenuButton = page.getByRole('button', { name: 'Font Size', exact: true });
-  await fontMenuButton.focus();
-  await fontMenuButton.press('Enter');
-  const largestFontOption = page.getByRole('button', { name: '1.6x', exact: true });
-  await largestFontOption.focus();
-  await largestFontOption.press('Enter');
-  assert.equal(await examShell.evaluate(element => getComputedStyle(element).getPropertyValue('--exam-font-scale').trim()), '1.6');
+  const fontOptions = [['1.0x', '1'], ['1.15x', '1.15'], ['1.3x', '1.3'], ['1.45x', '1.45'], ['1.6x', '1.6']];
+  for (const [label, scale] of fontOptions) {
+    await page.getByRole('button', { name: 'Font Size', exact: true }).click();
+    await page.getByRole('button', { name: label, exact: true }).click();
+    assert.equal(await examShell.evaluate(element => getComputedStyle(element).getPropertyValue('--exam-font-scale').trim()),
+      scale, `Font Size ${label} applies the expected scale`);
+  }
+
+  const widthOptions = [['Normal', 'normal'], ['Wide', 'wide'], ['Extra Wide', 'ultra-wide']];
+  for (const [label, mode] of widthOptions) {
+    await page.getByRole('button', { name: 'Page Width', exact: true }).click();
+    await page.getByRole('button', { name: label, exact: true }).click();
+    assert.match(await page.locator('.student-exam').getAttribute('class'), new RegExp(`student-exam--${mode}`),
+      `Page Width ${label} applies the expected layout`);
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Font Size', exact: true }).click();
+  const fontMenu = page.locator('.font-selector .tool-dropdown');
+  await fontMenu.waitFor();
+  assert.deepEqual(await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth })),
+    { page: 390, viewport: 390 }, 'the open font menu does not cause mobile page overflow');
+  assert.ok(await fontMenu.isVisible(), 'the font menu is visibly rendered on mobile');
+  const fontMenuLayout = await fontMenu.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const topLeft = document.elementFromPoint(rect.left + 8, rect.top + 8);
+    return { width: rect.width, height: rect.height, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+      display: getComputedStyle(element).display, visibility: getComputedStyle(element).visibility,
+      hit: topLeft ? `${topLeft.tagName}.${topLeft.className}` : null,
+      visible: rect.width >= 120 && rect.height >= 150
+      && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight
+      && (topLeft === element || element.contains(topLeft)) };
+  });
+  assert.ok(fontMenuLayout.visible, `the complete font menu stays within the mobile viewport: ${JSON.stringify(fontMenuLayout)}`);
+  const fontMenuScreenshot = `/tmp/shsat-hotspot-font-menu-mobile-${stamp}.png`;
+  await page.screenshot({ path: fontMenuScreenshot });
+  await page.getByRole('button', { name: '1.3x', exact: true }).click();
+
   await page.getByRole('button', { name: 'Page Width', exact: true }).click();
-  await page.getByRole('button', { name: 'Extra Wide', exact: true }).click();
-  assert.match(await page.locator('.student-exam').getAttribute('class'), /student-exam--ultra-wide/);
-  await page.getByRole('button', { name: 'Page Width', exact: true }).click();
+  const widthMenu = page.locator('.width-selector .tool-dropdown');
+  await widthMenu.waitFor();
+  assert.ok(await widthMenu.isVisible(), 'the page-width menu is visibly rendered on mobile');
+  const widthMenuLayout = await widthMenu.evaluate(element => {
+    const rect = element.getBoundingClientRect();
+    const topLeft = document.elementFromPoint(rect.left + 8, rect.top + 8);
+    return { width: rect.width, height: rect.height, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+      display: getComputedStyle(element).display, visibility: getComputedStyle(element).visibility,
+      hit: topLeft ? `${topLeft.tagName}.${topLeft.className}` : null,
+      visible: rect.width >= 120 && rect.height >= 90
+      && rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight
+      && (topLeft === element || element.contains(topLeft)) };
+  });
+  assert.ok(widthMenuLayout.visible, `the complete page-width menu stays within the mobile viewport: ${JSON.stringify(widthMenuLayout)}`);
+  const widthMenuScreenshot = `/tmp/shsat-hotspot-width-menu-mobile-${stamp}.png`;
+  await page.screenshot({ path: widthMenuScreenshot });
   await page.getByRole('button', { name: 'Normal', exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 900 });
   assert.match(await page.locator('.student-exam').getAttribute('class'), /student-exam--normal/);
+  return [fontMenuScreenshot, widthMenuScreenshot];
 }
 
 // 图片题提供实际绘图层；验证画线、切换笔色及清除都只改变本题批注。
@@ -255,6 +360,7 @@ async function verifyDrawingTool(page) {
 }
 
 function makeSections() {
+  const passageImage = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="160"><rect width="320" height="160" fill="#eef4ff"/><text x="20" y="86" font-size="22" fill="#1e293b">Material image preview</text></svg>')}`;
   return [
     {
       sectionCode: 'ELA', sectionKind: 'PART', title: 'English Language Arts', sortOrder: 0,
@@ -280,7 +386,7 @@ function makeSections() {
         questions: [{
           questionTypeCode: 'HOT_SPOT', payloadSchemaVersion: 1,
           stem: 'Select the shaded target area.',
-          render: { material: { title: 'Drawing Passage', category: 'Reading Passage', content: 'A short passage for testing the drawing tool.' }, questionConfig: {
+          render: { material: { title: 'Drawing Passage', category: 'Reading Passage', content: `Drawing Passage\n\nA short passage for testing the drawing tool.\n[[MATERIAL_IMAGE:${passageImage}]]` }, questionConfig: {
             selectionMode: 'single',
             imageUrl: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="#eef4ff"/><text x="20" y="40" font-size="20" fill="#1e293b">Select the blue square</text><rect x="96" y="96" width="64" height="64" rx="8" fill="#3275f6"/></svg>')}`,
             regions: [{ id: 'target-region', label: 'Target area', shape: 'rect', x: 0.3, y: 0.4, width: 0.2, height: 0.27 }],

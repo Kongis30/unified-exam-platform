@@ -4,7 +4,6 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
-import AdminLayout from '@/components/admin/AdminLayout.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
 const route = useRoute();
@@ -403,7 +402,7 @@ function getStatusMeta(status) {
 }
 
 function hasSubmission(score) {
-  return Boolean(score?.attemptId || score?.submittedAt || String(score?.status || '').trim());
+  return Boolean(score?.attemptId || score?.submittedAt);
 }
 
 function formatResultNumber(value, fallback = 'No result') {
@@ -564,7 +563,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <AdminLayout>
+
     <section class="page-shell class-results-page">
       <section class="class-results-hero">
         <button class="class-results-back-button" type="button" @click="goBack">
@@ -891,7 +890,7 @@ onBeforeUnmount(() => {
       </AppCard>
 
     </section>
-  </AdminLayout>
+
 </template>
 
 <style scoped>

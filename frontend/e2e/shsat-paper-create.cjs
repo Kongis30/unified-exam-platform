@@ -22,6 +22,7 @@ async function main() {
   const stamp = Date.now();
   let title = `Temporary SHSAT Practice Paper Name Layout and Filtering Regression Check ${String(stamp).slice(-6)}`;
   let paperId;
+  let versionId;
   let releaseExamId;
 
   try {
@@ -29,7 +30,7 @@ async function main() {
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin`);
     await page.getByRole('tab', { name: 'Paper Management', exact: true }).click();
     await page.getByRole('button', { name: 'Create Paper', exact: true }).click();
-    const modal = page.locator('.modal-card--paper-create');
+    const modal = page.getByRole('dialog', { name: 'Create Paper' });
     await modal.waitFor();
     await page.screenshot({ path: `/tmp/shsat-paper-create-modal-${stamp}.png` });
 
@@ -71,6 +72,20 @@ async function main() {
       ['Math Multiple Choice', 'Math questions answered by choosing one option.'],
       ['Math Tech-Enhanced', 'Technology-enhanced SHSAT math interaction questions.'],
     ], 'official SHSAT subtype names and guidance match the independent system');
+
+    await api(page, `/api/admin/papers/${paperId}/scoring-profile`, 'PATCH', {
+      scoringProfileCode: 'SHSAT_2026_100',
+    });
+    const createdVersion = await api(page, `/api/admin/papers/${paperId}/versions`, 'POST');
+    versionId = Number(createdVersion.summary.id);
+    assert.equal(createdVersion.scoringProfileCode, 'SHSAT_2026_100',
+      'a new version inherits the source paper scoring profile');
+    assert.equal((await api(page, `/api/admin/papers/${versionId}`)).scoringProfileCode,
+      'SHSAT_2026_100', 'the inherited scoring profile persists after reloading the new version');
+    assert.equal((await api(page, `/api/admin/papers/${paperId}`)).scoringProfileCode, 'SHSAT_2026_100',
+      'the source scoring profile remains unchanged after version creation');
+    await api(page, `/api/admin/papers/${versionId}`, 'DELETE');
+    versionId = undefined;
 
     await page.getByRole('button', { name: /Back to Paper Management/ }).click();
     await page.waitForURL(url => url.pathname === '/exam-types/SHSAT/admin');
@@ -175,7 +190,7 @@ async function main() {
       'sealing preserves the saved ELA question');
 
     await page.getByRole('button', { name: 'Create Paper', exact: true }).click();
-    const duplicateModal = page.locator('.modal-card--paper-create');
+    const duplicateModal = page.getByRole('dialog', { name: 'Create Paper' });
     await duplicateModal.getByLabel('Paper Name').fill(title);
     await duplicateModal.getByRole('button', { name: 'Create and Edit', exact: true }).click();
     await duplicateModal.getByText('Paper name already exists.', { exact: true }).waitFor();
@@ -255,6 +270,7 @@ async function main() {
     console.log(JSON.stringify({
       result: 'PASS',
       checks: ['required name validation', 'description and duration save', 'Default Folder assignment',
+        'new SHSAT paper versions inherit the configured scoring profile',
         'empty draft seal is blocked; valid ELA paper is sealed and remains ready',
         'offline DRAFT with official ELA/Math parts and six subtypes', 'Edit Info metadata persistence', 'Edit Paper route',
         'long paper name and list question/duration/score/status columns on desktop and mobile',
@@ -270,6 +286,7 @@ async function main() {
     }));
   } finally {
     if (releaseExamId) await api(page, `/api/admin/exams/${releaseExamId}`, 'DELETE').catch(() => {});
+    if (versionId) await api(page, `/api/admin/papers/${versionId}`, 'DELETE').catch(() => {});
     if (paperId) await api(page, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
     await browser.close();
   }

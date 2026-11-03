@@ -99,8 +99,50 @@ async function main() {
     await page.getByRole('button', { name: 'Assign selected (2)' }).click();
     const retryDialog = page.getByRole('dialog', { name: 'Assign Students to a Class' });
     await retryDialog.locator('select').selectOption(String(classId));
+    const failedStudentId = Number(firstTwo[1].id);
+    await page.route(`**/api/admin/classes/${classId}/students`, async route => {
+      const request = route.request();
+      const requestStudentId = Number(JSON.parse(request.postData() || '{}').studentUserId);
+      if (request.method() === 'POST' && requestStudentId === failedStudentId) {
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ message: 'Simulated membership conflict.' }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await retryDialog.getByRole('button', { name: 'Assign Students', exact: true }).click();
+    await retryDialog.getByText(/1 of 2 students were assigned\. Simulated membership conflict\./).waitFor();
+    assert.equal(await retryDialog.isVisible(), true, 'partial assignment keeps the dialog open for recovery');
+    assert.equal(await retryDialog.locator('.bulk-assign-summary strong').innerText(), '1 student selected',
+      'the partial retry summary uses singular grammar');
+    const partialSelectionStatus = await selectionStatus.innerText();
+    assert.match(partialSelectionStatus, /^1 selected · /, 'only the failed student remains selected after refresh');
+    assert.equal(await scrollRegion.getByRole('checkbox', { name: `Select ${firstTwo[1].realName}` }).isChecked(), true,
+      'the failed student remains available and selected for retry');
+    assert.equal(await scrollRegion.getByRole('checkbox', { name: `Select ${firstTwo[0].realName}` }).count(), 0,
+      'the successfully assigned student is removed from the available-student list');
+    let members = await api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`);
+    assert.deepEqual(members.map(item => Number(item.userId || item.id)), [Number(firstTwo[0].id)],
+      'the successful membership is persisted while the failed membership is not written');
+    await page.screenshot({ path: `/tmp/shsat-unassigned-bulk-partial-failure-${stamp}.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const partialFailureMobileWidth = await page.evaluate(() => ({
+      page: document.documentElement.scrollWidth,
+      viewport: window.innerWidth,
+    }));
+    assert.ok(partialFailureMobileWidth.page <= partialFailureMobileWidth.viewport,
+      'the partial-failure dialog fits a 390px viewport');
+    await page.screenshot({ path: `/tmp/shsat-unassigned-bulk-partial-failure-mobile-${stamp}.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    await page.unroute(`**/api/admin/classes/${classId}/students`);
     await retryDialog.getByRole('button', { name: 'Assign Students', exact: true }).click();
     await page.getByText('Students Assigned', { exact: true }).waitFor();
+    assert.match(await page.locator('.action-toast p').innerText(), /1 student was added to /,
+      'the one-student success message uses singular grammar');
     await page.setViewportSize({ width: 390, height: 844 });
     const toastPosition = await page.locator('.action-toast').evaluate(element => ({
       bottom: getComputedStyle(element).bottom,
@@ -110,9 +152,9 @@ async function main() {
     assert.ok(toastPosition.y > 140, 'mobile action notifications stay below the two-row platform navigation');
     await page.screenshot({ path: `/tmp/shsat-admin-toast-mobile-${stamp}.png` });
 
-    const members = await api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`);
+    members = await api(page, `/api/admin/classes/${classId}/students?examTypeCodes=SHSAT`);
     assert.deepEqual(new Set(members.map(item => Number(item.userId || item.id))),
-      new Set(firstTwo.map(item => Number(item.id))), 'only selected students are assigned');
+      new Set(firstTwo.map(item => Number(item.id))), 'retry assigns the remaining student without duplicating the successful membership');
     const remainingRows = await scrollRegion.locator('tbody tr').allTextContents();
     for (const student of firstTwo) {
       assert.ok(!remainingRows.some(row => row.includes(student.realName)), `${student.realName} leaves the unassigned list`);
@@ -145,8 +187,9 @@ async function main() {
 
     console.log(JSON.stringify({
       result: 'PASS',
-      checks: ['collapse and expand', '800px scroll cap', 'select all and clear selection', 'multi-select and refresh preserve selection', 'cancel preserves selection', 'assign selected students', 'accounts remain active', '390px layout without table overflow', 'temporary data cleanup'],
+      checks: ['collapse and expand', '800px scroll cap', 'select all and clear selection', 'multi-select and refresh preserve selection', 'cancel preserves selection', 'partial assignment failure retains only failed students for retry', 'retry persists memberships without duplicates', 'accounts remain active', '390px layout without table overflow', 'temporary data cleanup'],
       scrollMetrics,
+      partialFailureMobileWidth,
       mobileWidth,
       mobileTableWidth,
       pageErrors: pageErrors.length,

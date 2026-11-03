@@ -7,13 +7,22 @@ import AppModal from '@/components/AppModal.vue'
 import { createClass, listClasses, reorderClasses } from '@/api/platform'
 import { notifyOperation } from '@/utils/operationNotification'
 
-const props = defineProps({ examTypeCode: { type: String, default: '' } })
+const props = defineProps({
+  examTypeCode: { type: String, default: '' },
+  initialClasses: { type: Array, default: null },
+})
+const emit = defineEmits(['classes-updated'])
 const route = useRoute()
 const router = useRouter()
+const satWorkspace = computed(() => ['SAT', 'PSAT'].includes(props.examTypeCode))
+const adminRouteName = computed(() => props.examTypeCode === 'PSAT' ? 'psat-admin' : 'sat-admin')
 const classes = ref([])
-const keyword = ref(props.examTypeCode === 'SAT' && typeof route.query.classSearch === 'string'
+const keyword = ref(satWorkspace.value && typeof route.query.classSearch === 'string'
   ? route.query.classSearch
   : '')
+const classStatus = ref(['ACTIVE', 'ARCHIVED', 'ALL'].includes(route.query.classStatus)
+  ? route.query.classStatus
+  : 'ACTIVE')
 const isLoading = ref(false)
 const showCreateDialog = ref(false)
 const isSavingClass = ref(false)
@@ -25,22 +34,27 @@ const draggingClassId = ref('')
 const classDragMoved = ref(false)
 let suppressClassClickUntil = 0
 const classForm = ref({ name: '', description: '', sortOrder: 0 })
-const classExamTypeCodes = computed(() => props.examTypeCode === 'SAT' ? ['SAT', 'PSAT'] : ['SHSAT'])
-const canReorderClasses = computed(() => props.examTypeCode === 'SAT'
+const classExamTypeCodes = computed(() => [props.examTypeCode || 'SHSAT'])
+const canReorderClasses = computed(() => satWorkspace.value
   && !keyword.value.trim()
+  && classStatus.value === 'ALL'
   && classes.value.length > 1
   && !isReorderingClasses.value)
 const filteredClasses = computed(() => {
   const query = keyword.value.trim().toLocaleLowerCase()
-  if (!query) return classes.value
-  return classes.value.filter((item) => [item.name, item.description, item.status]
-    .some((value) => String(value || '').toLocaleLowerCase().includes(query)))
+  return classes.value.filter((item) => {
+    const statusMatches = classStatus.value === 'ALL' || item.status === classStatus.value
+    const queryMatches = !query || [item.name, item.description, item.status]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(query))
+    return statusMatches && queryMatches
+  })
 })
 
 async function loadClasses() {
   isLoading.value = true
   try {
     classes.value = await listClasses(classExamTypeCodes.value)
+    emit('classes-updated', classes.value)
   } finally {
     isLoading.value = false
   }
@@ -58,9 +72,9 @@ async function loadPage() {
 }
 
 function openClass(classroom) {
-  if (props.examTypeCode === 'SAT') {
+  if (satWorkspace.value) {
     router.push({
-      name: 'sat-class-detail',
+      name: props.examTypeCode === 'PSAT' ? 'psat-class-detail' : 'sat-class-detail',
       params: { classId: classroom.id },
       query: { returnTo: getClassListReturnPath() },
     })
@@ -74,15 +88,24 @@ function getClassListReturnPath() {
     ...route.query,
     tab: 'classes',
     classSearch: keyword.value.trim() || undefined,
+    classStatus: classStatus.value === 'ACTIVE' ? undefined : classStatus.value,
   }
-  return router.resolve({ name: 'sat-admin', query }).fullPath
+  return router.resolve({ name: adminRouteName.value, query }).fullPath
 }
 
 watch(keyword, (value) => {
-  if (props.examTypeCode !== 'SAT' || route.name !== 'sat-admin') return
+  if (!satWorkspace.value || route.name !== adminRouteName.value) return
   const query = { ...route.query, classSearch: value.trim() || undefined }
   if (JSON.stringify(query) !== JSON.stringify(route.query)) {
-    router.replace({ name: 'sat-admin', query })
+    router.replace({ name: adminRouteName.value, query })
+  }
+})
+
+watch(classStatus, (value) => {
+  if (!satWorkspace.value || route.name !== adminRouteName.value) return
+  const query = { ...route.query, classStatus: value === 'ACTIVE' ? undefined : value }
+  if (JSON.stringify(query) !== JSON.stringify(route.query)) {
+    router.replace({ name: adminRouteName.value, query })
   }
 })
 
@@ -130,6 +153,7 @@ async function finishClassDrag() {
   error.value = ''
   try {
     classes.value = await reorderClasses(classes.value.map((classroom) => classroom.id), classExamTypeCodes.value)
+    emit('classes-updated', classes.value)
     notifyOperation('Class order updated.')
   } catch (requestError) {
     notifyOperation(requestError.message || 'Unable to update class order.', 'error')
@@ -158,7 +182,7 @@ async function saveClass() {
     await createClass({ ...classForm.value, name }, classExamTypeCodes.value)
     classForm.value = { name: '', description: '', sortOrder: 0 }
     showCreateDialog.value = false
-    if (props.examTypeCode === 'SAT') notifyOperation('Class created.')
+    if (satWorkspace.value) notifyOperation('Class created.')
     else notice.value = 'Class created.'
     try {
       await loadClasses()
@@ -167,7 +191,7 @@ async function saveClass() {
     }
   } catch (requestError) {
     const message = requestError.message || 'Unable to create this class.'
-    if (props.examTypeCode === 'SAT') notifyOperation(message, 'error')
+    if (satWorkspace.value) notifyOperation(message, 'error')
     else classCreateError.value = message
   } finally {
     isSavingClass.value = false
@@ -187,7 +211,10 @@ function closeCreateDialog() {
   showCreateDialog.value = false
 }
 
-onMounted(loadPage)
+onMounted(() => {
+  if (props.initialClasses !== null) classes.value = [...props.initialClasses]
+  else loadPage()
+})
 </script>
 
 <template>
@@ -202,14 +229,19 @@ onMounted(loadPage)
     <div class="admin-toolbar">
       <div class="admin-toolbar__filters">
         <input v-model="keyword" class="form-input class-search-input" placeholder="Search class or description" />
+        <select v-model="classStatus" class="form-input class-status-filter" aria-label="Class status">
+          <option value="ACTIVE">Active</option>
+          <option value="ARCHIVED">Inactive</option>
+          <option value="ALL">All statuses</option>
+        </select>
       </div>
     </div>
 
     <p v-if="error" class="error-text page-message" role="alert">{{ error }}</p>
-    <p v-else-if="notice && props.examTypeCode !== 'SAT'" class="success-text page-message" role="status">{{ notice }}</p>
+    <p v-else-if="notice && !satWorkspace" class="success-text page-message" role="status">{{ notice }}</p>
     <div v-if="isLoading && !classes.length" class="admin-state">Loading classes...</div>
     <div v-else-if="!classes.length" class="admin-state">No classes found.</div>
-    <div v-else-if="!filteredClasses.length" class="admin-state">No classes match your search.</div>
+    <div v-else-if="!filteredClasses.length" class="admin-state">No classes match the selected filters.</div>
     <div v-else class="class-grid" :class="{ 'class-grid--reorderable': canReorderClasses }">
       <article
         v-for="classroom in filteredClasses"
@@ -259,7 +291,7 @@ onMounted(loadPage)
         <span class="form-label">Description</span>
         <textarea v-model.trim="classForm.description" class="form-input" rows="3" maxlength="500" placeholder="Optional" />
       </label>
-      <p v-if="classCreateError && props.examTypeCode !== 'SAT'" class="error-text" role="alert">{{ classCreateError }}</p>
+      <p v-if="classCreateError && !satWorkspace" class="error-text" role="alert">{{ classCreateError }}</p>
     </form>
     <template #footer>
       <AppButton type="button" variant="secondary" :disabled="isSavingClass" @click="closeCreateDialog">Cancel</AppButton>
@@ -272,6 +304,7 @@ onMounted(loadPage)
 </template>
 
 <style scoped>
+.class-status-filter { min-width: 145px !important; }
 .class-create-dialog-form { display: grid; gap: 16px; }
 .class-create-dialog-form .form-field { display: grid; gap: 7px; }
 .class-create-dialog-form .form-input { box-sizing: border-box; width: 100%; min-height: 42px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 9px 12px; background: #fbfdff; color: var(--color-text); font: inherit; font-size: 15px; }

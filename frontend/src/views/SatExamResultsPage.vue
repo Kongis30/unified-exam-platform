@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AppCard from '@/components/AppCard.vue'
 import AdminDataTable from '@/components/admin/AdminDataTable.vue'
-import AdminLayout from '@/components/admin/AdminLayout.vue'
 import { authState } from '@/auth'
 import { getSatExamResults } from '@/examTypes/sat/admin/api/results'
 
@@ -27,7 +26,7 @@ const filteredParticipants = computed(() => {
 watch(keyword, (value) => {
   const query = { ...route.query, studentSearch: value.trim() || undefined }
   if (JSON.stringify(query) !== JSON.stringify(route.query)) {
-    router.replace({ name: 'sat-exam-results', params: { examId: route.params.examId }, query })
+    router.replace({ name: route.name, params: { examId: route.params.examId }, query })
   }
 })
 
@@ -45,16 +44,16 @@ function score(value, max = null) {
 
 function backToExamReleases() {
   const returnTo = route.query.returnTo
-  if (typeof returnTo === 'string' && returnTo.startsWith('/exam-types/SAT/admin')) {
+  if (typeof returnTo === 'string' && (/^\/(sat|psat)(?:[/?#]|$)/.test(returnTo) || returnTo.startsWith('/exam-types/SAT/admin') || returnTo.startsWith('/exam-types/PSAT/admin'))) {
     router.push(returnTo)
     return
   }
-  router.push({ name: 'sat-admin', query: { tab: 'exams' } })
+  router.push({ name: route.name === 'psat-exam-results' ? 'psat-admin' : 'sat-admin', query: { tab: 'exams' } })
 }
 
 function openMonitor() {
   router.push({
-    name: 'sat-admin-exam-monitor',
+    name: route.name === 'psat-exam-results' ? 'psat-admin-exam-monitor' : 'sat-admin-exam-monitor',
     params: { examId: route.params.examId },
     query: { returnTo: route.fullPath },
   })
@@ -77,7 +76,7 @@ async function loadResults() {
   loading.value = true
   error.value = ''
   try {
-    const result = await getSatExamResults(route.params.examId)
+    const result = await getSatExamResults(route.params.examId, route.query.classId)
     exam.value = result.exam
     summary.value = result.summary
     participants.value = result.participants || []
@@ -92,7 +91,7 @@ onMounted(loadResults)
 </script>
 
 <template>
-  <AdminLayout>
+
     <main class="sat-exam-results-page">
       <button type="button" class="sat-exam-results-back" @click="backToExamReleases">← Back to Exam Releases</button>
       <header class="sat-exam-results-heading">
@@ -164,7 +163,7 @@ onMounted(loadResults)
         </AppCard>
       </template>
     </main>
-  </AdminLayout>
+
 </template>
 
 <style scoped>

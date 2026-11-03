@@ -52,7 +52,7 @@ public class SatPaperSettingsController {
             VALUES (?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE scoring_table_code = VALUES(scoring_table_code),
                 adaptive_mode = VALUES(adaptive_mode), rest_time_seconds = VALUES(rest_time_seconds)
-            """, paperId, request.scoringTableCode(), request.adaptiveMode(), request.restTimeSeconds());
+            """, paperId, typeCode(paperId), request.adaptiveMode(), request.restTimeSeconds());
         return get(paperId);
     }
 

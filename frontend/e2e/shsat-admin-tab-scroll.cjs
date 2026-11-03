@@ -19,6 +19,16 @@ async function main() {
     await login(page);
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin?tab=papers`);
     await page.getByRole('heading', { name: 'Paper List', exact: true }).waitFor();
+    const availableExams = page.locator('.available-exams-card');
+    await availableExams.getByRole('button', { name: 'Collapse available exams' }).click();
+    await page.reload();
+    await page.getByRole('heading', { name: 'Paper List', exact: true }).waitFor();
+    await availableExams.getByRole('button', { name: 'Expand available exams' }).waitFor();
+    assert.equal(await availableExams.getByText('No available exams right now.', { exact: true }).count(), 0,
+      'collapsed exam cards remain hidden after a reload');
+    await availableExams.getByRole('button', { name: 'Expand available exams' }).click();
+    await availableExams.getByText('No available exams right now.', { exact: true }).waitFor();
+    const desktopHeaders = await assertDashboardHeaderActionsDoNotOverlap(page);
     const startingScrollY = await setScrollPosition(page, 360);
     assert.ok(startingScrollY > 0, 'the page has enough content for a meaningful scroll-position check');
 
@@ -34,8 +44,15 @@ async function main() {
     await page.screenshot({ path: '/tmp/shsat-admin-tab-scroll-desktop.png' });
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await setScrollPosition(page, 240);
+    const mobileHeaders = await assertDashboardHeaderActionsDoNotOverlap(page);
+    const classesTab = page.getByRole('tab', { name: 'Classes', exact: true });
+    await classesTab.scrollIntoViewIfNeeded();
     const mobileStart = await page.evaluate(() => window.scrollY);
+    const tabsVisible = await classesTab.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+    });
+    assert.equal(tabsVisible, true, 'the mobile tab being clicked must be visible before measuring scroll retention');
     for (const tabName of ['Classes', 'Review Assignments', 'Exam Release', 'Paper Management']) {
       await page.getByRole('tab', { name: tabName, exact: true }).click();
       await page.waitForTimeout(120);
@@ -47,7 +64,7 @@ async function main() {
     await page.screenshot({ path: '/tmp/shsat-admin-tab-scroll-mobile.png' });
     assert.deepEqual(pageErrors, [], 'admin tab switching has no browser errors');
 
-    console.log(JSON.stringify({ result: 'PASS', desktop: positions, mobileScrollY: mobileStart, mobileSize,
+    console.log(JSON.stringify({ result: 'PASS', checks: ['Available Exams collapse persists after reload', 'dashboard card actions do not overlap subtitles at desktop and mobile widths'], desktop: positions, desktopHeaders, mobileHeaders, mobileScrollY: mobileStart, mobileSize,
       pageErrors: pageErrors.length, screenshots: ['/tmp/shsat-admin-tab-scroll-desktop.png', '/tmp/shsat-admin-tab-scroll-mobile.png'] }));
   } finally {
     await browser.close();
@@ -67,6 +84,20 @@ async function setScrollPosition(page, requestedY) {
     window.scrollTo(0, y);
     return window.scrollY;
   }, requestedY);
+}
+
+async function assertDashboardHeaderActionsDoNotOverlap(page) {
+  const headers = await page.locator('.available-exams-card, .dashboard-review-card').evaluateAll(cards => cards.map(card => {
+    const subtitle = card.querySelector('.app-card__subtitle')?.getBoundingClientRect();
+    const actions = card.querySelector('.app-card__actions')?.getBoundingClientRect();
+    const overlaps = subtitle && actions
+      && subtitle.left < actions.right && subtitle.right > actions.left
+      && subtitle.top < actions.bottom && subtitle.bottom > actions.top;
+    return { title: card.querySelector('.app-card__title')?.textContent.trim(), overlaps: Boolean(overlaps) };
+  }));
+  assert.equal(headers.length, 2, 'both dashboard cards should expose their actions in the shared header');
+  assert.ok(headers.every(header => !header.overlaps), 'card actions must not overlap subtitles at this viewport');
+  return headers;
 }
 
 main().catch(error => { console.error(error.stack || error); process.exit(1); });

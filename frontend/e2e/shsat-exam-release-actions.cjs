@@ -322,6 +322,16 @@ async function main() {
     await row.evaluate(element => element.scrollIntoView({ block: 'center' }));
     await admin.screenshot({ path: `/tmp/shsat-exam-release-published-${stamp}.png` });
     await admin.setViewportSize({ width: 390, height: 844 });
+    const activeReleaseTableWrap = admin.locator('.exam-releases-card .exam-release-table-wrap').first();
+    await admin.getByText('Swipe horizontally to view all columns.', { exact: true }).first().waitFor();
+    const activeReleaseScroll = await activeReleaseTableWrap.evaluate(element => {
+      element.scrollLeft = element.scrollWidth;
+      return { scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, scrollLeft: element.scrollLeft };
+    });
+    assert.ok(activeReleaseScroll.scrollWidth > activeReleaseScroll.clientWidth,
+      'the active release table preserves all columns on mobile');
+    assert.ok(activeReleaseScroll.scrollLeft > 0, 'the active release table can scroll to the Actions column');
+    await activeReleaseTableWrap.evaluate(element => { element.scrollLeft = 0; });
     const mobilePageWidth = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(mobilePageWidth.page <= mobilePageWidth.viewport, 'the mobile release page has no horizontal overflow');
     assert.equal(await overlaps(
@@ -457,17 +467,42 @@ async function main() {
 
     await admin.goto(`${baseUrl}/exam-types/SHSAT/admin`);
     await admin.getByRole('tab', { name: 'Exam Release', exact: true }).click();
+    await admin.getByLabel('Visibility filter').selectOption('published');
+    await admin.getByLabel('Time status').selectOption('live');
+    await admin.getByLabel('Target type').selectOption('SPECIFIC_CLASSES');
+    await admin.getByLabel('Rows per page', { exact: true }).selectOption('5');
     await admin.locator('.release-search-input').fill(examTitle);
     await row.waitFor();
-
-    await openActions(row, examTitle, 'Monitor');
+    await admin.evaluate(() => window.scrollTo(0, 260));
+    await row.getByRole('button', { name: `Actions for ${examTitle}` }).click();
+    const releaseScrollY = await admin.evaluate(() => window.scrollY);
+    await admin.getByRole('menuitem', { name: 'Monitor', exact: true }).click();
     await admin.waitForURL(url => url.pathname.endsWith(`/exams/${examId}/monitor`));
     await admin.getByRole('heading', { name: examTitle }).waitFor();
     await admin.screenshot({ path: `/tmp/shsat-exam-release-monitor-${stamp}.png` });
     await admin.getByRole('button', { name: 'Back' }).click();
     await admin.waitForURL(url => url.pathname === '/exam-types/SHSAT/admin');
-    await admin.getByRole('tab', { name: 'Exam Release', exact: true }).click();
-    await admin.locator('.release-search-input').fill(examTitle);
+    await admin.getByRole('tab', { name: 'Exam Release', exact: true }).waitFor();
+    assert.equal(await admin.getByRole('tab', { name: 'Exam Release', exact: true }).getAttribute('aria-selected'), 'true',
+      'returning from Monitor preserves the Exam Release tab');
+    assert.equal(await admin.locator('.release-search-input').inputValue(), examTitle,
+      'returning from Monitor preserves the release search');
+    assert.equal(await admin.getByLabel('Visibility filter').inputValue(), 'published',
+      'returning from Monitor preserves the visibility filter');
+    assert.equal(await admin.getByLabel('Time status').inputValue(), 'live',
+      'returning from Monitor preserves the time-window filter');
+    assert.equal(await admin.getByLabel('Target type').inputValue(), 'SPECIFIC_CLASSES',
+      'returning from Monitor preserves the audience filter');
+    assert.equal(await admin.getByLabel('Rows per page', { exact: true }).inputValue(), '5',
+      'returning from Monitor preserves the selected page size');
+    await admin.waitForFunction(expected => Math.abs(window.scrollY - expected) <= 2, releaseScrollY);
+    const returnedReleaseScrollY = await admin.evaluate(() => window.scrollY);
+    assert.ok(Math.abs(returnedReleaseScrollY - releaseScrollY) <= 2,
+      `returning from Monitor preserves the release page scroll position (${releaseScrollY} -> ${returnedReleaseScrollY}; ${admin.url()})`);
+    await admin.getByLabel('Visibility filter').selectOption('');
+    await admin.getByLabel('Time status').selectOption('');
+    await admin.getByLabel('Target type').selectOption('');
+    await admin.getByLabel('Rows per page', { exact: true }).selectOption('10');
     await row.waitFor();
     await admin.getByRole('button', { name: 'Refresh releases' }).click();
     await row.waitFor();
@@ -549,6 +584,59 @@ async function main() {
     classId = undefined;
     await student.reload();
     await student.waitForURL(url => url.pathname.endsWith('/login'));
+    await admin.reload();
+    await admin.getByRole('tab', { name: 'Exam Release', exact: true }).waitFor();
+    await admin.getByRole('tab', { name: 'Exam Release', exact: true }).click();
+    const missingPaperTitle = `Release pagination fixture ${stamp} 0`;
+    await search.fill(missingPaperTitle);
+    const missingPaperRow = admin.locator('.exam-release-table tbody tr').filter({ hasText: missingPaperTitle });
+    await missingPaperRow.waitFor();
+    await admin.route('**/api/admin/exam-types/SHSAT/papers', async route => {
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        json: [],
+      });
+    });
+    await admin.locator('button[aria-label="Refresh admin data"]').click();
+    await missingPaperRow.getByText('The linked paper was deleted.', { exact: true }).waitFor();
+    assert.equal(await missingPaperRow.getByText('The linked paper was deleted.', { exact: true }).count(), 1,
+      'a release with a missing paper displays a clear inline warning under its exam title');
+    await missingPaperRow.scrollIntoViewIfNeeded();
+    const missingPaperScreenshot = `/tmp/shsat-exam-release-missing-paper-${stamp}.png`;
+    await admin.screenshot({ path: missingPaperScreenshot });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    const missingPaperMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(missingPaperMobileSize.page <= missingPaperMobileSize.viewport,
+      'the missing-paper warning does not introduce horizontal overflow on a narrow screen');
+    await missingPaperRow.scrollIntoViewIfNeeded();
+    const missingPaperMobileScreenshot = `/tmp/shsat-exam-release-missing-paper-mobile-${stamp}.png`;
+    await admin.screenshot({ path: missingPaperMobileScreenshot });
+    await admin.setViewportSize({ width: 1440, height: 900 });
+    await search.fill(`no active release ${stamp}`);
+    const historicalTable = admin.locator('.exam-release-table--history tbody');
+    const missingHistoricalPaperRow = historicalTable.locator('tr').first();
+    await missingHistoricalPaperRow.getByText('The linked paper was deleted.', { exact: true }).waitFor();
+    assert.ok(await historicalTable.getByText('The linked paper was deleted.', { exact: true }).count() > 0,
+      'historical releases with a missing paper also display the warning');
+    assert.notEqual(await missingHistoricalPaperRow.locator('td:first-child strong').innerText(), 'Exam release',
+      'a numeric exam title is preserved when its paper title is unavailable');
+    await missingHistoricalPaperRow.scrollIntoViewIfNeeded();
+    const missingHistoricalPaperScreenshot = `/tmp/shsat-historical-exam-missing-paper-${stamp}.png`;
+    await admin.screenshot({ path: missingHistoricalPaperScreenshot });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await admin.locator('.exam-history-card .mobile-table-scroll-hint').waitFor();
+    const missingHistoricalPaperMobileSize = await admin.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(missingHistoricalPaperMobileSize.page <= missingHistoricalPaperMobileSize.viewport,
+      'the historical missing-paper warning does not introduce horizontal overflow on a narrow screen');
+    await admin.locator('.exam-history-card .mobile-table-scroll-hint').scrollIntoViewIfNeeded();
+    await missingHistoricalPaperRow.scrollIntoViewIfNeeded();
+    const missingHistoricalPaperMobileScreenshot = `/tmp/shsat-historical-exam-missing-paper-mobile-${stamp}.png`;
+    await admin.screenshot({ path: missingHistoricalPaperMobileScreenshot });
+    await admin.setViewportSize({ width: 1440, height: 900 });
+    await admin.unroute('**/api/admin/exam-types/SHSAT/papers');
+    await admin.locator('button[aria-label="Refresh admin data"]').click();
+    await missingPaperRow.getByText('The linked paper was deleted.', { exact: true }).waitFor({ state: 'detached' });
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({
       result: 'PASS',
@@ -566,6 +654,10 @@ async function main() {
       mobileConflictDialog,
       submittedReportMobileSize,
       submittedReportScreenshots: [submittedReportDesktop, submittedReportMobile],
+      missingPaperMobileSize,
+      missingPaperScreenshots: [missingPaperScreenshot, missingPaperMobileScreenshot],
+      missingHistoricalPaperMobileSize,
+      missingHistoricalPaperScreenshots: [missingHistoricalPaperScreenshot, missingHistoricalPaperMobileScreenshot],
       pageErrors: errors.length,
     }));
   } finally {

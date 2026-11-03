@@ -717,7 +717,7 @@ export default {
       
       exitExamFullscreen()
       
-      router.push({ name: 'exam-type', params: { code: 'SAT' } })
+      router.push({ name: 'exam-type', params: { code: sessionStorage.getItem('sat:workspace') === 'PSAT' ? 'PSAT' : 'SAT' } })
     }
 
     // 提交确认逻辑
@@ -829,7 +829,7 @@ export default {
       const examId = q.examId ? Number(q.examId) : paperId
       const targetQuestionId = q.questionId ? Number(q.questionId) : null
       if (!paperId || !recordId || !targetQuestionId) {
-        router.replace({ name: 'exam-type', params: { code: 'SAT' } })
+        router.replace({ name: 'exam-type', params: { code: sessionStorage.getItem('sat:workspace') === 'PSAT' ? 'PSAT' : 'SAT' } })
         return
       }
 
@@ -888,13 +888,13 @@ export default {
         const paperId = data.paperId ? Number(data.paperId) : null
         if (!paperId) {
           console.warn('[Exam] resume failed: no paperId for record', recordIdParam)
-          router.replace({ name: 'exam-type', params: { code: 'SAT' } })
+          router.replace({ name: 'exam-type', params: { code: sessionStorage.getItem('sat:workspace') === 'PSAT' ? 'PSAT' : 'SAT' } })
           return
         }
         await flow.initFromProgress(paperId, recordIdParam, data)
       } catch (e) {
         console.error('[Exam] resumeFromRecord failed:', e)
-        router.replace({ name: 'exam-type', params: { code: 'SAT' } })
+        router.replace({ name: 'exam-type', params: { code: sessionStorage.getItem('sat:workspace') === 'PSAT' ? 'PSAT' : 'SAT' } })
       }
     }
 

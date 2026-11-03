@@ -4,12 +4,23 @@ import AppButton from '@/components/AppButton.vue'
 import AppCard from '@/components/AppCard.vue'
 import AppModal from '@/components/AppModal.vue'
 import ResponsiveActionGroup from '@/components/admin/ResponsiveActionGroup.vue'
-import { createUser, deleteUser, listUsers, resetUserPassword, setUserStatus, updateUserRole } from '@/api/platform'
+import { createUser, deleteUser, listAccountWorkspaces, listUsers, resetUserPassword, setUserStatus, updateUserRole, updateUserWorkspaces } from '@/api/platform'
 
 const DEFAULT_STUDENT_PASSWORD = '9297019872'
 
 const users = ref([])
-const filters = ref({ name: '', role: '', contact: '', status: '' })
+const filters = ref({ name: '', contact: '', status: '' })
+const roleTabs = [
+  { code: 'STUDENT', label: 'Students' },
+  { code: 'TEACHER', label: 'Teachers' },
+  { code: 'ADMIN', label: 'Admins' },
+]
+const activeRole = ref('STUDENT')
+const workspaces = ref([])
+const activeWorkspace = ref('')
+const selectedWorkspaces = ref([])
+const workspaceEditorUser = ref(null)
+const savingWorkspaces = ref(false)
 const error = ref('')
 const notice = ref('')
 const showCreateDialog = ref(false)
@@ -38,7 +49,8 @@ const filteredUsers = computed(() => {
       const nameAndUsername = `${user.realName || ''} ${user.username || ''}`.toLocaleLowerCase()
       const contact = `${user.email || ''} ${user.phone || ''}`.toLocaleLowerCase()
       return (!nameFilter || nameAndUsername.includes(nameFilter))
-        && (!filters.value.role || user.roleCode === filters.value.role)
+        && user.roleCode === activeRole.value
+        && (user.roleCode === 'ADMIN' || user.workspaceCodes?.includes(activeWorkspace.value))
         && (!contactFilter || contact.includes(contactFilter))
         && (!filters.value.status || user.status === filters.value.status)
     })
@@ -72,16 +84,31 @@ async function loadUsers() {
   try { users.value = await listUsers() } catch (requestError) { error.value = requestError.message }
 }
 
+async function loadWorkspaces() {
+  try {
+    workspaces.value = (await listAccountWorkspaces()).filter((workspace) => workspace.active)
+    if (!workspaces.value.some((workspace) => workspace.code === activeWorkspace.value)) {
+      activeWorkspace.value = workspaces.value[0]?.code || ''
+    }
+  } catch (requestError) { error.value = requestError.message || 'Unable to load exam systems.' }
+}
+
 function clearFilters() {
-  filters.value = { name: '', role: '', contact: '', status: '' }
+  filters.value = { name: '', contact: '', status: '' }
 }
 
 function formatRole(roleCode) {
   return ({ ADMIN: 'Administrator', TEACHER: 'Teacher', STUDENT: 'Student' })[roleCode] || roleCode || '—'
 }
 
+function userWorkspaces(user) {
+  const codes = user.roleCode === 'ADMIN' ? workspaces.value.map((item) => item.code) : (user.workspaceCodes || [])
+  return workspaces.value.filter((workspace) => codes.includes(workspace.code))
+}
+
 function accountActions(user) {
   return [
+    ...(user.roleCode === 'ADMIN' ? [] : [{ key: 'workspaces', label: 'Manage workspaces', onSelect: () => openWorkspaceEditor(user) }]),
     { key: 'password', label: 'Reset password', onSelect: () => changePassword(user) },
     { key: 'status', label: user.status === 'ACTIVE' ? 'Disable' : 'Enable', onSelect: () => toggleStatus(user) },
     { key: 'delete', label: 'Delete permanently', danger: true, onSelect: () => openDeleteDialog(user) },
@@ -93,7 +120,8 @@ function openCreateDialog() {
   usernameCustomized.value = false
   username.value = ''
   password.value = DEFAULT_STUDENT_PASSWORD
-  roleCode.value = 'STUDENT'
+  roleCode.value = activeRole.value
+  selectedWorkspaces.value = activeWorkspace.value ? [activeWorkspace.value] : []
   email.value = ''
   phone.value = ''
   error.value = ''
@@ -128,6 +156,10 @@ async function createAccount() {
     error.value = ''
     return
   }
+  if (roleCode.value !== 'ADMIN' && !selectedWorkspaces.value.length) {
+    error.value = 'Select at least one exam system.'
+    return
+  }
 
   error.value = ''; notice.value = ''; creating.value = true
   try {
@@ -138,6 +170,7 @@ async function createAccount() {
       roleCode: roleCode.value,
       email: email.value.trim() || null,
       phone: phone.value.trim() || null,
+      workspaceCodes: selectedWorkspaces.value,
     })
     showCreateDialog.value = false
     realName.value = ''
@@ -154,6 +187,35 @@ async function createAccount() {
   } finally {
     creating.value = false
   }
+}
+
+function openWorkspaceEditor(user) {
+  workspaceEditorUser.value = user
+  selectedWorkspaces.value = [...(user.workspaceCodes || [])]
+  error.value = ''
+}
+
+function closeWorkspaceEditor() {
+  if (savingWorkspaces.value) return
+  workspaceEditorUser.value = null
+  error.value = ''
+}
+
+async function saveWorkspaces() {
+  if (!workspaceEditorUser.value || savingWorkspaces.value) return
+  if (!selectedWorkspaces.value.length) {
+    error.value = 'Select at least one exam system.'
+    return
+  }
+  savingWorkspaces.value = true
+  error.value = ''
+  try {
+    await updateUserWorkspaces(workspaceEditorUser.value.id, selectedWorkspaces.value)
+    notice.value = 'Workspace access updated.'
+    workspaceEditorUser.value = null
+    await loadUsers()
+  } catch (requestError) { error.value = requestError.message || 'Unable to update workspace access.' }
+  finally { savingWorkspaces.value = false }
 }
 
 async function toggleStatus(user) {
@@ -239,7 +301,7 @@ async function confirmDeleteUser() {
 
 onBeforeUnmount(() => window.clearInterval(deleteTimer))
 
-onMounted(loadUsers)
+onMounted(() => { loadUsers(); loadWorkspaces() })
 </script>
 
 <template>
@@ -256,23 +318,25 @@ onMounted(loadUsers)
       </div>
     </header>
 
-    <p v-if="error && !showCreateDialog && !roleEditorUser && !deleteTargetUser" class="error-text page-message" role="alert">{{ error }}</p>
+    <p v-if="error && !showCreateDialog && !roleEditorUser && !deleteTargetUser && !workspaceEditorUser" class="error-text page-message" role="alert">{{ error }}</p>
     <p v-else-if="notice" class="success-text page-message" role="status">{{ notice }}</p>
 
-    <AppCard title="Platform accounts" subtitle="All roles use one account directory across SAT, PSAT, and SHSAT.">
+    <div class="account-role-tabs account-workspace-tabs" role="tablist" aria-label="Exam systems">
+      <button v-for="workspace in workspaces" :key="workspace.code" type="button" role="tab"
+        :aria-selected="activeWorkspace === workspace.code" :class="{ 'is-active': activeWorkspace === workspace.code }"
+        @click="activeWorkspace = workspace.code">{{ workspace.name }}</button>
+    </div>
+    <div class="account-role-tabs" role="tablist" aria-label="Account roles">
+      <button v-for="tab in roleTabs" :key="tab.code" type="button" role="tab"
+        :aria-selected="activeRole === tab.code" :class="{ 'is-active': activeRole === tab.code }"
+        @click="activeRole = tab.code">{{ tab.label }}</button>
+    </div>
+
+    <AppCard title="Platform accounts" subtitle="Accounts are shared across the exam systems assigned to each user.">
       <div class="accounts-toolbar">
         <label class="accounts-search">
           <span>Name / username</span>
           <input v-model="filters.name" type="search" aria-label="Search by name or username" placeholder="Search accounts" />
-        </label>
-        <label class="accounts-select-filter">
-          <span>Role</span>
-          <select v-model="filters.role" aria-label="Filter accounts by role">
-            <option value="">All roles</option>
-            <option value="STUDENT">Student</option>
-            <option value="TEACHER">Teacher</option>
-            <option value="ADMIN">Administrator</option>
-          </select>
         </label>
         <label class="accounts-contact-filter">
           <span>Contact</span>
@@ -287,17 +351,19 @@ onMounted(loadUsers)
           </select>
         </label>
         <div class="accounts-toolbar__meta">
-          <span>{{ filteredUsers.length }} of {{ users.length }} accounts</span>
-          <button v-if="filters.name || filters.role || filters.contact || filters.status" type="button" @click="clearFilters">Clear filters</button>
+          <span>{{ filteredUsers.length }} {{ filteredUsers.length === 1 ? 'account' : 'accounts' }}</span>
+          <button v-if="filters.name || filters.contact || filters.status" type="button" @click="clearFilters">Clear filters</button>
         </div>
       </div>
-      <div class="table-scroll">
+      <p class="accounts-mobile-scroll-hint">Swipe horizontally to view all columns.</p>
+      <div class="table-scroll" role="region" aria-label="Account list" tabindex="0">
         <table class="admin-table accounts-table">
           <colgroup>
             <col class="accounts-column-name" />
             <col class="accounts-column-role" />
             <col class="accounts-column-contact" />
             <col class="accounts-column-status" />
+            <col class="accounts-column-workspaces" />
             <col class="accounts-column-actions" />
           </colgroup>
           <thead>
@@ -306,6 +372,7 @@ onMounted(loadUsers)
               <th scope="col">Role</th>
               <th scope="col">Contact</th>
               <th scope="col">Status</th>
+              <th scope="col">Exam systems</th>
               <th scope="col">Actions</th>
             </tr>
           </thead>
@@ -325,13 +392,19 @@ onMounted(loadUsers)
                 <small v-if="user.email && user.phone">{{ user.phone }}</small>
               </td>
               <td class="accounts-cell-status"><span class="status-pill" :class="user.status === 'ACTIVE' ? 'is-active' : 'is-disabled'">{{ user.status === 'ACTIVE' ? 'Active' : 'Disabled' }}</span></td>
+              <td class="accounts-cell-workspaces">
+                <div class="account-workspace-tags">
+                  <span v-for="workspace in userWorkspaces(user)" :key="workspace.code" class="account-workspace-tag">{{ workspace.name }}</span>
+                  <span v-if="!userWorkspaces(user).length" class="account-workspace-empty">—</span>
+                </div>
+              </td>
               <td class="accounts-cell-actions">
                 <ResponsiveActionGroup :actions="accountActions(user)" label="Account actions" align="center" />
               </td>
             </tr>
             <tr v-if="!filteredUsers.length">
-              <td colspan="5" class="table-empty">
-                <template v-if="!users.length">No accounts yet.</template>
+              <td colspan="6" class="table-empty">
+                <template v-if="!filters.name && !filters.contact && !filters.status">No accounts in this role yet.</template>
                 <template v-else>No accounts match these filters. <button type="button" class="clear-account-filters" @click="clearFilters">Clear filters</button></template>
               </td>
             </tr>
@@ -343,7 +416,7 @@ onMounted(loadUsers)
     <AppModal
       v-if="showCreateDialog"
       title="Create an account"
-      description="Enter a name. The username and default password are prefilled and editable. Role, email, and phone are optional; the default role is Student."
+      description="Enter a name. The username and default password are prefilled and editable. Choose the exam systems this account can access."
       :busy="creating"
       @close="closeCreateDialog"
     >
@@ -364,6 +437,13 @@ onMounted(loadUsers)
           <small id="create-account-password-hint" class="form-hint">Minimum 6 characters.</small>
           <small v-if="fieldErrors.password" id="create-account-password-error" class="field-error" role="alert">{{ fieldErrors.password }}</small>
         </label>
+        <fieldset v-if="roleCode !== 'ADMIN'" class="account-workspace-options">
+          <legend>Exam systems</legend>
+          <label v-for="workspace in workspaces" :key="workspace.code">
+            <input v-model="selectedWorkspaces" type="checkbox" :value="workspace.code" /> {{ workspace.name }}
+          </label>
+          <small>Select the exam systems this account can access.</small>
+        </fieldset>
         <details class="account-optional-details">
           <summary>Additional details <span>Optional</span></summary>
           <div class="account-optional-fields">
@@ -391,6 +471,24 @@ onMounted(loadUsers)
       <template #footer>
         <AppButton type="button" variant="secondary" :disabled="creating" @click="closeCreateDialog">Cancel</AppButton>
         <AppButton type="submit" form="create-account-form" :disabled="creating">{{ creating ? 'Creating…' : 'Create account' }}</AppButton>
+      </template>
+    </AppModal>
+
+    <AppModal v-if="workspaceEditorUser" title="Manage workspaces" panel-class="workspace-access-modal"
+      :description="`Choose the exam systems available to ${workspaceEditorUser.realName || workspaceEditorUser.username}.`"
+      :busy="savingWorkspaces" @close="closeWorkspaceEditor">
+      <form id="account-workspaces-form" @submit.prevent="saveWorkspaces">
+        <fieldset class="account-workspace-options">
+          <legend>Exam systems</legend>
+          <label v-for="workspace in workspaces" :key="workspace.code">
+            <input v-model="selectedWorkspaces" type="checkbox" :value="workspace.code" /> {{ workspace.name }}
+          </label>
+        </fieldset>
+        <p v-if="error" class="error-text" role="alert">{{ error }}</p>
+      </form>
+      <template #footer>
+        <AppButton type="button" variant="secondary" :disabled="savingWorkspaces" @click="closeWorkspaceEditor">Cancel</AppButton>
+        <AppButton type="submit" form="account-workspaces-form" :disabled="savingWorkspaces">{{ savingWorkspaces ? 'Saving…' : 'Save' }}</AppButton>
       </template>
     </AppModal>
 
@@ -440,6 +538,20 @@ onMounted(loadUsers)
 </template>
 
 <style scoped>
+.account-role-tabs { display: flex; gap: 28px; border-bottom: 1px solid #e1e7ef; margin-bottom: 18px; overflow-x: auto; }
+.account-role-tabs button { flex: none; position: relative; border: 0; padding: 13px 2px; color: #65748b; background: transparent; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.account-role-tabs button.is-active { color: var(--color-primary-strong); }
+.account-role-tabs button.is-active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--color-primary); content: ''; }
+.account-role-tabs button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.account-workspace-tabs { margin-bottom: 4px; }
+.account-workspace-options { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 0; padding: 12px; border: 1px solid #dce6f4; border-radius: 8px; }
+.account-workspace-options legend { padding: 0 4px; color: #243653; font-size: 13px; font-weight: 650; }
+.account-workspace-options label { display: inline-flex; align-items: center; gap: 6px; color: #243653; font-size: 14px; }
+.account-workspace-options small { flex-basis: 100%; color: #65748b; }
+#account-workspaces-form .account-workspace-options { gap: 14px 24px; padding: 16px; }
+#account-workspaces-form .account-workspace-options legend { font-size: 14px; }
+#account-workspaces-form .account-workspace-options label { min-height: 28px; gap: 9px; font-size: 16px; cursor: pointer; }
+#account-workspaces-form .account-workspace-options input { width: 18px; height: 18px; margin: 0; accent-color: var(--color-primary); cursor: pointer; }
 .accounts-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid #e8edf5; border-radius: 8px; background: #fbfcfe; }
 .accounts-search { display: grid; width: min(300px, 100%); gap: 6px; color: #65748b; font-size: 12px; font-weight: 600; }
 .accounts-select-filter,
@@ -468,12 +580,17 @@ onMounted(loadUsers)
 .accounts-contact-filter input:focus { border-color: var(--color-primary); outline: 3px solid rgba(47, 111, 237, .12); }
 .accounts-toolbar__meta { display: flex; align-items: center; gap: 12px; margin-left: auto; color: #66758d; font-size: 13px; white-space: nowrap; }
 .accounts-toolbar__meta button { border: 0; padding: 4px; color: var(--color-primary-strong); background: transparent; font: inherit; font-weight: 650; cursor: pointer; }
-.accounts-table { width: 100%; min-width: 820px; table-layout: fixed; }
-.accounts-column-name { width: 25%; }
-.accounts-column-role { width: 14%; }
-.accounts-column-contact { width: 24%; }
-.accounts-column-status { width: 14%; }
-.accounts-column-actions { width: 23%; }
+.accounts-table { width: 100%; min-width: 980px; table-layout: fixed; }
+.accounts-mobile-scroll-hint { display: none; }
+.accounts-column-name { width: 23%; }
+.accounts-column-role { width: 12%; }
+.accounts-column-contact { width: 18%; }
+.accounts-column-status { width: 11%; }
+.accounts-column-workspaces { width: 23%; }
+.accounts-column-actions { width: 13%; }
+.account-workspace-tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
+.account-workspace-tag { border: 1px solid #d8e5fa; border-radius: 999px; padding: 4px 8px; color: #315a9a; background: #f2f7ff; font-size: 12px; font-weight: 650; line-height: 1.25; }
+.account-workspace-empty { color: #8291a8; }
 .accounts-table th,
 .accounts-table td { vertical-align: middle; }
 .accounts-table th:first-child,
@@ -515,6 +632,11 @@ onMounted(loadUsers)
   .accounts-select-filter,
   .accounts-contact-filter { width: 100%; }
   .accounts-toolbar__meta { justify-content: space-between; }
-  .accounts-table { min-width: 820px; }
+  .accounts-mobile-scroll-hint { display: block; margin: -2px 0 8px; color: #66758d; font-size: 12px; }
+  .accounts-table { min-width: 980px; }
 }
+</style>
+
+<style>
+.workspace-access-modal .app-modal__heading h2 { font-size: 19px; }
 </style>

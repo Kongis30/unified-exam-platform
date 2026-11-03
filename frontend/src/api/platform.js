@@ -1,4 +1,43 @@
 let csrfToken
+let examTypesCache = null
+let examTypesRequest = null
+let examTypesGeneration = 0
+const EXAM_TYPES_CACHE_MS = 60_000
+const paperListCache = new Map()
+let paperCacheGeneration = 0
+
+// 工作区目录按当前会话短暂复用；切换账号时也使尚未完成的请求失效。
+function clearExamTypesCache() {
+  examTypesGeneration += 1
+  examTypesCache = null
+  examTypesRequest = null
+  clearPaperListCache()
+}
+
+function clearPaperListCache() {
+  paperCacheGeneration += 1
+  paperListCache.clear()
+}
+
+// 只缓存管理用试卷摘要；任何成功的写操作都会让缓存失效。
+function cachedPaperList(path, force = false) {
+  const cached = paperListCache.get(path)
+  if (!force && cached && (cached.pending || cached.expiresAt > Date.now())) return cached.promise
+  const generation = paperCacheGeneration
+  const entry = { pending: true, expiresAt: 0, promise: null }
+  entry.promise = apiRequest(path).then((data) => {
+    if (generation === paperCacheGeneration && paperListCache.get(path) === entry) {
+      entry.pending = false
+      entry.expiresAt = Date.now() + 30_000
+    }
+    return data
+  }).catch((error) => {
+    if (paperListCache.get(path) === entry) paperListCache.delete(path)
+    throw error
+  })
+  paperListCache.set(path, entry)
+  return entry.promise
+}
 
 async function readResponse(response) {
   if (response.status === 204) return null
@@ -31,15 +70,23 @@ export async function apiRequest(path, options = {}) {
   if (response.status === 403 && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     csrfToken = undefined
   }
-  return readResponse(response)
-}
-
-export function getPlatformHealth() {
-  return apiRequest('/api/health')
+  const data = await readResponse(response)
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) clearPaperListCache()
+  return data
 }
 
 export function getExamTypes() {
-  return apiRequest('/api/exam-types')
+  if (examTypesCache && examTypesCache.expiresAt > Date.now()) return Promise.resolve(examTypesCache.data)
+  if (examTypesRequest) return examTypesRequest
+  const generation = examTypesGeneration
+  const request = apiRequest('/api/exam-types').then((data) => {
+    if (generation === examTypesGeneration) examTypesCache = { data, expiresAt: Date.now() + EXAM_TYPES_CACHE_MS }
+    return data
+  }).finally(() => {
+    if (examTypesRequest === request) examTypesRequest = null
+  })
+  examTypesRequest = request
+  return request
 }
 
 export function getCurrentUser() {
@@ -57,16 +104,29 @@ export function changeOwnPassword(currentPassword, newPassword) {
 }
 
 export async function login(credentials) {
+  clearExamTypesCache()
   await ensureCsrfToken()
   return apiRequest('/api/auth/login', { method: 'POST', body: JSON.stringify(credentials) })
 }
 
 export function logout() {
+  clearExamTypesCache()
   return apiRequest('/api/auth/logout', { method: 'POST' })
 }
 
 export function listUsers() {
   return apiRequest('/api/admin/users')
+}
+
+export function listAccountWorkspaces() {
+  return apiRequest('/api/admin/users/workspaces')
+}
+
+export function updateUserWorkspaces(userId, workspaceCodes) {
+  clearExamTypesCache()
+  return apiRequest(`/api/admin/users/${userId}/workspaces`, {
+    method: 'PUT', body: JSON.stringify({ workspaceCodes }),
+  })
 }
 
 export function createUser(user) {
@@ -175,12 +235,12 @@ export function removeClassStudent(classId, studentUserId) {
   return apiRequest(`/api/admin/classes/${classId}/students/${studentUserId}`, { method: 'DELETE' })
 }
 
-export function listPapers(examTypeCode) {
-  return apiRequest(`/api/admin/exam-types/${examTypeCode}/papers`)
+export function listPapers(examTypeCode, { force = false } = {}) {
+  return cachedPaperList(`/api/admin/exam-types/${examTypeCode}/papers`, force)
 }
 
-export function listPaperGroups(examTypeCode) {
-  return apiRequest(`/api/admin/exam-types/${examTypeCode}/paper-groups`)
+export function listPaperGroups(examTypeCode, { force = false } = {}) {
+  return cachedPaperList(`/api/admin/exam-types/${examTypeCode}/paper-groups`, force)
 }
 
 export function createPaperGroup(examTypeCode, group) {

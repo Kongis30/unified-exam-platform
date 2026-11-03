@@ -3,24 +3,23 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import AppCard from '@/components/AppCard.vue'
-import { getExamTypes, getPlatformHealth } from '@/api/platform'
+import { getExamTypes } from '@/api/platform'
 import { authState } from '@/auth'
 import { groupExamTypesIntoWorkspaces } from '@/examTypes/workspaces'
 
 const examTypes = ref([])
 const workspaces = computed(() => groupExamTypesIntoWorkspaces(examTypes.value))
-const apiStatus = ref('checking')
+const isLoading = ref(true)
 const loadError = ref('')
 
 // 首页信息来自模块注册表，新增考试类型后可直接从这里进入对应工作区。
 async function loadPlatformOverview() {
   try {
-    const [health, types] = await Promise.all([getPlatformHealth(), getExamTypes()])
-    apiStatus.value = health.status === 'UP' ? 'online' : 'degraded'
-    examTypes.value = types
+    examTypes.value = await getExamTypes()
   } catch (error) {
-    apiStatus.value = 'offline'
     loadError.value = error instanceof Error ? error.message : 'Unable to connect to the platform API.'
+  } finally {
+    isLoading.value = false
   }
 }
 
@@ -38,18 +37,6 @@ onMounted(loadPlatformOverview)
       <span class="section-counter">{{ workspaces.length }} EXAM SYSTEMS</span>
     </header>
 
-    <AppCard title="Platform status" subtitle="Shared identity and classroom services for every registered exam type.">
-      <div class="platform-status">
-        <span class="status-mark" :class="`status-${apiStatus}`"></span>
-        <strong v-if="apiStatus === 'online'">Connected</strong>
-        <strong v-else-if="apiStatus === 'checking'">Connecting</strong>
-        <strong v-else-if="apiStatus === 'degraded'">Partially available</strong>
-        <strong v-else>Unavailable</strong>
-        <span>Unified accounts enabled</span>
-      </div>
-      <p v-if="loadError" class="error-text">{{ loadError }} Start the backend service and try again.</p>
-    </AppCard>
-
     <section class="dashboard-section">
       <header class="dashboard-section__heading">
         <div>
@@ -63,18 +50,21 @@ onMounted(loadPlatformOverview)
           <span class="card-code">{{ workspace.programs.map((program) => program.code).join(' · ') }}</span>
           <h3>{{ workspace.displayName }}</h3>
           <p>{{ workspace.summary }}</p>
-          <RouterLink class="type-card__link" :to="['ADMIN', 'TEACHER'].includes(authState.user?.roleCode) && ['SHSAT', 'SAT'].includes(workspace.code)
-            ? { name: workspace.code === 'SHSAT' ? 'shsat-admin' : 'sat-admin' }
+          <RouterLink class="type-card__link" :to="['ADMIN', 'TEACHER'].includes(authState.user?.roleCode) && ['SHSAT', 'SAT', 'PSAT'].includes(workspace.code)
+            ? { name: `${workspace.code.toLowerCase()}-admin` }
             : { name: 'exam-type', params: { code: workspace.code } }">
             Open workspace <span aria-hidden="true">↗</span>
           </RouterLink>
         </AppCard>
       </div>
-      <AppCard v-else-if="apiStatus === 'online'" title="No exam systems are available">
-        <p class="status-note">Register an exam type module and enable it in the catalog.</p>
-      </AppCard>
-      <AppCard v-else title="Loading exam types">
+      <AppCard v-else-if="isLoading" title="Loading exam systems">
         <p class="status-note">Connecting to the platform API…</p>
+      </AppCard>
+      <AppCard v-else-if="loadError" title="Unable to load exam systems">
+        <p class="error-text">{{ loadError }}</p>
+      </AppCard>
+      <AppCard v-else title="No exam systems are available">
+        <p class="status-note">Register an exam type module and enable it in the catalog.</p>
       </AppCard>
     </section>
   </main>

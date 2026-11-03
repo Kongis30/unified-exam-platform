@@ -121,7 +121,21 @@ async function main() {
     const imageDialog = page.getByRole('dialog', { name: 'Image preview' });
     await imageDialog.waitFor();
     await imageDialog.getByRole('button', { name: 'Zoom In', exact: true }).click();
+    const previewImage = imageDialog.locator('img');
+    assert.match(await previewImage.getAttribute('style'), /scale\(1\.6\)/,
+      'Zoom In enlarges the preview image');
+    const previewBounds = await previewImage.boundingBox();
+    assert.ok(previewBounds, 'the zoomed material image can be dragged');
+    await page.mouse.move(previewBounds.x + 40, previewBounds.y + 40);
+    await page.mouse.down();
+    await page.mouse.move(previewBounds.x + 85, previewBounds.y + 70, { steps: 3 });
+    await page.mouse.up();
+    const draggedImageStyle = await previewImage.getAttribute('style');
+    assert.match(draggedImageStyle, /translate3d\((?!0px, 0px)[^)]+\) scale\(1\.6\)/,
+      `dragging pans the zoomed material image without applying a second zoom: ${draggedImageStyle}`);
     await imageDialog.getByRole('button', { name: 'Reset', exact: true }).click();
+    assert.match(await previewImage.getAttribute('style'), /translate3d\(0px, 0px, 0px\) scale\(1\)/,
+      'Reset restores the default image position and zoom');
     await imageDialog.getByRole('button', { name: 'Close image preview', exact: true }).click();
 
     await savePaperChanges(page, paperId);
@@ -465,7 +479,7 @@ async function main() {
     assert.deepEqual(pageErrors, [], 'material editing, persistence, and preview have no browser errors');
     console.log(JSON.stringify({
       result: 'PASS',
-      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'passage set grouping, question insertion, and drag boundary', 'new independent copy', 'clear one link', 'retain and reuse material after all question links are cleared', 'copy independent materials when creating a paper version'],
+      materialOperations: ['create text', 'Markdown/formula preview', 'clipboard and file-picker image insertion', 'image zoom/pan/reset/close', 'standalone image upload/failure/replacement/clear image/clear material', 'reuse', 'shared edit', 'passage set grouping, question insertion, and drag boundary', 'new independent copy', 'clear one link', 'retain and reuse material after all question links are cleared', 'copy independent materials when creating a paper version'],
       uploadFailureMobileSize,
       mobileSize,
       pageErrors: pageErrors.length,

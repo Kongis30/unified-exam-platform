@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.unifiedexam.platform.security.SatAdminAccessPolicy;
+import com.unifiedexam.platform.identity.WorkspaceAccessService;
 
 import java.util.List;
 
@@ -21,10 +22,12 @@ public class ExamReleaseController {
 
     private final ExamReleaseService examReleaseService;
     private final SatAdminAccessPolicy satAccess;
+    private final WorkspaceAccessService workspaceAccess;
 
-    public ExamReleaseController(ExamReleaseService examReleaseService, SatAdminAccessPolicy satAccess) {
+    public ExamReleaseController(ExamReleaseService examReleaseService, SatAdminAccessPolicy satAccess, WorkspaceAccessService workspaceAccess) {
         this.examReleaseService = examReleaseService;
         this.satAccess = satAccess;
+        this.workspaceAccess = workspaceAccess;
     }
 
     @GetMapping("/admin/exam-types/{examTypeCode}/exams")
@@ -89,6 +92,8 @@ public class ExamReleaseController {
 
     @GetMapping("/student/exams")
     public List<ExamReleaseService.StudentExamView> listStudentExams(Authentication authentication) {
-        return examReleaseService.listForStudent(authentication.getName());
+        var allowed = workspaceAccess.accessibleExamTypes(authentication);
+        return examReleaseService.listForStudent(authentication.getName()).stream()
+            .filter(exam -> allowed.contains(exam.examTypeCode())).toList();
     }
 }

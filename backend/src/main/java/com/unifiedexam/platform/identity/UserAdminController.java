@@ -23,6 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
+import java.util.ArrayList;
+import java.util.HashMap;
 
 @RestController
 @RequestMapping("/api/admin/users")
@@ -30,25 +33,32 @@ public class UserAdminController {
 
     private final JdbcTemplate jdbcTemplate;
     private final PasswordEncoder passwordEncoder;
+    private final WorkspaceAccessService workspaceAccessService;
 
-    public UserAdminController(JdbcTemplate jdbcTemplate, PasswordEncoder passwordEncoder) {
+    public UserAdminController(JdbcTemplate jdbcTemplate, PasswordEncoder passwordEncoder, WorkspaceAccessService workspaceAccessService) {
         this.jdbcTemplate = jdbcTemplate;
         this.passwordEncoder = passwordEncoder;
+        this.workspaceAccessService = workspaceAccessService;
     }
 
     @GetMapping
     public List<UserView> listUsers() {
+        Map<Long, List<String>> access = new HashMap<>();
+        jdbcTemplate.query("SELECT user_id, workspace_code FROM user_workspace_access ORDER BY workspace_code",
+            (org.springframework.jdbc.core.RowCallbackHandler) rs -> access.computeIfAbsent(rs.getLong("user_id"), id -> new ArrayList<>())
+                .add(rs.getString("workspace_code")));
         return jdbcTemplate.query("""
             SELECT id, username, real_name, role_code, email, phone, status, created_at
             FROM users ORDER BY id DESC
             """, (rs, rowNum) -> new UserView(rs.getLong("id"), rs.getString("username"),
                 rs.getString("real_name"), rs.getString("role_code"), rs.getString("email"),
-                rs.getString("phone"), rs.getString("status"), rs.getTimestamp("created_at").toInstant().toString()));
+                rs.getString("phone"), rs.getString("status"), rs.getTimestamp("created_at").toInstant().toString(),
+                access.getOrDefault(rs.getLong("id"), List.of())));
     }
 
     @PostMapping
     @Transactional
-    public UserView createUser(@Valid @RequestBody CreateUserRequest request) {
+    public UserView createUser(@Valid @RequestBody CreateUserRequest request, Authentication authentication) {
         try {
             jdbcTemplate.update("""
                 INSERT INTO users (username, password_hash, real_name, role_code, email, phone)
@@ -58,7 +68,15 @@ public class UserAdminController {
         } catch (DuplicateKeyException exception) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "That username is already in use.");
         }
-        return findUser(request.username());
+        UserView created = findUser(request.username());
+        if (!"ADMIN".equals(request.roleCode())) {
+            if (request.workspaceCodes() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select the account's workspaces.");
+            }
+            workspaceAccessService.replaceAccess(created.id(), request.workspaceCodes(), authentication.getName());
+        }
+        return new UserView(created.id(), created.username(), created.realName(), created.roleCode(), created.email(),
+            created.phone(), created.status(), created.createdAt(), workspaceAccessService.accessForUser(created.id()));
     }
 
     @PatchMapping("/{userId}/status")
@@ -142,6 +160,17 @@ public class UserAdminController {
             }
         }
         jdbcTemplate.update("UPDATE users SET role_code = ? WHERE id = ?", request.roleCode(), userId);
+        if ("ADMIN".equals(target.roleCode()) && !"ADMIN".equals(request.roleCode())) {
+            // 原管理员没有显式授权时，先保留其访问能力，避免账号从工作区列表消失。
+            Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM user_workspace_access WHERE user_id = ?", Integer.class, userId);
+            if (count != null && count == 0) {
+                jdbcTemplate.update("""
+                    INSERT INTO user_workspace_access (user_id, workspace_code)
+                    SELECT ?, code FROM exam_workspaces WHERE is_active = TRUE
+                    """, userId);
+            }
+        }
     }
 
     @PutMapping("/{userId}/password")
@@ -159,7 +188,7 @@ public class UserAdminController {
             FROM users WHERE username = ?
             """, (rs, rowNum) -> new UserView(rs.getLong("id"), rs.getString("username"),
                 rs.getString("real_name"), rs.getString("role_code"), rs.getString("email"),
-                rs.getString("phone"), rs.getString("status"), rs.getTimestamp("created_at").toInstant().toString()), username);
+                rs.getString("phone"), rs.getString("status"), rs.getTimestamp("created_at").toInstant().toString(), List.of()), username);
     }
 
     public record CreateUserRequest(@NotBlank @Size(max = 80) String username,
@@ -167,12 +196,13 @@ public class UserAdminController {
                                     @NotBlank @Size(max = 80) String realName,
                                     @NotBlank @Pattern(regexp = "ADMIN|TEACHER|STUDENT") String roleCode,
                                     @Email @Size(max = 160) String email,
-                                    @Size(max = 30) String phone) { }
+                                    @Size(max = 30) String phone,
+                                    List<String> workspaceCodes) { }
 
     public record StatusRequest(@NotBlank @Pattern(regexp = "ACTIVE|DISABLED") String status) { }
     public record RoleRequest(@NotBlank @Pattern(regexp = "ADMIN|TEACHER|STUDENT") String roleCode) { }
     public record PasswordRequest(@NotBlank @Size(min = 6, max = 100) String password) { }
     public record UserView(long id, String username, String realName, String roleCode, String email,
-                           String phone, String status, String createdAt) { }
+                           String phone, String status, String createdAt, List<String> workspaceCodes) { }
     private record UserRole(String username, String roleCode, String status) { }
 }
