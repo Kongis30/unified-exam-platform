@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AppButton from '@/components/AppButton.vue'
@@ -19,7 +19,7 @@ import { examApi as satExamApi } from '@/examTypes/sat/student/api/exam'
 import ClassesPage from '@/views/ClassesPage.vue'
 import {
   createExam, createPaper, createPaperGroup, createPaperVersion, deleteExam, deletePaper, deletePaperGroup,
-  apiRequest, closeExam, getExam, getExamTypes, getPaper, listClasses, listExams, listPaperGroups, listPapers,
+  apiRequest, cachedResource, closeExam, getExam, getExamTypes, getPaper, listClasses, listExams, listPaperGroups, listPapers,
   listStudentExams, movePaperToGroup, publishExam, reorderWorkspacePaperGroups, saveExamTargets, startStudentAttempt, unpublishExam,
   savePaperStructure, sealPaper, setPaperArchived, updateExam, updatePaper, updatePaperGroup,
 } from '@/api/platform'
@@ -62,6 +62,10 @@ const staffClassesLoaded = ref(false)
 const staffPapersLoaded = ref(false)
 let pendingClasses = null
 let pendingPapers = null
+let staffClassesNeedRetry = false
+let staffPapersNeedRetry = false
+let workspaceActive = true
+let workspaceVisited = false
 const isSaving = ref(false)
 const examActionId = ref(null)
 const examPublicationTarget = ref(null)
@@ -279,26 +283,31 @@ async function loadPage() {
   } finally {
     isLoading.value = false
     await nextTick()
-    restoreStudentHistoryScroll()
+    if (workspaceActive) restoreStudentHistoryScroll()
   }
 }
 
-async function ensureStaffClasses() {
-  if (staffClassesLoaded.value) return
+async function ensureStaffClasses(revalidate = false) {
   if (pendingClasses) return pendingClasses
+  if (staffClassesLoaded.value && !revalidate && !staffClassesNeedRetry) return
   staffClassesLoading.value = true
   const request = listClasses([props.code]).then((rows) => {
     classes.value = rows
     staffClassesLoaded.value = true
+    staffClassesNeedRetry = false
+  }).catch((requestError) => {
+    staffClassesNeedRetry = true
+    throw requestError
   }).finally(() => { staffClassesLoading.value = false; pendingClasses = null })
   pendingClasses = request
   return request
 }
 
-async function ensureStaffPapers() {
-  if (staffPapersLoaded.value) return
+async function ensureStaffPapers(revalidate = false) {
   if (pendingPapers) return pendingPapers
-  const request = loadWorkspacePapers().then(() => { staffPapersLoaded.value = true })
+  if (staffPapersLoaded.value && !revalidate && !staffPapersNeedRetry) return
+  const request = loadWorkspacePapers().then(() => { staffPapersLoaded.value = true; staffPapersNeedRetry = false })
+    .catch((requestError) => { staffPapersNeedRetry = true; throw requestError })
     .finally(() => { pendingPapers = null })
   pendingPapers = request
   return request
@@ -322,7 +331,7 @@ function restoreStudentHistoryScroll() {
   router.replace({ name: 'student-workspace', params: { code: 'SHSAT' }, query })
 }
 
-async function loadStudentExams() {
+async function loadStudentExams(force = false) {
   const workspaceCodes = new Set(workspaceTypes.value.map((item) => item.code))
   const isShsatWorkspace = props.code === 'SHSAT'
   studentExamError.value = ''
@@ -333,7 +342,7 @@ async function loadStudentExams() {
   const assignedExams = async () => {
     studentExamsLoading.value = true
     try {
-      studentExams.value = (await listStudentExams())
+      studentExams.value = (await listStudentExams({ force: force === true }))
         .filter((exam) => workspaceCodes.has(exam.examTypeCode))
     } catch (requestError) {
       studentExamError.value = requestError.message || 'Unable to load your assigned exams.'
@@ -358,8 +367,8 @@ async function loadStudentExams() {
 
       if (isShsatWorkspace) {
         const [tasks, history] = await Promise.all([
-          apiRequest('/api/student/wrong-answer-tasks'),
-          shsatStudentApi.getAttemptHistory(),
+          cachedResource('/api/student/wrong-answer-tasks', ['student'], 30_000, { force: force === true }),
+          shsatStudentApi.getAttemptHistory({ force: force === true }),
         ])
         studentReviewTasks.value = tasks
         studentAttemptHistory.value = history
@@ -815,10 +824,10 @@ function countPaperQuestions(sections = []) {
     + (section.questions?.length || 0) + countPaperQuestions(section.children || []), 0)
 }
 
-async function loadWorkspaceExams() {
+async function loadWorkspaceExams(force = false) {
   staffExamsLoading.value = true
   try {
-    const lists = await Promise.all(workspaceTypes.value.map((type) => listExams(type.code)))
+    const lists = await Promise.all(workspaceTypes.value.map((type) => listExams(type.code, { force: force === true })))
     exams.value = lists.flat().sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
     currentExamPage.value = Math.min(currentExamPage.value, currentExamPageCount.value)
     historicalExamPage.value = Math.min(historicalExamPage.value, historicalExamPageCount.value)
@@ -981,6 +990,7 @@ async function confirmDeleteExam() {
 onBeforeUnmount(() => {
   clearExamDeleteCooldown()
   dismissNotification()
+  document.removeEventListener('visibilitychange', refreshOnVisibility)
   if (examReleaseRefreshTimer) clearInterval(examReleaseRefreshTimer)
 })
 
@@ -1049,7 +1059,7 @@ function toggleHistoricalExams() {
 function syncExamReleaseRefresh() {
   if (examReleaseRefreshTimer) clearInterval(examReleaseRefreshTimer)
   examReleaseRefreshTimer = null
-  if (!isStaff.value || activeTab.value !== 'exams') return
+  if (!workspaceActive || !isStaff.value || activeTab.value !== 'exams') return
   examReleaseRefreshTimer = window.setInterval(() => {
     if (document.visibilityState === 'visible') loadWorkspaceExams()
   }, 60_000)
@@ -1509,6 +1519,32 @@ onMounted(() => {
   loadPage()
   syncExamReleaseRefresh()
 })
+function refreshActiveWorkspace() {
+  if (!workspaceActive) return
+  if (!isStaff.value) { loadStudentExams(); return }
+  const requests = []
+  if (canManageWorkspace.value) requests.push(loadWorkspaceExams())
+  if (staffPapersLoaded.value) requests.push(ensureStaffPapers(true))
+  if (staffClassesLoaded.value) requests.push(ensureStaffClasses(true))
+  Promise.all(requests).catch((requestError) => { error.value = requestError.message })
+}
+function refreshOnVisibility() {
+  if (document.visibilityState === 'visible') refreshActiveWorkspace()
+}
+onActivated(() => {
+  workspaceActive = true
+  document.addEventListener('visibilitychange', refreshOnVisibility)
+  syncExamReleaseRefresh()
+  if (!workspaceVisited) { workspaceVisited = true; return }
+  if (['papers', 'exams', 'classes'].includes(route.query.tab)) activeTab.value = route.query.tab
+  refreshActiveWorkspace()
+})
+onDeactivated(() => {
+  workspaceActive = false
+  document.removeEventListener('visibilitychange', refreshOnVisibility)
+  if (examReleaseRefreshTimer) clearInterval(examReleaseRefreshTimer)
+  examReleaseRefreshTimer = null
+})
 watch(activeTab, (tab) => {
   syncExamReleaseRefresh()
   if (isStaff.value && selectedType.value) ensureStaffTab(tab).catch((requestError) => { error.value = requestError.message })
@@ -1521,7 +1557,7 @@ watch(() => props.code, (code) => {
 </script>
 
 <template>
-  <div class="page-content type-page-content" :class="{ 'type-page-content--compact-student': !isStaff }">
+  <div class="page-content type-page-content" :class="{ 'type-page-content--compact-student': !isStaff, 'student-workspace-page': !isStaff }">
     <Teleport to="body">
       <Transition name="exam-notification">
         <div v-if="notification.open" class="exam-notification" :class="`exam-notification--${notification.variant}`" role="status" aria-live="polite">
@@ -1597,7 +1633,7 @@ watch(() => props.code, (code) => {
           <ClassesPage v-if="activeTab === 'classes' && staffClassesLoaded" :exam-type-code="props.code"
             :initial-classes="error ? null : classes" @classes-updated="classes = $event" />
         </KeepAlive>
-        <p v-if="activeTab === 'classes' && staffClassesLoading" class="admin-state">Loading classes...</p>
+        <p v-if="activeTab === 'classes' && staffClassesLoading && !staffClassesLoaded" class="admin-state">Loading classes...</p>
 
       <AppCard v-if="activeTab === 'papers'" class="paper-list-card" title="Paper List" :subtitle="`View paper summaries and manage ${props.code} paper versions.`">
         <div class="paper-list-toolbar">
@@ -1838,7 +1874,7 @@ watch(() => props.code, (code) => {
         <div class="card-top-actions">
           <AppButton variant="secondary" @click="openDraftList">Drafts <span class="draft-count">{{ draftExams.length }}</span></AppButton>
           <AppButton class="card-top-actions__primary" :disabled="!readyPapers.length" @click="openRelease">Create Exam</AppButton>
-          <button class="admin-refresh-button" type="button" aria-label="Refresh releases" title="Refresh releases" @click="loadWorkspaceExams">
+          <button class="admin-refresh-button" type="button" aria-label="Refresh releases" title="Refresh releases" @click="loadWorkspaceExams(true)">
             <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" /></svg>
           </button>
           <button class="collapse-arrow-button" type="button" :aria-label="examReleasesCollapsed ? 'Expand exam releases' : 'Collapse exam releases'" :title="examReleasesCollapsed ? 'Expand' : 'Collapse'" @click="toggleExamReleases">
@@ -1901,7 +1937,7 @@ watch(() => props.code, (code) => {
       <AppCard v-if="activeTab === 'exams'" class="sat-exam-releases-card sat-historical-exams-card" title="Historical Exams" subtitle="Ended releases are kept here for results and review.">
         <div class="card-top-actions">
           <span class="historical-exam-count">{{ historicalExams.length }} {{ historicalExams.length === 1 ? 'exam' : 'exams' }}</span>
-          <button class="admin-refresh-button" type="button" aria-label="Refresh historical exams" title="Refresh historical exams" @click="loadWorkspaceExams">
+          <button class="admin-refresh-button" type="button" aria-label="Refresh historical exams" title="Refresh historical exams" @click="loadWorkspaceExams(true)">
             <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" /></svg>
           </button>
           <button class="collapse-arrow-button" type="button" :aria-label="historicalExamsCollapsed ? 'Expand historical exams' : 'Collapse historical exams'" :title="historicalExamsCollapsed ? 'Expand' : 'Collapse'" @click="toggleHistoricalExams">
@@ -2113,11 +2149,17 @@ watch(() => props.code, (code) => {
         <div class="card-heading"><div><span class="eyebrow">{{ props.code }} PRACTICE</span><h2>Practice papers</h2><p>Choose a paper to start a timed full-length practice test.</p></div></div>
         <section v-for="group in practicePaperGroups" :key="group.name" class="practice-paper-group">
           <h3>{{ group.name }}</h3>
-          <article v-for="paper in group.items" :key="paper.id" class="paper-row">
-            <div class="paper-mark">{{ paper.examTypeCode }}</div>
-            <div class="paper-copy"><strong>{{ paper.title }}</strong><small>{{ paper.questionCount }} questions · {{ paper.durationSeconds ? `${Math.round(paper.durationSeconds / 60)} min` : 'No time limit' }}</small></div>
-            <button class="secondary-button compact-button" :aria-label="`Start practice: ${paper.title}`" :disabled="startingPracticePaperId === paper.id" @click="startPracticePaper(paper)">{{ startingPracticePaperId === paper.id ? 'Opening…' : 'Start practice' }}<span v-if="startingPracticePaperId !== paper.id">↗</span></button>
-          </article>
+          <div class="student-exam-card-grid">
+            <article v-for="paper in group.items" :key="paper.id" class="student-exam-card">
+              <div class="student-exam-card__heading">
+                <span class="student-exam-card__type">{{ paper.examTypeCode }}</span>
+                <span class="student-exam-card__state">Practice</span>
+              </div>
+              <h4>{{ paper.title }}</h4>
+              <p class="student-exam-card__description">{{ paper.questionCount }} questions · {{ paper.durationSeconds ? `${Math.round(paper.durationSeconds / 60)} min` : 'No time limit' }}</p>
+              <button class="secondary-button compact-button" :aria-label="`Start practice: ${paper.title}`" :disabled="startingPracticePaperId === paper.id" @click="startPracticePaper(paper)">{{ startingPracticePaperId === paper.id ? 'Opening…' : 'Start practice' }}<span v-if="startingPracticePaperId !== paper.id">↗</span></button>
+            </article>
+          </div>
         </section>
         <p v-if="studentPracticeLoading && !practicePaperGroups.length" class="table-empty">Loading practice papers...</p>
         <p v-else-if="studentPracticeError" class="error-text" role="alert">{{ studentPracticeError }}</p>
@@ -2159,20 +2201,30 @@ watch(() => props.code, (code) => {
       </AppCard>
       <AppCard class="management-card student-exam-list" :class="{ 'student-exam-list--empty': !studentExams.length && !studentExamsLoading }">
         <div class="card-heading"><div><span class="eyebrow">{{ selectedType.code }} EXAMS</span><h2>Your exams</h2></div></div>
-        <article v-for="exam in studentExams" :key="exam.id" class="paper-row">
-          <div class="paper-mark">{{ examAvailability(exam) === 'Upcoming' ? '↗' : '•' }}</div>
-          <div class="paper-copy"><strong>{{ exam.title }}</strong><small><span v-if="isSatWorkspace">{{ exam.examTypeCode }} · </span>{{ exam.paperTitle }} · {{ formatExamDate(exam.opensAt) }} — {{ formatExamDate(exam.closesAt) }}</small></div>
-          <span class="status-pill" :class="studentExamStatusClass(exam)">{{ getStudentExamState(exam).label }}</span>
-          <button v-if="getStudentExamState(exam).canStart" class="secondary-button compact-button" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">{{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}<span v-if="startingExamId !== exam.id">↗</span></button>
-          <button v-if="getStudentExamState(exam).canViewAttempt" class="text-button" @click="viewAttempt(exam)">View attempt</button>
-        </article>
+        <div v-if="studentExams.length" class="student-exam-card-grid">
+          <article v-for="exam in studentExams" :key="exam.id" class="student-exam-card">
+            <div class="student-exam-card__heading">
+              <span class="student-exam-card__type">{{ exam.examTypeCode }}</span>
+              <span class="student-exam-card__state" :class="`student-exam-card__state--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).label }}</span>
+            </div>
+            <h4>{{ exam.title }}</h4>
+            <p class="student-exam-card__description">{{ exam.paperTitle }}</p>
+            <dl class="student-exam-card__window">
+              <div><dt>Available</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
+            </dl>
+            <div class="student-exam-card__actions">
+              <button v-if="getStudentExamState(exam).canStart" class="secondary-button compact-button" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">{{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}<span v-if="startingExamId !== exam.id">↗</span></button>
+              <button v-if="getStudentExamState(exam).canViewAttempt" class="text-button" @click="viewAttempt(exam)">View attempt</button>
+            </div>
+          </article>
+        </div>
         <p v-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
         <p v-if="studentExamsLoading && !studentExams.length" class="table-empty">Loading exams...</p>
         <p v-else-if="!studentExams.length && !studentExamError" class="table-empty">No exams have been assigned to you yet.</p>
       </AppCard>
       <AppCard v-if="props.code === 'SHSAT'" class="management-card shsat-student-history">
         <div class="card-heading"><div><span class="eyebrow">YOUR SHSAT RECORDS</span><h2>Exam History</h2><p>Review completed exams, personal wrong answers, and assigned review tasks.</p></div>
-          <button class="secondary-button compact-button" :disabled="historyLoading" @click="loadStudentExams">{{ historyLoading ? 'Refreshing…' : 'Refresh' }}</button>
+          <button class="secondary-button compact-button" :disabled="historyLoading" @click="loadStudentExams(true)">{{ historyLoading ? 'Refreshing…' : 'Refresh' }}</button>
         </div>
         <p v-if="historyError" class="error-text" role="alert">{{ historyError }}</p>
         <div class="history-tabs" role="tablist" aria-label="SHSAT student history">
@@ -2251,14 +2303,23 @@ watch(() => props.code, (code) => {
 .exam-list-pagination button { cursor: pointer; }
 .exam-list-pagination button:disabled { cursor: not-allowed; opacity: .45; }
 .practice-paper-group + .practice-paper-group { margin-top: 18px; }
-.practice-paper-group h3 { margin: 0 0 8px; color: var(--color-muted); font-size: 13px; font-weight: 750; }
-.student-practice-list .paper-row { min-height: 72px; gap: 16px; }
-.student-practice-list .paper-copy strong { overflow: visible; font-size: 14px; line-height: 1.35; text-overflow: clip; white-space: normal; }
-.student-practice-list .paper-copy small { font-size: 12px; line-height: 1.4; }
-.student-practice-list .paper-row .compact-button { min-height: 40px; font-size: 13px; }
-.student-exam-list .paper-row { min-height: 72px; gap: 14px; }
-.student-exam-list .paper-copy strong { font-size: 14px; line-height: 1.35; }
-.student-exam-list .paper-copy small { font-size: 12px; line-height: 1.4; }
+.practice-paper-group h3 { margin: 0 0 12px; color: #526783; font-size: 14px; font-weight: 750; }
+.student-exam-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 14px; }
+.student-exam-card { display: flex; min-width: 0; min-height: 224px; flex-direction: column; gap: 11px; border: 1px solid rgba(219, 230, 247, .95); border-radius: 16px; padding: 16px; background: linear-gradient(145deg, #fff, #f8fbff); box-shadow: 0 10px 24px rgba(31, 75, 135, .055); }
+.student-exam-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.student-exam-card__type, .student-exam-card__state { display: inline-flex; align-items: center; min-height: 25px; border-radius: 999px; padding: 4px 9px; background: #f0f5ff; color: #315ba9; font-size: 11px; font-weight: 750; letter-spacing: .04em; }
+.student-exam-card__state { background: #edf2f8; color: #64748b; letter-spacing: 0; }
+.student-exam-card__state--is-active, .student-exam-card__state--is-complete { background: #e8f7f1; color: #16794c; }
+.student-exam-card__state--is-progress, .student-exam-card__state--is-upcoming { background: #eaf1ff; color: #245dd8; }
+.student-exam-card h4 { display: -webkit-box; min-height: 40px; overflow: hidden; margin: 0; color: var(--color-text); font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.student-exam-card__description { display: -webkit-box; min-height: 36px; overflow: hidden; margin: 0; color: var(--color-muted); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.student-exam-card__window { margin: 0; }
+.student-exam-card__window div { display: grid; gap: 3px; border: 1px solid var(--color-border); border-radius: 11px; padding: 8px 9px; background: #fbfdff; }
+.student-exam-card__window dt { color: var(--color-muted); font-size: 10px; font-weight: 750; }
+.student-exam-card__window dd { margin: 0; color: var(--color-text); font-size: 12px; font-weight: 650; line-height: 1.35; }
+.student-exam-card__actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.student-exam-card__actions .compact-button { min-height: 39px; padding-inline: 14px; font-size: 12px; }
+.student-exam-card__actions .text-button { padding: 8px 10px; font-size: 13px; font-weight: 700; }
 .student-exam-list .status-pill.is-progress,
 .student-exam-list .status-pill.is-complete { background: #eaf1ff; color: #245dd8; }
 .student-exam-list .status-pill.is-upcoming { background: #f1f6ff; color: #52627a; }
@@ -2272,6 +2333,13 @@ watch(() => props.code, (code) => {
 .practice-history-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-top: 14px; color: var(--color-muted); font-size: 13px; }
 .student-practice-history--empty .card-heading, .student-exam-list--empty .card-heading { margin-bottom: 8px; }
 .student-practice-history--empty .table-empty, .student-exam-list--empty .table-empty { margin: 0; padding: 10px 8px 4px; }
+.student-workspace-page .type-workspace-intro--compact-student { max-width: none; padding-bottom: 20px; }
+.student-workspace-page .management-card { margin-bottom: 20px; }
+.student-workspace-page .card-heading { margin-bottom: 18px; }
+.student-workspace-page .card-heading h2 { font-size: 21px; letter-spacing: -0.025em; }
+.student-workspace-page .card-heading p { margin: 7px 0 0; color: var(--color-muted); font-size: 14px; line-height: 1.5; }
+.student-workspace-page .practice-paper-group h3 { margin: 24px 0 12px; color: #526783; font-size: 14px; font-weight: 700; }
+.student-workspace-page .practice-paper-group:first-of-type h3 { margin-top: 22px; }
 @media (max-width: 700px) { .practice-history-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; } .practice-history-score { grid-column: 2; justify-self: start; text-align: left; } .practice-history-actions { grid-column: 2 / -1; } }
 @media (max-width: 700px) { .student-practice-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; } .student-practice-list .paper-mark { grid-column: 1; grid-row: 1; } .student-practice-list .paper-copy { grid-column: 2; grid-row: 1; } .student-practice-list .paper-row .compact-button { grid-column: 2; justify-self: start; } }
 @media (max-width: 700px) {
@@ -2282,12 +2350,11 @@ watch(() => props.code, (code) => {
   .student-review-list .paper-row .compact-button { grid-column: 2; justify-self: start; min-height: 40px; font-size: 13px; }
 }
 @media (max-width: 700px) {
-  .student-exam-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; }
-  .student-exam-list .paper-mark { grid-column: 1; grid-row: 1 / span 3; align-self: start; }
-  .student-exam-list .paper-copy { grid-column: 2; grid-row: 1; }
+  .student-exam-list .paper-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 0; }
+  .student-exam-list .paper-copy { grid-column: 1; }
   .student-exam-list .paper-copy strong { overflow: visible; text-overflow: clip; white-space: normal; }
-  .student-exam-list .status-pill { grid-column: 2; justify-self: start; }
-  .student-exam-list .paper-row .compact-button { grid-column: 2; justify-self: start; min-height: 40px; font-size: 13px; }
+  .student-exam-list .status-pill { grid-column: 1; justify-self: start; }
+  .student-exam-list .paper-row .compact-button { grid-column: 1; justify-self: start; min-height: 40px; font-size: 13px; }
 }
 .exam-notification { position: fixed; z-index: 1200; top: 82px; right: 24px; display: flex; width: min(380px, calc(100vw - 32px)); align-items: center; gap: 12px; border: 1px solid var(--color-border); border-radius: 14px; padding: 13px 12px 13px 14px; background: #fff; color: var(--color-text); box-shadow: 0 16px 40px rgb(18 36 64 / 16%); }
 .exam-notification--success { border-color: #bbf7d0; }

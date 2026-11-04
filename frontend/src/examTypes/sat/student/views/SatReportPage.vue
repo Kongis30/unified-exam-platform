@@ -227,7 +227,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { authState } from '@/auth'
 
@@ -275,7 +275,9 @@ export default {
       return error?.message || error?.msg || 'Report data could not be loaded. Please try again.'
     }
 
+    let reportRequest = 0
     const fetchReport = async (examId, recordId) => {
+      const request = ++reportRequest
       loading.value = true
       errorMessage.value = ''
       try {
@@ -286,14 +288,16 @@ export default {
         } else {
           const { examApi } = await import('../api/exam.js')
           try {
-            const readyRes = await examApi.isReportReady(examId, recordId)
-            const ready = !!(readyRes?.data?.ready || readyRes?.ready)
-            if (!ready) await new Promise(r => setTimeout(r, 400))
-          } catch (readyError) {
-            console.warn('Report readiness check failed; loading report directly:', readyError)
+            res = await examApi.getReport(examId, recordId)
+          } catch (requestError) {
+            // 刚交卷时允许一次短暂等待；成绩未开放等其他错误直接展示。
+            if (requestError.status !== 409 || !/report is not ready/i.test(requestError.message || '')) throw requestError
+            await new Promise(resolve => setTimeout(resolve, 400))
+            if (request !== reportRequest) return false
+            res = await examApi.getReport(examId, recordId)
           }
-          res = await examApi.getReport(examId, recordId)
         }
+        if (request !== reportRequest) return false
         const data = res?.data || res || {}
         summary.value = data.summary || summary.value
         answers.value = Array.isArray(data.answers) ? data.answers : []
@@ -315,11 +319,14 @@ export default {
           abnormalCount: Number(data.abnormalCount) || 0,
           answersVisible: data.answersVisible === true
         }
+        return true
       } catch (error) {
+        if (request !== reportRequest) return false
         console.error('Load report failed:', error)
         errorMessage.value = reportErrorMessage(error)
+        return false
       } finally {
-        loading.value = false
+        if (request === reportRequest) loading.value = false
       }
     }
 
@@ -388,7 +395,8 @@ export default {
       }
     }
 
-    onMounted(async () => {
+    watch(() => [router.currentRoute.value.query.examId, router.currentRoute.value.query.recordId], async () => {
+      if (router.currentRoute.value.name !== 'sat-report') return
       const q = router.currentRoute.value.query || {}
       const examId = q.examId ? Number(q.examId) : null
       const recordId = q.recordId ? Number(q.recordId) : null
@@ -397,13 +405,13 @@ export default {
         return
       }
       reportQuery.value = { examId, recordId }
-      await fetchReport(examId, recordId)
-      if (q.autoPrint === '1' && !errorMessage.value) {
+      const loaded = await fetchReport(examId, recordId)
+      if (q.autoPrint === '1' && loaded) {
         // 等报告内容完成渲染后再打开浏览器打印对话框。
         await nextTick()
         window.setTimeout(() => window.print(), 300)
       }
-    })
+    }, { immediate: true })
 
     const retryReport = () => {
       if (!reportQuery.value.examId || !reportQuery.value.recordId) return

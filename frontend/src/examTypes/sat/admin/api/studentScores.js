@@ -1,8 +1,8 @@
-import { apiRequest } from '@/api/platform'
+import { apiRequest, cachedResource } from '@/api/platform'
 
 export function getSatStudentScores(studentId, classId, examType, options = {}) {
   const params = new URLSearchParams({ classId: String(classId), examType })
-  return apiRequest(`/api/admin/sat/students/${studentId}/scores?${params}`, options)
+  return cachedResource(`/api/admin/sat/students/${studentId}/scores?${params}`, ['student', `class:${examType}`], 30_000, options)
 }
 
 export function deleteSatStudentAttempt(studentId, attemptId, options = {}) {

@@ -1,9 +1,9 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import { authState } from './auth'
-import { getExamTypes, logout } from './api/platform'
+import { clearSessionCache, getExamTypes, logout, SESSION_CHANGE_KEY } from './api/platform'
 import AccountMenu from './components/AccountMenu.vue'
 import AdminLayout from './components/admin/AdminLayout.vue'
 import { groupExamTypesIntoWorkspaces } from './examTypes/workspaces'
@@ -19,6 +19,8 @@ const isExamRoute = computed(() => [
 const isStaff = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode))
 const isPaperView = computed(() => ['sat-paper-preview', 'psat-paper-preview', 'sat-paper-export',
   'psat-paper-export', 'admin-paper-preview', 'admin-paper-export'].includes(route.name))
+const isWorkspaceHome = (viewRoute) => ['sat-admin', 'psat-admin', 'shsat-admin'].includes(viewRoute.name)
+const workspaceKey = (viewRoute) => `${authState.user?.username}:${authState.user?.roleCode}:${viewRoute.name}`
 
 function workspaceRoute(code) {
   if (['ADMIN', 'TEACHER'].includes(authState.user?.roleCode)) {
@@ -50,12 +52,27 @@ async function signOut() {
     router.push({ name: 'login' })
   }
 }
+
+function handleSessionChange(event) {
+  if (event.key !== SESSION_CHANGE_KEY) return
+  clearSessionCache()
+  authState.user = null
+  authState.loaded = false
+  router.replace({ name: 'login' })
+}
+onMounted(() => window.addEventListener('storage', handleSessionChange))
+onBeforeUnmount(() => window.removeEventListener('storage', handleSessionChange))
 </script>
 
 <template>
   <RouterView v-if="$route.name === 'login'" />
   <RouterView v-else-if="isPaperView" />
-  <AdminLayout v-else-if="isStaff && !isExamRoute"><RouterView /></AdminLayout>
+  <AdminLayout v-else-if="isStaff && !isExamRoute">
+    <RouterView v-slot="{ Component, route: viewRoute }">
+      <KeepAlive :max="3"><component :is="Component" v-if="isWorkspaceHome(viewRoute)" :key="workspaceKey(viewRoute)" /></KeepAlive>
+      <component :is="Component" v-if="!isWorkspaceHome(viewRoute)" />
+    </RouterView>
+  </AdminLayout>
   <div v-else class="main-layout" :class="{ 'main-layout--exam': isExamRoute }">
     <header v-if="!isExamRoute" class="main-layout__header">
       <RouterLink class="main-layout__brand" to="/" aria-label="Jin Exam System home">
@@ -86,7 +103,10 @@ async function signOut() {
     </header>
 
     <main class="main-layout__content">
-      <RouterView />
+      <RouterView v-slot="{ Component, route: viewRoute }">
+        <KeepAlive :max="3"><component :is="Component" v-if="isWorkspaceHome(viewRoute)" :key="workspaceKey(viewRoute)" /></KeepAlive>
+        <component :is="Component" v-if="!isWorkspaceHome(viewRoute)" />
+      </RouterView>
     </main>
   </div>
 </template>

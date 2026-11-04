@@ -1,8 +1,8 @@
 import { http } from './http';
 import {
-  addClassStudent, addClassStudents, apiRequest, createClass as createPlatformClass,
+  addClassStudent, addClassStudents, apiRequest, cachedResource, createClass as createPlatformClass,
   createExam as createPlatformExam, createUser as createPlatformUser,
-  deleteClass as deletePlatformClass, listAvailableStudents, listClassStudents, listClasses, listExams, listPapers,
+  deleteClass as deletePlatformClass, listAvailableStudents, listClassStudents, listClasses, listExams, listPapers, listPaperGroups,
   publishExam as publishPlatformExam, removeClassStudent, reorderClasses as reorderPlatformClasses, saveExamTargets,
   sealPaper as sealPlatformPaper, updateClass as updatePlatformClass, updateExam as updatePlatformExam,
 } from '@/api/platform';
@@ -271,8 +271,8 @@ function toMaterialRequest(material, parts, subTypes, index) {
 }
 
 export const adminApi = {
-  async getPaperGroups() {
-    const groups = await apiRequest(`/api/admin/exam-types/${SHSAT}/paper-groups`);
+  async getPaperGroups({ force = false } = {}) {
+    const groups = await listPaperGroups(SHSAT, { force });
     return groups.map(paperGroup);
   },
 
@@ -570,8 +570,8 @@ export const adminApi = {
     return http.delete(`/admin/exams/${examId}`);
   },
 
-  async getClasses() {
-    return (await listClasses(['SHSAT'])).map(classSummary);
+  async getClasses({ force = false } = {}) {
+    return (await listClasses(['SHSAT'], { force })).map(classSummary);
   },
 
   async getClass(classId) {
@@ -600,8 +600,8 @@ export const adminApi = {
     }));
   },
 
-  async getClassStudents(classId) {
-    return (await listClassStudents(classId, ['SHSAT'])).map((student) => ({
+  async getClassStudents(classId, { force = false } = {}) {
+    return (await listClassStudents(classId, ['SHSAT'], { force })).map((student) => ({
       studentId: student.id, id: student.id, username: student.username, studentName: student.realName,
       realName: student.realName, email: student.email, studentNumber: student.username,
       gender: student.gender || '', notes: student.notes || '',
@@ -634,12 +634,12 @@ export const adminApi = {
     });
   },
 
-  async getUnassignedStudentAccounts() {
-    return (await this.getAvailableStudentAccounts()).filter((student) => !student.classNames);
+  async getUnassignedStudentAccounts({ force = false } = {}) {
+    return (await this.getAvailableStudentAccounts({ force })).filter((student) => !student.classNames);
   },
 
-  async getAvailableStudentAccounts() {
-    return (await listAvailableStudents()).map((student) => ({
+  async getAvailableStudentAccounts({ force = false } = {}) {
+    return (await listAvailableStudents({ force })).map((student) => ({
       userId: student.id,
       studentId: student.id,
       username: student.username,
@@ -665,8 +665,11 @@ export const adminApi = {
     return http.post('/admin/wrong-answer-tasks', payload);
   },
 
-  getWrongAnswerTasks(examId = undefined, classId = undefined) {
-    return http.get('/admin/wrong-answer-tasks', { query: { examId, classId } });
+  getWrongAnswerTasks(examId = undefined, classId = undefined, { force = false } = {}) {
+    const params = new URLSearchParams();
+    if (examId !== undefined) params.set('examId', examId);
+    if (classId !== undefined) params.set('classId', classId);
+    return cachedResource(`/api/admin/wrong-answer-tasks${params.size ? `?${params}` : ''}`, ['review:SHSAT'], 30_000, { force });
   },
 
   endWrongAnswerTask(taskId) {
@@ -677,8 +680,9 @@ export const adminApi = {
     return http.get(`/admin/wrong-answer-tasks/${taskId}`);
   },
 
-  getStudentAttemptHistory(studentId, classId) {
-    return http.get(`/admin/reports/students/${studentId}/attempts`, { query: { classId } });
+  getStudentAttemptHistory(studentId, classId, options = {}) {
+    const query = new URLSearchParams({ classId: String(classId) });
+    return cachedResource(`/api/admin/reports/students/${studentId}/attempts?${query}`, ['student', 'class:SHSAT'], 30_000, options);
   },
 
   getAttemptResult(attemptId) {

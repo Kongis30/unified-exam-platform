@@ -53,7 +53,7 @@ const filteredClasses = computed(() => {
 async function loadClasses() {
   isLoading.value = true
   try {
-    classes.value = await listClasses(classExamTypeCodes.value)
+    classes.value = await listClasses(classExamTypeCodes.value, { force: true })
     emit('classes-updated', classes.value)
   } finally {
     isLoading.value = false
@@ -214,6 +214,9 @@ function closeCreateDialog() {
 onMounted(() => {
   if (props.initialClasses !== null) classes.value = [...props.initialClasses]
   else loadPage()
+})
+watch(() => props.initialClasses, (rows) => {
+  if (rows !== null) classes.value = [...rows]
 })
 </script>
 

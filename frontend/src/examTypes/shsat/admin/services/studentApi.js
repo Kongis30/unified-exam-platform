@@ -1,5 +1,6 @@
 import {
   apiRequest,
+  cachedResource,
   getStudentAttempt,
   listStudentExams,
   listExams,
@@ -162,8 +163,8 @@ export const studentApi = {
   async getAttemptResult(attemptId) {
     return apiRequest(`/api/student/attempts/${attemptId}/report`);
   },
-  async getAttemptHistory() {
-    return apiRequest('/api/student/attempts/history');
+  async getAttemptHistory({ force = false } = {}) {
+    return cachedResource('/api/student/attempts/history', ['student'], 30_000, { force });
   },
   async getWrongAnswerQuestionNumbers(attemptId) {
     return apiRequest(`/api/student/attempts/${attemptId}/wrong-answer-question-numbers`);

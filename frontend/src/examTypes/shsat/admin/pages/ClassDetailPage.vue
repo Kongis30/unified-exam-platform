@@ -5,6 +5,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
 import ClassExamScoreTrend from '@/components/admin/ClassExamScoreTrend.vue';
+import { listClassExamScoreTrend } from '@/api/platform';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
 const route = useRoute();
@@ -25,6 +26,7 @@ const addStudentsError = ref('');
 const loadingAvailableStudents = ref(false);
 const addingStudents = ref(false);
 const studentFormError = ref('');
+const loadingAssignableClasses = ref(false);
 const editingStudentId = ref('');
 const submittingStudent = ref(false);
 const studentRosterNotice = ref('');
@@ -36,6 +38,7 @@ const classInfo = ref(null);
 const classes = ref([]);
 const exams = ref([]);
 const students = ref([]);
+let classRequest = 0;
 const examKeyword = ref('');
 let classToastTimer = null;
 let classScoreTrendReady = false;
@@ -192,26 +195,30 @@ function unwrapListResponse(response, fallbackMessage) {
   return payload?.items || payload?.records || payload?.list || payload?.content || [];
 }
 
-async function loadPage() {
+async function loadPage({ forceTrend = false } = {}) {
+  const request = ++classRequest;
+  const requestedClassId = classId.value;
   loading.value = true;
   errorMessage.value = '';
+  // 首屏班级资料加载时预取图表，失败由图表自身提示并支持重试。
+  listClassExamScoreTrend(requestedClassId, ['SHSAT'], { force: forceTrend }).catch(() => {});
 
   try {
-    const [classResponse, examResponse, studentResponse, classListResponse] = await Promise.all([
-      adminApi.getClass(classId.value),
-      adminApi.getClassExams(classId.value),
-      adminApi.getClassStudents(classId.value),
-      adminApi.getClasses(),
+    const [classResponse, examResponse, studentResponse] = await Promise.all([
+      adminApi.getClass(requestedClassId),
+      adminApi.getClassExams(requestedClassId),
+      adminApi.getClassStudents(requestedClassId, { force: true }),
     ]);
 
+    if (request !== classRequest) return;
     classInfo.value = unwrapResponse(classResponse, 'Failed to load class details');
     exams.value = unwrapListResponse(examResponse, 'Failed to load exams');
     students.value = unwrapListResponse(studentResponse, 'Failed to load students');
-    classes.value = unwrapListResponse(classListResponse, 'Failed to load classes');
   } catch (error) {
+    if (request !== classRequest) return;
     errorMessage.value = error.message || 'Failed to load class details. Please try again later.';
   } finally {
-    loading.value = false;
+    if (request === classRequest) loading.value = false;
   }
 }
 
@@ -387,7 +394,7 @@ async function openAddStudentsModal() {
   loadingAvailableStudents.value = true;
   try {
     availableStudentAccounts.value = unwrapListResponse(
-      await adminApi.getAvailableStudentAccounts(),
+      await adminApi.getAvailableStudentAccounts({ force: true }),
       'Failed to load student accounts',
     );
   } catch (error) {
@@ -472,6 +479,20 @@ function openEditStudentModal(student) {
     active: student.isActive !== false && student.active !== false,
   });
   showStudentModal.value = true;
+  loadAssignableClasses();
+}
+
+async function loadAssignableClasses() {
+  loadingAssignableClasses.value = true;
+  studentFormError.value = '';
+  try {
+    classes.value = unwrapListResponse(await adminApi.getClasses({ force: true }), 'Failed to load classes');
+  } catch (error) {
+    classes.value = [];
+    studentFormError.value = error.message || 'Failed to load classes';
+  } finally {
+    loadingAssignableClasses.value = false;
+  }
 }
 
 function closeStudentModal() {
@@ -795,6 +816,10 @@ onMounted(async () => {
 onBeforeRouteUpdate(saveClassExamState);
 onBeforeRouteLeave(saveClassExamState);
 watch(classId, async () => {
+  if (!classId.value || route.name !== 'admin-class-detail') return;
+  classInfo.value = null;
+  students.value = [];
+  exams.value = [];
   resetClassScoreTrendReady();
   restoreClassExamState();
   await loadPage();
@@ -843,7 +868,7 @@ onBeforeUnmount(() => {
               :disabled="loading"
               aria-label="Refresh class detail"
               title="Refresh class detail"
-              @click="loadPage"
+              @click="loadPage({ forceTrend: true })"
             >
               <svg class="icon-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
                 <path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" />
@@ -898,7 +923,7 @@ onBeforeUnmount(() => {
       <AppCard v-else-if="errorMessage" title="Unable to Load Class">
         <div class="admin-state admin-state--error">
           <p class="error-text">{{ errorMessage }}</p>
-          <AppButton variant="secondary" @click="loadPage">Retry</AppButton>
+          <AppButton variant="secondary" @click="loadPage({ forceTrend: true })">Retry</AppButton>
         </div>
       </AppCard>
 
@@ -1194,7 +1219,7 @@ onBeforeUnmount(() => {
               </label>
               <label class="form-field">
                 <span class="form-label">Class</span>
-                <select v-model="studentForm.classId" class="form-input">
+                <select v-model="studentForm.classId" class="form-input" :disabled="loadingAssignableClasses || !assignableClasses.length">
                   <option v-for="item in assignableClasses" :key="item.classId" :value="String(item.classId)">
                     {{ item.className }}
                   </option>
@@ -1224,9 +1249,11 @@ onBeforeUnmount(() => {
             </div>
 
             <p v-if="studentFormError" class="error-text">{{ studentFormError }}</p>
+            <p v-if="loadingAssignableClasses">Loading classes...</p>
+            <AppButton v-else-if="studentFormError && !assignableClasses.length" variant="secondary" type="button" @click="loadAssignableClasses">Retry loading classes</AppButton>
             <footer class="modal-card__footer">
               <AppButton variant="secondary" type="button" @click="closeStudentModal">Cancel</AppButton>
-              <AppButton type="submit" :disabled="submittingStudent">
+              <AppButton type="submit" :disabled="submittingStudent || loadingAssignableClasses || !assignableClasses.length">
                 {{ submittingStudent ? 'Saving...' : 'Save Changes' }}
               </AppButton>
             </footer>

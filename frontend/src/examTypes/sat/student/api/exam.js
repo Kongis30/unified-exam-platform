@@ -1,16 +1,15 @@
-import { apiRequest } from '@/api/platform'
+import { apiRequest, cachedResource } from '@/api/platform'
 
 const base = '/api/student/sat-attempts'
 
 export const examApi = {
   startExam: (examId) => apiRequest(`/api/student/exams/${examId}/sat-attempt`, { method: 'POST' }),
-  listPracticePapers: (code) => apiRequest(`/api/student/sat-practice-papers?examTypeCode=${encodeURIComponent(code)}`),
-  listPracticeHistory: (page = 1, size = 10, code = 'SAT') => apiRequest(`/api/student/sat-practice-attempts?page=${page}&size=${size}&examTypeCode=${encodeURIComponent(code)}`),
+  listPracticePapers: (code) => cachedResource(`/api/student/sat-practice-papers?examTypeCode=${encodeURIComponent(code)}`, ['student'], 30_000),
+  listPracticeHistory: (page = 1, size = 10, code = 'SAT') => cachedResource(`/api/student/sat-practice-attempts?page=${page}&size=${size}&examTypeCode=${encodeURIComponent(code)}`, ['student'], 30_000),
   startPractice: (paperId) => apiRequest(`/api/student/sat-practice-papers/${paperId}/attempts`, { method: 'POST' }),
   getProgress: (attemptId) => apiRequest(`${base}/${attemptId}`),
   resumeBreak: (attemptId) => apiRequest(`${base}/${attemptId}/resume-break`, { method: 'POST' }),
   getReport: (examId, attemptId) => apiRequest(`${base}/${attemptId}/report?examId=${examId}`),
-  isReportReady: async (_examId, attemptId) => ({ ready: (await apiRequest(`${base}/${attemptId}`)).status === 'finished' }),
   saveModule: (examId, attemptId, moduleId, payload) => apiRequest(`${base}/${attemptId}/modules/${moduleId}/save`, {
     method: 'PUT', body: JSON.stringify(payload),
   }),

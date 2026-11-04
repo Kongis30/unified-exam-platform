@@ -1,10 +1,6 @@
 <script setup>
 import ExamTypePage from '@/views/ExamTypePage.vue'
-import { useRoute } from 'vue-router'
-import { computed } from 'vue'
-
-const route = useRoute()
-const code = computed(() => route.name === 'psat-admin' ? 'PSAT' : 'SAT')
+defineProps({ code: { type: String, required: true } })
 </script>
 
 <template>

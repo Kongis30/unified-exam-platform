@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AppButton from '@/components/AppButton.vue'
@@ -10,7 +10,7 @@ import ClassExamScoreTrend from '@/components/admin/ClassExamScoreTrend.vue'
 import { notifyOperation } from '@/utils/operationNotification'
 import { authState } from '@/auth'
 import {
-  addClassStudents, deleteClass, getClass, listAvailableStudents, listClassExams, listClassStudents,
+  addClassStudents, deleteClass, getClass, listAvailableStudents, listClassExamScoreTrend, listClassExams, listClassStudents,
   removeClassStudent, setClassStatus, updateClass,
 } from '@/api/platform'
 
@@ -25,11 +25,14 @@ const isSaving = ref(false)
 const error = ref('')
 const editOpen = ref(false)
 const addStudentOpen = ref(false)
+const studentOptionsLoading = ref(false)
+const studentOptionsError = ref('')
 const removeStudentTarget = ref(null)
 const deleteClassOpen = ref(false)
 const classForm = reactive({ name: '', description: '' })
 const addStudentSearch = ref('')
 const selectedStudentIds = ref([])
+let classRequest = 0
 
 const workspaceCode = computed(() => route.name === 'psat-class-detail' ? 'PSAT' : 'SAT')
 const classId = computed(() => route.params.classId)
@@ -47,20 +50,26 @@ const allVisibleStudentsSelected = computed(() => availableStudents.value.length
   && availableStudents.value.every((student) => selectedStudentIds.value.includes(student.id)))
 
 async function loadPage() {
+  const request = ++classRequest
+  const requestedClassId = classId.value
+  const requestedWorkspace = workspaceCode.value
   isLoading.value = true
   error.value = ''
+  // 图表与班级资料并发请求，图表组件复用同一个会话内请求。
+  listClassExamScoreTrend(requestedClassId, [requestedWorkspace]).catch(() => {})
   try {
-    const [classRow, studentRows, availableRows, examRows] = await Promise.all([
-      getClass(classId.value, [workspaceCode.value]), listClassStudents(classId.value, [workspaceCode.value]), listAvailableStudents(), listClassExams(classId.value, [workspaceCode.value]),
+    const [classRow, studentRows, examRows] = await Promise.all([
+      getClass(requestedClassId, [requestedWorkspace]), listClassStudents(requestedClassId, [requestedWorkspace], { force: true }), listClassExams(requestedClassId, [requestedWorkspace]),
     ])
+    if (request !== classRequest) return
     classroom.value = classRow
     students.value = studentRows
-    studentOptions.value = availableRows
     exams.value = examRows
   } catch (requestError) {
+    if (request !== classRequest) return
     error.value = requestError.message || 'Unable to load class details.'
   } finally {
-    isLoading.value = false
+    if (request === classRequest) isLoading.value = false
   }
 }
 
@@ -158,10 +167,24 @@ async function addStudent() {
   }
 }
 
+async function loadStudentOptions() {
+  studentOptionsLoading.value = true
+  studentOptionsError.value = ''
+  try {
+    studentOptions.value = await listAvailableStudents({ force: true })
+  } catch (requestError) {
+    studentOptionsError.value = requestError.message || 'Unable to load students.'
+  } finally {
+    studentOptionsLoading.value = false
+  }
+}
+
 function openAddStudents() {
   addStudentSearch.value = ''
   selectedStudentIds.value = []
   addStudentOpen.value = true
+  studentOptions.value = []
+  loadStudentOptions()
 }
 
 function toggleVisibleStudents(checked) {
@@ -211,8 +234,13 @@ function formatDate(value) {
   }).format(date)
 }
 
-watch(classId, loadPage)
-onMounted(loadPage)
+watch([classId, workspaceCode], () => {
+  if (!classId.value || !['sat-class-detail', 'psat-class-detail'].includes(route.name)) return
+  classroom.value = null
+  students.value = []
+  exams.value = []
+  loadPage()
+}, { immediate: true })
 </script>
 
 <template>
@@ -314,7 +342,11 @@ onMounted(loadPage)
           </label>
           <span class="sat-add-students-selection" aria-live="polite">{{ selectedStudentIds.length }} selected</span>
         </div>
-        <div v-if="availableStudents.length" class="sat-add-students-table-wrap">
+        <p v-if="studentOptionsLoading" class="sat-add-students-empty">Loading student accounts...</p>
+        <div v-else-if="studentOptionsError" class="sat-add-students-empty" role="alert">
+          {{ studentOptionsError }} <AppButton type="button" variant="secondary" @click="loadStudentOptions">Retry</AppButton>
+        </div>
+        <div v-else-if="availableStudents.length" class="sat-add-students-table-wrap">
           <AdminDataTable class="sat-add-students-table">
             <thead>
               <tr>

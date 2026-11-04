@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
@@ -16,6 +16,7 @@ const hoveredTrendPoint = ref(null);
 const historySort = ref({ key: null, direction: 'desc' });
 const SHSAT_SECTION_RAW_MAX = 50;
 const SHSAT_TOTAL_RAW_MAX = SHSAT_SECTION_RAW_MAX * 2;
+let historyRequest = 0;
 
 const classId = computed(() => route.params.classId);
 const studentId = computed(() => route.params.studentId);
@@ -43,23 +44,28 @@ function unwrapResponse(response, fallbackMessage) {
   return payload?.items || payload?.records || payload?.list || payload?.content || [];
 }
 
-async function loadHistory() {
+// 普通进入复用会话缓存，手动刷新绕过缓存；旧班级响应不能覆盖当前班级。
+async function loadHistory({ force = false } = {}) {
+  const request = ++historyRequest;
   loading.value = true;
   errorMessage.value = '';
   hoveredTrendPoint.value = null;
+  attempts.value = [];
 
   try {
     const records = unwrapResponse(
-      await adminApi.getStudentAttemptHistory(studentId.value, classId.value),
+      await adminApi.getStudentAttemptHistory(studentId.value, classId.value, { force }),
       'Failed to load student exam history'
     );
+    if (request !== historyRequest) return;
     attempts.value = [...records].sort((left, right) => {
       return getTimeValue(right.submittedAt) - getTimeValue(left.submittedAt);
     });
   } catch (error) {
+    if (request !== historyRequest) return;
     errorMessage.value = error.message || 'Failed to load student exam history. Please try again later.';
   } finally {
-    loading.value = false;
+    if (request === historyRequest) loading.value = false;
   }
 }
 
@@ -389,7 +395,9 @@ function formatStatus(status) {
   return labels[text] || status || '-';
 }
 
-onMounted(loadHistory);
+watch([classId, studentId], () => {
+  if (classId.value && studentId.value && route.name === 'admin-student-detail') loadHistory();
+}, { immediate: true });
 </script>
 
 <template>
@@ -412,7 +420,7 @@ onMounted(loadHistory);
             :disabled="loading"
             aria-label="Refresh history"
             title="Refresh history"
-            @click="loadHistory"
+            @click="loadHistory({ force: true })"
           >
             <svg class="icon-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
               <path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" />
@@ -432,7 +440,7 @@ onMounted(loadHistory);
       <AppCard v-else-if="errorMessage" title="Unable to Load History">
         <div class="student-detail__state student-detail__state--error">
           <p class="error-text">{{ errorMessage }}</p>
-          <AppButton variant="secondary" @click="loadHistory">Retry</AppButton>
+          <AppButton variant="secondary" @click="loadHistory({ force: true })">Retry</AppButton>
         </div>
       </AppCard>
 

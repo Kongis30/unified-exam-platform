@@ -3,40 +3,81 @@ let examTypesCache = null
 let examTypesRequest = null
 let examTypesGeneration = 0
 const EXAM_TYPES_CACHE_MS = 60_000
-const paperListCache = new Map()
-let paperCacheGeneration = 0
+const resourceCache = new Map()
+let cacheSession = 0
+export const SESSION_CHANGE_KEY = 'unified-exam-session-change'
 
-// 工作区目录按当前会话短暂复用；切换账号时也使尚未完成的请求失效。
+// 缓存仅存在于当前登录会话；退出或权限变化时清空所有已加载数据。
 function clearExamTypesCache() {
+  csrfToken = undefined
   examTypesGeneration += 1
   examTypesCache = null
   examTypesRequest = null
-  clearPaperListCache()
+  cacheSession += 1
+  resourceCache.clear()
 }
 
-function clearPaperListCache() {
-  paperCacheGeneration += 1
-  paperListCache.clear()
+export function clearSessionCache() {
+  clearExamTypesCache()
 }
 
-// 只缓存管理用试卷摘要；任何成功的写操作都会让缓存失效。
-function cachedPaperList(path, force = false) {
-  const cached = paperListCache.get(path)
-  if (!force && cached && (cached.pending || cached.expiresAt > Date.now())) return cached.promise
-  const generation = paperCacheGeneration
-  const entry = { pending: true, expiresAt: 0, promise: null }
+// 同一浏览器的其他标签页共享登录 Cookie，切换账号时通知它们丢弃旧会话数据。
+function notifySessionChange() {
+  try { localStorage.setItem(SESSION_CHANGE_KEY, `${Date.now()}-${Math.random()}`) } catch { /* 不影响登录 */ }
+}
+
+function invalidateResources(...tags) {
+  for (const [key, entry] of resourceCache) {
+    if (tags.some((tag) => entry.tags.includes(tag))) resourceCache.delete(key)
+  }
+}
+
+// 只复用明确列出的列表请求；过期和手动刷新会重新请求服务端。
+export function cachedResource(path, tags, maxAge = 30_000, { force = false } = {}) {
+  const previous = resourceCache.get(path)
+  if (!force && previous && (previous.pending || previous.expiresAt > Date.now())) {
+    return previous.promise.then((data) => structuredClone(data))
+  }
+  const session = cacheSession
+  const entry = { tags, pending: true, expiresAt: 0, promise: null }
   entry.promise = apiRequest(path).then((data) => {
-    if (generation === paperCacheGeneration && paperListCache.get(path) === entry) {
-      entry.pending = false
-      entry.expiresAt = Date.now() + 30_000
-    }
+    if (session !== cacheSession) throw new Error('Session changed while loading data.')
+    // 写操作发生在请求期间时，重新获取而不把旧响应交给页面。
+    if (resourceCache.get(path) !== entry) return cachedResource(path, tags, maxAge)
+    entry.pending = false
+    entry.expiresAt = Date.now() + maxAge
     return data
   }).catch((error) => {
-    if (paperListCache.get(path) === entry) paperListCache.delete(path)
+    if (resourceCache.get(path) === entry) resourceCache.delete(path)
     throw error
   })
-  paperListCache.set(path, entry)
-  return entry.promise
+  resourceCache.set(path, entry)
+  return entry.promise.then((data) => structuredClone(data))
+}
+
+// 写操作只失效可能受影响的数据；未知模块的管理修改保守地失效同类缓存。
+function invalidateAfterWrite(path) {
+  const match = path.match(/\/exam-types\/(SAT|PSAT|SHSAT)\//i)
+    || path.match(/\/workspaces\/(SAT|PSAT|SHSAT)\//i)
+    || window.location.pathname.match(/^\/(sat|psat|shsat)(?:\/|$)/i)
+  const code = match?.[1]?.toUpperCase()
+  const scoped = (category) => code ? [`${category}:${code}`] : ['SAT', 'PSAT', 'SHSAT'].map((item) => `${category}:${item}`)
+  if (/\/api\/admin\/users(?:\/|$)/.test(path)) {
+    clearExamTypesCache()
+  } else if (/\/wrong-answer-tasks(?:\/|$)/.test(path)) {
+    invalidateResources('review:SHSAT', 'student')
+  } else if (/\/api\/admin\/(?:sat\/students\/[^/]+\/attempts|reports\/attempts)(?:\/|$)/.test(path)) {
+    invalidateResources('student', 'class:SAT', 'class:PSAT', 'class:SHSAT')
+  } else if (/\/api\/admin\/classes(?:\/|$)/.test(path)) {
+    invalidateResources('class:SAT', 'class:PSAT', 'class:SHSAT', 'student')
+  } else if (/\/api\/admin\/exams(?:\/|$)/.test(path) || /\/api\/admin\/papers\/[^/]+\/exams(?:\/|$)/.test(path)) {
+    invalidateResources(...scoped('exam'), ...scoped('paper'), 'student', 'class:SAT', 'class:PSAT', 'class:SHSAT')
+  } else if (/\/api\/admin\/(?:sat\/)?(?:papers|paper-groups|questions)(?:\/|$)/.test(path)
+      || /\/api\/admin\/(?:exam-types|workspaces)\/[^/]+\/(?:papers|paper-groups)(?:\/|$)/.test(path)) {
+    invalidateResources(...scoped('paper'), 'student')
+  } else if (/\/api\/student\//.test(path) && !/\/(?:presence|answers|bookmarks|save|focus-violations)(?:\/|$)/.test(path)) {
+    invalidateResources('student', ...scoped('exam'), 'class:SAT', 'class:PSAT', 'class:SHSAT')
+  }
 }
 
 async function readResponse(response) {
@@ -70,8 +111,9 @@ export async function apiRequest(path, options = {}) {
   if (response.status === 403 && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     csrfToken = undefined
   }
+  if (response.status === 401) clearExamTypesCache()
   const data = await readResponse(response)
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) clearPaperListCache()
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) invalidateAfterWrite(path)
   return data
 }
 
@@ -106,12 +148,14 @@ export function changeOwnPassword(currentPassword, newPassword) {
 export async function login(credentials) {
   clearExamTypesCache()
   await ensureCsrfToken()
-  return apiRequest('/api/auth/login', { method: 'POST', body: JSON.stringify(credentials) })
+  const user = await apiRequest('/api/auth/login', { method: 'POST', body: JSON.stringify(credentials) })
+  notifySessionChange()
+  return user
 }
 
-export function logout() {
+export async function logout() {
   clearExamTypesCache()
-  return apiRequest('/api/auth/logout', { method: 'POST' })
+  try { return await apiRequest('/api/auth/logout', { method: 'POST' }) } finally { notifySessionChange() }
 }
 
 export function listUsers() {
@@ -149,11 +193,12 @@ export function resetUserPassword(userId, password) {
   return apiRequest(`/api/admin/users/${userId}/password`, { method: 'PUT', body: JSON.stringify({ password }) })
 }
 
-export function listClasses(examTypeCodes = []) {
+export function listClasses(examTypeCodes = [], { force = false } = {}) {
   const params = new URLSearchParams()
   examTypeCodes.forEach((code) => params.append('examTypeCodes', code))
   const query = params.size ? `?${params.toString()}` : ''
-  return apiRequest(`/api/admin/classes${query}`)
+  const tags = (examTypeCodes.length ? examTypeCodes : ['SAT', 'PSAT', 'SHSAT']).map((code) => `class:${code}`)
+  return cachedResource(`/api/admin/classes${query}`, tags, 60_000, { force })
 }
 
 export function reorderClasses(classIds, examTypeCodes = []) {
@@ -194,11 +239,12 @@ export function deleteClass(classId) {
   return apiRequest(`/api/admin/classes/${classId}`, { method: 'DELETE' })
 }
 
-export function listClassStudents(classId, examTypeCodes = []) {
+export function listClassStudents(classId, examTypeCodes = [], { force = false } = {}) {
   const params = new URLSearchParams()
   examTypeCodes.forEach((code) => params.append('examTypeCodes', code))
   const query = params.size ? `?${params.toString()}` : ''
-  return apiRequest(`/api/admin/classes/${classId}/students${query}`)
+  const tags = (examTypeCodes.length ? examTypeCodes : ['SAT', 'PSAT', 'SHSAT']).map((code) => `class:${code}`)
+  return cachedResource(`/api/admin/classes/${classId}/students${query}`, tags, 30_000, { force })
 }
 
 export function listClassExams(classId, examTypeCodes = []) {
@@ -208,15 +254,16 @@ export function listClassExams(classId, examTypeCodes = []) {
   return apiRequest(`/api/admin/classes/${classId}/exams${query}`)
 }
 
-export function listClassExamScoreTrend(classId, examTypeCodes = []) {
+export function listClassExamScoreTrend(classId, examTypeCodes = [], options = {}) {
   const params = new URLSearchParams()
   examTypeCodes.forEach((code) => params.append('examTypeCodes', code))
   const query = params.size ? `?${params.toString()}` : ''
-  return apiRequest(`/api/admin/classes/${classId}/score-trend${query}`)
+  const tags = (examTypeCodes.length ? examTypeCodes : ['SAT', 'PSAT', 'SHSAT']).map((code) => `class:${code}`)
+  return cachedResource(`/api/admin/classes/${classId}/score-trend${query}`, [...tags, 'student'], 30_000, options)
 }
 
-export function listAvailableStudents() {
-  return apiRequest('/api/admin/classes/available-students')
+export function listAvailableStudents({ force = false } = {}) {
+  return cachedResource('/api/admin/classes/available-students', ['class:SAT', 'class:PSAT', 'class:SHSAT'], 30_000, { force })
 }
 
 export function addClassStudent(classId, studentUserId) {
@@ -236,11 +283,11 @@ export function removeClassStudent(classId, studentUserId) {
 }
 
 export function listPapers(examTypeCode, { force = false } = {}) {
-  return cachedPaperList(`/api/admin/exam-types/${examTypeCode}/papers`, force)
+  return cachedResource(`/api/admin/exam-types/${examTypeCode}/papers`, [`paper:${examTypeCode}`], 60_000, { force })
 }
 
 export function listPaperGroups(examTypeCode, { force = false } = {}) {
-  return cachedPaperList(`/api/admin/exam-types/${examTypeCode}/paper-groups`, force)
+  return cachedResource(`/api/admin/exam-types/${examTypeCode}/paper-groups`, [`paper:${examTypeCode}`], 60_000, { force })
 }
 
 export function createPaperGroup(examTypeCode, group) {
@@ -309,8 +356,8 @@ export function sealPaper(paperId) {
   return apiRequest(`/api/admin/papers/${paperId}/seal`, { method: 'POST' })
 }
 
-export function listExams(examTypeCode) {
-  return apiRequest(`/api/admin/exam-types/${examTypeCode}/exams`)
+export function listExams(examTypeCode, { force = false } = {}) {
+  return cachedResource(`/api/admin/exam-types/${examTypeCode}/exams`, [`exam:${examTypeCode}`], 15_000, { force })
 }
 
 export function createExam(paperId, exam) {
@@ -345,8 +392,8 @@ export function deleteExam(examId) {
   return apiRequest(`/api/admin/exams/${examId}`, { method: 'DELETE' })
 }
 
-export function listStudentExams() {
-  return apiRequest('/api/student/exams')
+export function listStudentExams({ force = false } = {}) {
+  return cachedResource('/api/student/exams', ['student'], 15_000, { force })
 }
 
 export function startStudentAttempt(examId, firstSection = '') {

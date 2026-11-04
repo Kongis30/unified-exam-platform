@@ -1,10 +1,12 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 
 import AppButton from '@/components/AppButton.vue'
 import AppModal from '@/components/AppModal.vue'
 import { getStudentAttempt, saveStudentAnswer, submitStudentAttempt } from '@/api/platform'
+
+const ShsatTextMaterial = defineAsyncComponent(() => import('@shsat/components/TextMaterial.vue'))
 
 const props = defineProps({ attemptId: { type: String, required: true } })
 const router = useRouter()
@@ -18,6 +20,7 @@ const notice = ref('')
 const isLoading = ref(true)
 const isSubmitting = ref(false)
 const submitConfirmOpen = ref(false)
+const unavailableMaterialImages = ref(new Set())
 const now = ref(Date.now())
 let clockId
 
@@ -63,6 +66,10 @@ function isMultipleSelection(question) {
 function isSelected(question, key) {
   const value = answers[question.paperItemId]
   return Array.isArray(value) ? value.includes(key) : value === key
+}
+
+function markMaterialImageUnavailable(src) {
+  unavailableMaterialImages.value = new Set([...unavailableMaterialImages.value, src])
 }
 
 async function loadAttempt() {
@@ -150,8 +157,12 @@ onBeforeUnmount(() => window.clearInterval(clockId))
       <article v-for="(question, index) in attempt.questions" :key="question.paperItemId" class="student-question">
         <div class="student-question-heading"><span>QUESTION {{ question.displayNumber || index + 1 }}</span><small>{{ question.maxPoints }} points</small></div>
         <div v-if="question.display?.material" class="student-question-material">
-          <p v-if="question.display.material.content">{{ question.display.material.content }}</p>
-          <img v-if="question.display.material.assetUrl" :src="question.display.material.assetUrl" :alt="question.display.material.title || 'Question material'" />
+          <ShsatTextMaterial v-if="attempt.examTypeCode === 'SHSAT' && question.display.material.content" :content="question.display.material.content" />
+          <p v-else-if="question.display.material.content">{{ question.display.material.content }}</p>
+          <template v-if="question.display.material.assetUrl">
+            <img v-if="!unavailableMaterialImages.has(question.display.material.assetUrl)" :src="question.display.material.assetUrl" :alt="question.display.material.title || 'Question material'" @error="markMaterialImageUnavailable(question.display.material.assetUrl)" />
+            <p v-else role="status">Material image is unavailable.</p>
+          </template>
         </div>
         <p class="student-question-stem">{{ question.stem }}</p>
         <div v-if="optionsFor(question).length" class="student-options">

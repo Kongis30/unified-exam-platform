@@ -16,6 +16,7 @@ const error = ref('')
 const rows = ref([])
 const hoveredPoint = ref(null)
 const scoreMetric = ref('scaled')
+let trendRequest = 0
 const isShsatOnly = computed(() => props.examTypeCodes.length === 1 && props.examTypeCodes[0] === 'SHSAT')
 const chartSubtitle = computed(() => isShsatOnly.value
   ? 'Compare class averages for completed SHSAT exams.'
@@ -79,20 +80,25 @@ function niceStep(value) {
 }
 
 // 由图表容器负责加载：切换班级或考试模块时重新请求对应的成绩序列。
-async function loadTrend() {
+async function loadTrend({ force = false } = {}) {
+  const request = ++trendRequest
   const requestedClassId = props.classId
   const requestedExamTypeCodes = [...props.examTypeCodes]
   loading.value = true
   error.value = ''
   hoveredPoint.value = null
   try {
-    const response = await listClassExamScoreTrend(requestedClassId, requestedExamTypeCodes)
+    const response = await listClassExamScoreTrend(requestedClassId, requestedExamTypeCodes, { force })
+    if (request !== trendRequest) return
     rows.value = Array.isArray(response) ? response : response?.items || response?.records || []
   } catch (requestError) {
+    if (request !== trendRequest) return
     error.value = requestError.message || 'Unable to load class score trend.'
   } finally {
-    loading.value = false
-    emit('loaded', requestedClassId)
+    if (request === trendRequest) {
+      loading.value = false
+      emit('loaded', requestedClassId)
+    }
   }
 }
 
@@ -128,7 +134,7 @@ function formatDateTime(value) {
   }).format(date)
 }
 
-watch(() => `${props.classId}:${props.examTypeCodes.join(',')}`, loadTrend, { immediate: true })
+watch(() => `${props.classId}:${props.examTypeCodes.join(',')}`, () => loadTrend(), { immediate: true })
 watch(scoreMetric, () => { hoveredPoint.value = null })
 </script>
 
@@ -137,7 +143,7 @@ watch(scoreMetric, () => { hoveredPoint.value = null })
     <div v-if="loading" class="admin-state">Loading score trend...</div>
     <div v-else-if="error" class="admin-state admin-state--error">
       <p class="error-text">{{ error }}</p>
-      <AppButton variant="secondary" @click="loadTrend">Retry</AppButton>
+      <AppButton variant="secondary" @click="loadTrend({ force: true })">Retry</AppButton>
     </div>
     <div v-else>
       <div v-if="rows.length" class="score-trend-toolbar">

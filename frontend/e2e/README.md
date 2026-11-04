@@ -1,5 +1,29 @@
 # SAT / PSAT end-to-end checks
 
+For workspace navigation and cache regression checks, start the Vite development server and run:
+
+```sh
+node e2e/workspace-navigation-performance.cjs
+node e2e/workspace-cache-view.cjs
+node e2e/workspace-cache-safety.cjs
+node e2e/workspace-cross-tab-session.cjs
+```
+
+These checks mock API responses and cover request reuse, targeted invalidation, expiry, refresh, scroll restoration and session isolation; they do not modify the database. Set `E2E_BASE_URL` if Vite is not running on port 5175.
+
+For class details, student history and report loading, run:
+
+```sh
+node e2e/class-detail-lazy-loading.cjs
+node e2e/student-detail-cache.cjs
+node e2e/detail-request-races.cjs
+node e2e/sat-report-loading.cjs
+node e2e/shsat-report-loading.cjs
+node e2e/shsat-attempt-materials.cjs
+```
+
+These mocked browser checks cover lazy loading and retries, class isolation, cache invalidation, late responses, report visibility, role-specific access and SHSAT attempt material formats.
+
 Start the local backend and Vite frontend, install the Playwright Chromium browser once with `npx playwright install chromium`, then run:
 
 ```sh

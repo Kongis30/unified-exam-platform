@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
@@ -95,7 +95,7 @@ const selectedClassId = ref('');
 const AVAILABLE_EXAMS_COLLAPSED_KEY = 'admin.available-exams-collapsed.SHSAT';
 const availableExamsCollapsed = ref(localStorage.getItem(AVAILABLE_EXAMS_COLLAPSED_KEY) === 'true');
 const ASSIGNED_REVIEW_COLLAPSED_KEY = 'admin.assigned-review-collapsed.SHSAT';
-const assignedReviewCollapsed = ref(localStorage.getItem(ASSIGNED_REVIEW_COLLAPSED_KEY) === 'true');
+const assignedReviewCollapsed = ref(localStorage.getItem(ASSIGNED_REVIEW_COLLAPSED_KEY) !== 'false');
 const examReleasesCollapsed = ref(false);
 const historicalExamsCollapsed = ref(false);
 const classExamsCollapsed = ref(false);
@@ -1666,7 +1666,9 @@ function validateExamPayload(payload) {
   return '';
 }
 
+let paperLoadVersion = 0;
 async function loadPapers(force = false) {
+  const version = ++paperLoadVersion;
   loading.papers = true;
   errors.papers = '';
   hasAppliedPaperFilter.value = Boolean(
@@ -1675,9 +1677,10 @@ async function loadPapers(force = false) {
 
   try {
     const [groupResponse, paperResponse] = await Promise.all([
-      adminApi.getPaperGroups(),
+      adminApi.getPaperGroups({ force: force === true }),
       adminApi.getPapers(buildPaperQuery(), { force: force === true }),
     ]);
+    if (version !== paperLoadVersion) return;
     paperGroups.value = unwrapListResponse(groupResponse);
     papers.value = unwrapListResponse(paperResponse);
     papers.value.forEach((paper) => {
@@ -1685,9 +1688,9 @@ async function loadPapers(force = false) {
     });
     syncExpandedFolders();
   } catch (error) {
-    errors.papers = error.message || 'Failed to load papers';
+    if (version === paperLoadVersion) errors.papers = error.message || 'Failed to load papers';
   } finally {
-    loading.papers = false;
+    if (version === paperLoadVersion) loading.papers = false;
   }
 }
 
@@ -1699,7 +1702,6 @@ async function loadAdminExams(examRows = null) {
     adminExams.value = unwrapListResponse(await studentApi.getExams(examRows));
   } catch (error) {
     errors.adminExams = error.message || 'Failed to load exams for participation';
-    adminExams.value = [];
   } finally {
     loading.adminExams = false;
   }
@@ -2121,20 +2123,18 @@ async function loadExams(examRows = null) {
     exams.value = unwrapListResponse(await adminApi.getExams({}, examRows));
   } catch (error) {
     errors.exams = error.message || 'Failed to load exams';
-    exams.value = [];
   } finally {
     loading.exams = false;
   }
 }
 
 /** 首页复习任务卡片与 Review Assignments tab 共用同一个汇总接口，各自支持手动刷新。 */
-async function loadWrongAnswerTasks() {
+async function loadWrongAnswerTasks(force = false) {
   wrongAnswerTaskLoading.value = true;
   wrongAnswerTaskError.value = '';
   try {
-    wrongAnswerTasks.value = unwrapListResponse(await adminApi.getWrongAnswerTasks());
+    wrongAnswerTasks.value = unwrapListResponse(await adminApi.getWrongAnswerTasks(undefined, undefined, { force: force === true }));
   } catch (error) {
-    wrongAnswerTasks.value = [];
     wrongAnswerTaskError.value = error.message || 'Failed to load wrong-answer tasks.';
   } finally {
     wrongAnswerTaskLoading.value = false;
@@ -2624,12 +2624,12 @@ async function confirmDeleteExam() {
   }
 }
 
-async function loadClasses() {
+async function loadClasses(force = false) {
   loading.classes = true;
   errors.classes = '';
 
   try {
-    classes.value = unwrapListResponse(await adminApi.getClasses());
+    classes.value = unwrapListResponse(await adminApi.getClasses({ force: force === true }));
     if (!selectedClassId.value && classes.value.length > 0) {
       selectedClassId.value = String(classes.value[0].classId);
       reportForm.classId = selectedClassId.value;
@@ -2641,39 +2641,46 @@ async function loadClasses() {
   }
 }
 
-async function loadStudents(classId = selectedClassId.value) {
+let studentLoadVersion = 0;
+let displayedStudentClassId = '';
+async function loadStudents(classId = selectedClassId.value, force = false) {
+  const version = ++studentLoadVersion;
   if (!classId) {
     students.value = [];
+    displayedStudentClassId = '';
+    loading.students = false;
     return;
   }
 
+  if (String(classId) !== displayedStudentClassId) students.value = [];
   selectedClassId.value = String(classId);
   reportForm.classId = String(classId);
   loading.students = true;
   errors.students = '';
 
   try {
-    students.value = unwrapListResponse(await adminApi.getClassStudents(classId));
+    const rows = unwrapListResponse(await adminApi.getClassStudents(classId, { force: force === true }));
+    if (version === studentLoadVersion && String(classId) === String(selectedClassId.value)) {
+      students.value = rows;
+      displayedStudentClassId = String(classId);
+    }
   } catch (error) {
-    errors.students = error.message || 'Failed to load students';
-    students.value = [];
+    if (version === studentLoadVersion) errors.students = error.message || 'Failed to load students';
   } finally {
-    loading.students = false;
+    if (version === studentLoadVersion) loading.students = false;
   }
 }
 
-async function loadUnassignedStudents() {
+async function loadUnassignedStudents(force = false) {
   loading.unassignedStudents = true;
   errors.unassignedStudents = '';
 
   try {
-    unassignedStudents.value = unwrapListResponse(await adminApi.getUnassignedStudentAccounts());
+    unassignedStudents.value = unwrapListResponse(await adminApi.getUnassignedStudentAccounts({ force: force === true }));
     const availableIds = new Set(unassignedStudents.value.map(getUnassignedStudentId));
     selectedUnassignedStudentIds.value = selectedUnassignedStudentIds.value.filter((userId) => availableIds.has(userId));
   } catch (error) {
     errors.unassignedStudents = error.message || 'Failed to load unassigned students';
-    unassignedStudents.value = [];
-    selectedUnassignedStudentIds.value = [];
   } finally {
     loading.unassignedStudents = false;
   }
@@ -3085,11 +3092,11 @@ async function refreshAdminData() {
 
   try {
     // 学生列表只依赖班级列表，无需等待试卷、考试和复习任务全部完成。
-    const classData = loadClasses().then(() => loadStudents());
+    const classData = loadClasses(true).then(() => loadStudents(selectedClassId.value, true));
     // 首页考试卡片和发布列表采用不同的展示结构，但来自同一个考试列表。
-    const examRows = listExams('SHSAT');
-    const requests = [loadAdminExams(examRows), loadPapers(), loadExams(examRows), classData, loadWrongAnswerTasks()];
-    if (!isTeacherPortal.value) requests.push(loadUnassignedStudents());
+    const examRows = listExams('SHSAT', { force: true });
+    const requests = [loadAdminExams(examRows), loadPapers(true), loadExams(examRows), classData, loadWrongAnswerTasks(true)];
+    if (!isTeacherPortal.value) requests.push(loadUnassignedStudents(true));
     await Promise.all(requests);
   } catch (error) {
     errors.initial = error.message || 'Failed to initialize the admin workspace';
@@ -3101,11 +3108,12 @@ async function refreshAdminData() {
 // 首页卡片始终加载考试和复习任务，其余数据在对应 tab 首次打开时加载。
 const loadedAdminData = new Set();
 const pendingAdminData = new Map();
-async function ensureAdminData(key, load, failed) {
-  if (loadedAdminData.has(key)) return;
+async function ensureAdminData(key, load, failed, revalidate = false) {
   if (pendingAdminData.has(key)) return pendingAdminData.get(key);
+  if (loadedAdminData.has(key) && !revalidate) return;
   const request = Promise.resolve().then(load).then(() => {
-    if (!failed()) loadedAdminData.add(key);
+    if (failed()) loadedAdminData.delete(key);
+    else loadedAdminData.add(key);
   }).finally(() => pendingAdminData.delete(key));
   pendingAdminData.set(key, request);
   return request;
@@ -3122,7 +3130,7 @@ async function ensureAdminTab(tab) {
   }
   if (['classes', 'exams', 'wrong-answer-tasks'].includes(tab)) requests.push(ensureClasses());
   if (tab === 'classes') {
-    requests.push(ensureClasses().then(() => ensureAdminData('students', loadStudents, () => Boolean(errors.students))));
+    requests.push(ensureClasses().then(() => ensureAdminData('students', loadStudents, () => !selectedClassId.value || Boolean(errors.students))));
     if (!isTeacherPortal.value) requests.push(ensureAdminData('unassigned', loadUnassignedStudents, () => Boolean(errors.unassignedStudents)));
   }
   await Promise.all(requests);
@@ -3201,9 +3209,12 @@ watch(classExamTotalPages, (totalPages) => {
   }
 });
 
+let workspaceVisited = false;
+let workspaceActive = true;
 onMounted(async () => {
   document.addEventListener('click', closePaperActionMenu);
   await loadInitialAdminData();
+  if (!workspaceActive) return;
   const releaseScrollY = Number(route.query.releaseScrollY);
   if (activeTab.value === 'exams' && Number.isFinite(releaseScrollY) && releaseScrollY > 0) {
     await nextTick();
@@ -3211,8 +3222,37 @@ onMounted(async () => {
   }
 });
 
+function refreshActiveWorkspace() {
+  if (!workspaceActive) return;
+  const examRows = listExams('SHSAT');
+  const requests = [loadAdminExams(examRows), loadExams(examRows), loadWrongAnswerTasks()];
+  if (loadedAdminData.has('papers')) requests.push(ensureAdminData('papers', loadPapers, () => Boolean(errors.papers), true));
+  if (loadedAdminData.has('classes')) requests.push(ensureAdminData('classes', loadClasses, () => Boolean(errors.classes), true));
+  if (loadedAdminData.has('students')) requests.push(loadStudents());
+  if (loadedAdminData.has('unassigned')) requests.push(loadUnassignedStudents());
+  Promise.all(requests).catch((error) => { errors.initial = error.message || 'Failed to refresh the workspace'; });
+}
+function refreshOnVisibility() {
+  if (document.visibilityState === 'visible') refreshActiveWorkspace();
+}
+onActivated(() => {
+  workspaceActive = true;
+  document.addEventListener('visibilitychange', refreshOnVisibility);
+  if (!workspaceVisited) { workspaceVisited = true; return; }
+  document.addEventListener('click', closePaperActionMenu);
+  if (typeof route.query.tab === 'string' && visibleTabs.value.some((tab) => tab.key === route.query.tab)) activeTab.value = route.query.tab;
+  refreshActiveWorkspace();
+});
+onDeactivated(() => {
+  workspaceActive = false;
+  document.removeEventListener('visibilitychange', refreshOnVisibility);
+  document.removeEventListener('click', closePaperActionMenu);
+  closePaperActionMenu();
+});
+
 onBeforeUnmount(() => {
   document.removeEventListener('click', closePaperActionMenu);
+  document.removeEventListener('visibilitychange', refreshOnVisibility);
   clearPaperDeleteCooldown();
   clearExamDeleteCooldown();
   closeActionToast();
@@ -3280,8 +3320,9 @@ onBeforeUnmount(() => {
             </button>
           </template>
         <template v-if="!availableExamsCollapsed">
-          <div v-if="loading.adminExams" class="admin-state">Loading exams...</div>
-          <div v-else-if="errors.adminExams" class="admin-state admin-state--error">{{ errors.adminExams }}</div>
+          <div v-if="errors.adminExams && adminExams.length" class="admin-state admin-state--error">{{ errors.adminExams }}</div>
+          <div v-if="loading.adminExams && !adminExams.length" class="admin-state">Loading exams...</div>
+          <div v-else-if="errors.adminExams && !adminExams.length" class="admin-state admin-state--error">{{ errors.adminExams }}</div>
           <div v-else-if="adminExamCards.length === 0" class="admin-state">No available exams right now.</div>
           <div v-else class="admin-exam-grid">
           <AdminExamCard
@@ -3316,7 +3357,7 @@ onBeforeUnmount(() => {
             :disabled="wrongAnswerTaskLoading"
             aria-label="Refresh review assignments"
             title="Refresh review assignments"
-            @click="loadWrongAnswerTasks"
+            @click="loadWrongAnswerTasks(true)"
           >
             <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -3340,48 +3381,36 @@ onBeforeUnmount(() => {
           </button>
         </template>
         <template v-if="!assignedReviewCollapsed">
-        <div v-if="wrongAnswerTaskLoading" class="admin-state">Loading review assignments...</div>
-        <div v-else-if="wrongAnswerTaskError" class="admin-state admin-state--error">
+        <div v-if="wrongAnswerTaskError && wrongAnswerTasks.length" class="admin-state admin-state--error">{{ wrongAnswerTaskError }}</div>
+        <div v-if="wrongAnswerTaskLoading && !wrongAnswerTasks.length" class="admin-state">Loading review assignments...</div>
+        <div v-else-if="wrongAnswerTaskError && !wrongAnswerTasks.length" class="admin-state admin-state--error">
           <p>{{ wrongAnswerTaskError }}</p>
-          <AppButton variant="secondary" @click="loadWrongAnswerTasks">Retry</AppButton>
+          <AppButton variant="secondary" @click="loadWrongAnswerTasks(true)">Retry</AppButton>
         </div>
         <div v-else-if="dashboardReviewAssignments.length === 0" class="admin-state">
           Publish a review assignment from the Review Assignments tab to see it here.
         </div>
-        <div v-else class="dashboard-review-grid">
-          <article v-for="task in dashboardReviewAssignments" :key="task.taskId" class="dashboard-review-task">
-            <header class="dashboard-review-task__header">
-              <div class="dashboard-review-task__heading">
-                <span class="dashboard-review-task__eyebrow">Exam Review Assignment</span>
-                <h3>{{ task.title }}</h3>
-              </div>
-              <span
-                class="dashboard-review-task__status"
-                :class="{ 'dashboard-review-task__status--ended': isReviewAssignmentEnded(task) }"
-              >
-                {{ reviewAssignmentStatusLabel(task) }}
-              </span>
-            </header>
-            <p class="dashboard-review-task__exam">
-              {{ task.examTitle || `Exam #${task.examId}` }} · {{ task.className || `Class #${task.classId}` }}
-            </p>
-            <dl class="dashboard-review-task__details">
-              <div>
-                <dt>Completed / eligible</dt>
-                <dd>{{ task.completedCount || 0 }} / {{ task.eligibleCount || 0 }}</dd>
-              </div>
-              <div>
-                <dt>Assigned students</dt>
-                <dd>{{ task.assignedCount || 0 }}</dd>
-              </div>
-            </dl>
-            <p class="dashboard-review-task__availability">
-              {{ task.startAt ? formatDateTime(task.startAt) : 'Available now' }}<span v-if="task.endAt"> – {{ formatDateTime(task.endAt) }}</span>
-            </p>
-            <AppButton class="dashboard-review-task__action" @click="openWrongAnswerTaskProgress(task)">
-              View Progress
-            </AppButton>
-          </article>
+        <div v-else class="dashboard-review-list-wrap" role="region" aria-label="Assigned review list" tabindex="0">
+          <table class="dashboard-review-list">
+            <thead>
+              <tr><th scope="col">Assignment</th><th scope="col">Progress</th><th scope="col">Availability</th><th scope="col">Status</th><th scope="col">Actions</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="task in dashboardReviewAssignments" :key="task.taskId">
+                <td class="dashboard-review-list__name">
+                  <strong>{{ task.title }}</strong>
+                  <small>{{ task.examTitle || `Exam #${task.examId}` }} · {{ task.className || `Class #${task.classId}` }}</small>
+                </td>
+                <td><strong>{{ task.completedCount || 0 }} / {{ task.eligibleCount || 0 }}</strong><small>completed · {{ task.assignedCount || 0 }} assigned</small></td>
+                <td class="dashboard-review-list__date">
+                  <span>{{ task.startAt ? formatDateTime(task.startAt) : 'Available now' }}</span>
+                  <small v-if="task.endAt">Until {{ formatDateTime(task.endAt) }}</small>
+                </td>
+                <td><span class="dashboard-review-status" :class="{ 'dashboard-review-status--ended': isReviewAssignmentEnded(task) }">{{ reviewAssignmentStatusLabel(task) }}</span></td>
+                <td><AppButton variant="secondary" @click="openWrongAnswerTaskProgress(task)">View Progress</AppButton></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
         </template>
       </AppCard>
@@ -3972,7 +4001,7 @@ onBeforeUnmount(() => {
           </div>
 
           <p v-if="notices.examForm" class="success-text admin-toolbar__message">{{ notices.examForm }}</p>
-          <div v-if="loading.exams" class="admin-state">Loading exams...</div>
+          <div v-if="loading.exams && !exams.length" class="admin-state">Loading exams...</div>
           <div v-else-if="errors.exams && !selectedPublishExam" class="admin-state admin-state--error">{{ errors.exams }}</div>
           <div v-else-if="exams.length === 0" class="admin-state">No exam releases yet.</div>
           <div v-else-if="filteredExamReleases.length === 0" class="admin-state">No active or upcoming releases match the current filters.</div>
@@ -4080,7 +4109,7 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-if="!historicalExamsCollapsed">
-          <div v-if="loading.exams" class="admin-state">Loading historical exams...</div>
+          <div v-if="loading.exams && !exams.length" class="admin-state">Loading historical exams...</div>
           <div v-else-if="historicalExamReleases.length === 0" class="admin-state">No ended exams yet.</div>
           <div v-else class="table-wrap exam-release-table-wrap">
             <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
@@ -4463,7 +4492,7 @@ onBeforeUnmount(() => {
               </select>
             </div>
             <div class="admin-toolbar__actions">
-              <AppButton variant="secondary" :disabled="wrongAnswerTaskLoading" @click="loadWrongAnswerTasks">
+              <AppButton variant="secondary" :disabled="wrongAnswerTaskLoading" @click="loadWrongAnswerTasks(true)">
                 {{ wrongAnswerTaskLoading ? 'Loading...' : 'Refresh' }}
               </AppButton>
               <AppButton :disabled="!exams.length || !classes.length" @click="openWrongAnswerTaskModal">
@@ -4472,10 +4501,11 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div v-if="wrongAnswerTaskLoading" class="admin-state">Loading review assignments...</div>
-          <div v-else-if="wrongAnswerTaskError" class="admin-state admin-state--error">
+          <div v-if="wrongAnswerTaskError && wrongAnswerTasks.length" class="admin-state admin-state--error">{{ wrongAnswerTaskError }}</div>
+          <div v-if="wrongAnswerTaskLoading && !wrongAnswerTasks.length" class="admin-state">Loading review assignments...</div>
+          <div v-else-if="wrongAnswerTaskError && !wrongAnswerTasks.length" class="admin-state admin-state--error">
             <p>{{ wrongAnswerTaskError }}</p>
-            <AppButton variant="secondary" @click="loadWrongAnswerTasks">Retry</AppButton>
+            <AppButton variant="secondary" @click="loadWrongAnswerTasks(true)">Retry</AppButton>
           </div>
           <div v-else-if="filteredWrongAnswerTasks.length === 0" class="admin-state">
             {{ wrongAnswerTasks.length ? 'No assignments match these filters.' : 'No review assignments have been created yet.' }}
@@ -4652,7 +4682,7 @@ onBeforeUnmount(() => {
                     :disabled="loading.classes"
                     aria-label="Refresh classes"
                     title="Refresh classes"
-                    @click="loadClasses"
+                    @click="loadClasses(true)"
                   >
                     <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
                       <path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" />
@@ -4764,7 +4794,7 @@ onBeforeUnmount(() => {
                   :disabled="loading.unassignedStudents"
                   aria-label="Refresh unassigned students"
                   title="Refresh unassigned students"
-                  @click="loadUnassignedStudents"
+                  @click="loadUnassignedStudents(true)"
                 >
                   <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
                     <path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" />
@@ -4772,8 +4802,9 @@ onBeforeUnmount(() => {
                   </button>
               </div>
 
-              <div v-if="loading.unassignedStudents" class="admin-state">Loading unassigned students...</div>
-              <div v-else-if="errors.unassignedStudents" class="admin-state admin-state--error">{{ errors.unassignedStudents }}</div>
+              <div v-if="errors.unassignedStudents && unassignedStudents.length" class="admin-state admin-state--error">{{ errors.unassignedStudents }}</div>
+              <div v-if="loading.unassignedStudents && !unassignedStudents.length" class="admin-state">Loading unassigned students...</div>
+              <div v-else-if="errors.unassignedStudents && !unassignedStudents.length" class="admin-state admin-state--error">{{ errors.unassignedStudents }}</div>
               <div v-else-if="unassignedStudents.length === 0" class="admin-state">No unassigned student accounts.</div>
               <div v-else class="table-wrap unassigned-students-scroll">
                 <AdminDataTable class="unassigned-students-table">
@@ -5279,122 +5310,23 @@ onBeforeUnmount(() => {
   background: #fff5f6;
 }
 
-.dashboard-review-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-  align-items: stretch;
-  gap: 16px;
-  min-width: 0;
-}
-
-.dashboard-review-task {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 250px;
-  gap: 12px;
-  border: 1px solid #d9e6f7;
-  border-radius: var(--radius-md);
-  padding: 18px;
-  background: linear-gradient(145deg, #ffffff, #f7faff);
-  box-shadow: 0 10px 24px rgba(31, 75, 135, 0.06);
-}
-
-.dashboard-review-task__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.dashboard-review-task__heading {
-  min-width: 0;
-}
-
-.dashboard-review-task__eyebrow {
-  color: var(--color-muted);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.dashboard-review-task__header h3 {
-  display: -webkit-box;
-  min-width: 0;
-  margin: 6px 0 0;
-  overflow: hidden;
-  color: var(--color-text);
-  font-size: 18px;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.dashboard-review-task__status {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  padding: 4px 9px;
-  color: #16794c;
-  background: #e8f7f1;
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.dashboard-review-task__status--ended {
-  color: var(--color-muted);
-  background: var(--color-surface-muted, #eef2f8);
-}
-
-.dashboard-review-task__exam {
-  margin: 0;
-  color: var(--color-muted);
-  font-size: 13px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-
-.dashboard-review-task__details {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: auto 0 0;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-border);
-}
-
-.dashboard-review-task__details div {
-  min-width: 0;
-}
-
-.dashboard-review-task__details dt {
-  color: var(--color-muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.dashboard-review-task__details dd {
-  margin: 4px 0 0;
-  color: var(--color-text);
-  font-size: 14px;
-  font-weight: 800;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.dashboard-review-task__availability {
-  margin: 0;
-  color: var(--color-muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.dashboard-review-task__action {
-  width: 100%;
-  margin-top: auto;
-}
+.dashboard-review-list-wrap { max-width: 100%; overflow-x: auto; }
+.dashboard-review-list { width: 100%; min-width: 780px; border-collapse: collapse; table-layout: fixed; }
+.dashboard-review-list th, .dashboard-review-list td { border-bottom: 1px solid var(--color-border); padding: 12px 14px; vertical-align: middle; text-align: center; }
+.dashboard-review-list th { color: #24314a; background: var(--color-surface-soft); font-size: 13px; font-weight: 700; }
+.dashboard-review-list th:first-child, .dashboard-review-list__name { width: 32%; text-align: left !important; }
+.dashboard-review-list th:nth-child(2) { width: 18%; }
+.dashboard-review-list th:nth-child(3) { width: 23%; }
+.dashboard-review-list th:nth-child(4) { width: 11%; }
+.dashboard-review-list th:last-child { width: 16%; }
+.dashboard-review-list td { color: var(--color-text); font-size: 14px; line-height: 1.45; }
+.dashboard-review-list td strong, .dashboard-review-list td small, .dashboard-review-list__date span { display: block; }
+.dashboard-review-list td strong { font-weight: 700; overflow-wrap: anywhere; }
+.dashboard-review-list td small { margin-top: 3px; color: var(--color-muted); font-size: 12px; overflow-wrap: anywhere; }
+.dashboard-review-list__date { white-space: nowrap; }
+.dashboard-review-list td :deep(.app-button) { min-height: 34px; padding-inline: 12px; font-size: 13px; white-space: nowrap; }
+.dashboard-review-status { display: inline-block; border-radius: 999px; padding: 5px 9px; color: #16794c; background: #e8f7f1; font-size: 12px; font-weight: 700; line-height: 1.2; }
+.dashboard-review-status--ended { color: var(--color-muted); background: var(--color-surface-muted, #eef2f8); }
 
 .collapsible-card-toolbar {
   display: flex;
@@ -6652,10 +6584,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 780px) {
-  .dashboard-review-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .admin-columns,
   .admin-form,
   .class-detail-grid,

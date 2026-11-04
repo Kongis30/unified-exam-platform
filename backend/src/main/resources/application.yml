@@ -20,6 +20,11 @@ spring:
 
 server:
   port: ${PORT:8080}
+  compression:
+    # 成绩报告含大量重复题目素材；只压缩较大的 JSON 响应，保留原有数据与权限判断。
+    enabled: true
+    mime-types: application/json
+    min-response-size: 2KB
   servlet:
     session:
       # 与独立 SHSAT 系统的 24 小时登录凭证保持一致，并允许部署环境显式覆盖。

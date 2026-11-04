@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
@@ -23,6 +23,7 @@ const router = useRouter();
 const loading = ref(false);
 const errorMessage = ref('');
 const report = ref(null);
+let reportRequest = 0;
 const unavailableMaterialUrls = ref(new Set());
 const activeFilter = ref(route.query.filter === 'incorrect' ? 'incorrect' : 'all');
 const EMPTY_CORRECT_ANSWER_TEXT = '-';
@@ -578,21 +579,28 @@ function getReportApi() {
   return useAdminReportApi.value ? adminApi : studentApi;
 }
 
+// 继续由服务端按身份控制报告内容；切换作答时忽略先前请求。
 async function loadReport() {
+  const request = ++reportRequest;
+  const requestedAttemptId = attemptId.value;
   loading.value = true;
   errorMessage.value = '';
+  report.value = null;
   unavailableMaterialUrls.value = new Set();
 
   try {
-    report.value = unwrapResponse(
-      await getReportApi().getAttemptResult(attemptId.value),
+    const result = unwrapResponse(
+      await getReportApi().getAttemptResult(requestedAttemptId),
       'Failed to load attempt report'
     );
+    if (request !== reportRequest) return;
+    report.value = result;
     normalizeFilterSelection();
   } catch (error) {
+    if (request !== reportRequest) return;
     errorMessage.value = error.message || 'Failed to load attempt report. Please try again later.';
   } finally {
-    loading.value = false;
+    if (request === reportRequest) loading.value = false;
   }
 }
 
@@ -1171,7 +1179,9 @@ function questionCountLabel(count) {
   return `${count} ${count === 1 ? 'question' : 'questions'}`;
 }
 
-onMounted(loadReport);
+watch([attemptId, useAdminReportApi], () => {
+  if (attemptId.value && route.name === 'student-attempt-report') loadReport();
+}, { immediate: true });
 </script>
 
 <template>

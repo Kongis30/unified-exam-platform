@@ -26,6 +26,7 @@ const deletingAttemptId = ref(null)
 const openActionMenuId = ref(null)
 const notification = ref(null)
 let notificationTimer = null
+let scoreRequest = 0
 const isAdmin = computed(() => authState.user?.roleCode === 'ADMIN')
 
 const completedScores = computed(() => scores.value.filter((row) => row.status === 'COMPLETED'))
@@ -149,26 +150,36 @@ async function deleteAttempt() {
   }
 }
 
-async function loadScores() {
+// 按班级和模块读取历史；路由切换后忽略旧请求，避免成绩跨班显示。
+async function loadScores({ force = false } = {}) {
+  const request = ++scoreRequest
+  const requestedWorkspace = workspaceCode.value
   loading.value = true
   error.value = ''
+  student.value = null
+  scores.value = []
+  statistics.value = null
   try {
-    const result = await getSatStudentScores(route.params.studentId, route.params.classId, workspaceCode.value)
+    const result = await getSatStudentScores(route.params.studentId, route.params.classId, requestedWorkspace, { force })
+    if (request !== scoreRequest) return
     student.value = result.student
-    scores.value = (result.scores || []).filter((row) => row.examTypeCode === workspaceCode.value)
+    scores.value = (result.scores || []).filter((row) => row.examTypeCode === requestedWorkspace)
     statistics.value = result.statistics || null
     if (!availableScoreTypes.value.includes(scoreTypeFilter.value)) {
       scoreTypeFilter.value = workspaceCode.value
     }
     if (!hasScaledScores.value) scoreMode.value = 'RAW'
   } catch (requestError) {
+    if (request !== scoreRequest) return
     error.value = requestError.message || 'Unable to load this student’s score history.'
   } finally {
-    loading.value = false
+    if (request === scoreRequest) loading.value = false
   }
 }
 
-watch(() => route.params.studentId, loadScores, { immediate: true })
+watch(() => [route.params.classId, route.params.studentId, workspaceCode.value], () => {
+  if (route.params.classId && route.params.studentId && ['sat-student-scores', 'psat-student-scores'].includes(route.name)) loadScores()
+}, { immediate: true })
 onBeforeUnmount(dismissNotification)
 </script>
 
@@ -194,7 +205,9 @@ onBeforeUnmount(dismissNotification)
         </div>
       </header>
 
-      <p v-if="error" class="sat-student-scores-error" role="alert">{{ error }}</p>
+      <div v-if="error" class="sat-student-scores-error" role="alert">
+        {{ error }} <AppButton variant="secondary" @click="loadScores({ force: true })">Retry</AppButton>
+      </div>
       <div v-if="loading" class="sat-student-scores-loading">Loading score history…</div>
       <template v-else-if="statistics">
         <AppCard title="Score Statistics" subtitle="Completed attempts for this exam system.">
