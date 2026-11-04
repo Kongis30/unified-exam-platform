@@ -52,6 +52,7 @@ const activeHistoryTab = ref(localStorage.getItem('shsat.student-history-tab') |
 const startingWrongAnswerAttemptId = ref(null)
 const startingReviewTaskId = ref(null)
 const startingPracticePaperId = ref(null)
+const practicePapersCollapsed = ref(localStorage.getItem(`student.practice-papers-collapsed.${props.code}`) === 'true')
 const classes = ref([])
 const selectedPaper = ref(null)
 const isLoading = ref(true)
@@ -437,6 +438,14 @@ function studentExamStatusClass(exam) {
     closed: 'is-closed',
     'no-attempts-left': 'is-disabled',
   }[status] || ''
+}
+
+function studentExamStatusTone(exam) {
+  const state = getStudentExamState(exam).label.toLowerCase()
+  if (state === 'available' || state === 'in progress') return 'active'
+  if (state === 'upcoming') return 'pending'
+  if (state === 'submitted') return 'completed'
+  return 'ended'
 }
 
 function viewShsatAttempt(item) {
@@ -1461,6 +1470,11 @@ function toggleAvailableExams() {
   localStorage.setItem(`admin.available-exams-collapsed.${props.code}`, String(availableExamsCollapsed.value))
 }
 
+function togglePracticePapers() {
+  practicePapersCollapsed.value = !practicePapersCollapsed.value
+  localStorage.setItem(`student.practice-papers-collapsed.${props.code}`, String(practicePapersCollapsed.value))
+}
+
 // SHSAT 使用专属考试页；其他类型的可用练习通过统一作答 API 创建并续考。
 async function openStudentExam(exam) {
   if (startingExamId.value !== null) return
@@ -1551,6 +1565,7 @@ watch(activeTab, (tab) => {
 })
 watch(() => props.code, (code) => {
   availableExamsCollapsed.value = localStorage.getItem(`admin.available-exams-collapsed.${code}`) === 'true'
+  practicePapersCollapsed.value = localStorage.getItem(`student.practice-papers-collapsed.${code}`) === 'true'
   loadPage()
   syncExamReleaseRefresh()
 })
@@ -2145,25 +2160,39 @@ watch(() => props.code, (code) => {
     </template>
 
     <template v-else-if="selectedType">
-      <AppCard v-if="isSatWorkspace" class="management-card student-practice-list">
-        <div class="card-heading"><div><span class="eyebrow">{{ props.code }} PRACTICE</span><h2>Practice papers</h2><p>Choose a paper to start a timed full-length practice test.</p></div></div>
-        <section v-for="group in practicePaperGroups" :key="group.name" class="practice-paper-group">
-          <h3>{{ group.name }}</h3>
-          <div class="student-exam-card-grid">
-            <article v-for="paper in group.items" :key="paper.id" class="student-exam-card">
-              <div class="student-exam-card__heading">
-                <span class="student-exam-card__type">{{ paper.examTypeCode }}</span>
-                <span class="student-exam-card__state">Practice</span>
-              </div>
-              <h4>{{ paper.title }}</h4>
-              <p class="student-exam-card__description">{{ paper.questionCount }} questions · {{ paper.durationSeconds ? `${Math.round(paper.durationSeconds / 60)} min` : 'No time limit' }}</p>
-              <button class="secondary-button compact-button" :aria-label="`Start practice: ${paper.title}`" :disabled="startingPracticePaperId === paper.id" @click="startPracticePaper(paper)">{{ startingPracticePaperId === paper.id ? 'Opening…' : 'Start practice' }}<span v-if="startingPracticePaperId !== paper.id">↗</span></button>
-            </article>
-          </div>
-        </section>
-        <p v-if="studentPracticeLoading && !practicePaperGroups.length" class="table-empty">Loading practice papers...</p>
-        <p v-else-if="studentPracticeError" class="error-text" role="alert">{{ studentPracticeError }}</p>
-        <p v-else-if="!practicePaperGroups.length" class="table-empty">No practice papers are available yet.</p>
+      <AppCard v-if="isSatWorkspace" class="management-card student-practice-list" :class="{ 'student-practice-list--collapsed': practicePapersCollapsed }">
+        <div class="card-heading">
+          <div><h2>Practice papers</h2><p>Choose a paper to start a timed full-length practice test.</p></div>
+          <button class="collapse-arrow-button" type="button" :aria-expanded="!practicePapersCollapsed"
+            :aria-label="practicePapersCollapsed ? 'Expand practice papers' : 'Collapse practice papers'"
+            :title="practicePapersCollapsed ? 'Expand practice papers' : 'Collapse practice papers'" @click="togglePracticePapers">
+            <svg class="collapse-arrow-button__icon" :class="{ 'collapse-arrow-button__icon--collapsed': practicePapersCollapsed }" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+        <div v-if="!practicePapersCollapsed" class="student-practice-list__body">
+          <section v-for="group in practicePaperGroups" :key="group.name" class="practice-paper-group">
+            <h3>{{ group.name }}</h3>
+            <div class="student-exam-card-grid">
+              <AdminExamCard v-for="paper in group.items" :key="paper.id" :title="paper.title"
+                status-label="Practice" status-tone="active" :description="`${paper.examTypeCode} practice paper`"
+                :metadata="[
+                  { label: 'Questions', value: `${paper.questionCount} questions` },
+                  { label: 'Duration', value: paper.durationSeconds ? `${Math.round(paper.durationSeconds / 60)} min` : 'No time limit' },
+                ]">
+                <template #actions>
+                  <AppButton :aria-label="`Start practice: ${paper.title}`" :disabled="startingPracticePaperId === paper.id" @click="startPracticePaper(paper)">
+                    {{ startingPracticePaperId === paper.id ? 'Opening…' : 'Start practice' }}
+                  </AppButton>
+                </template>
+              </AdminExamCard>
+            </div>
+          </section>
+          <p v-if="studentPracticeLoading && !practicePaperGroups.length" class="table-empty">Loading practice papers...</p>
+          <p v-else-if="studentPracticeError" class="error-text" role="alert">{{ studentPracticeError }}</p>
+          <p v-else-if="!practicePaperGroups.length" class="table-empty">No practice papers are available yet.</p>
+        </div>
       </AppCard>
       <AppCard v-if="isSatWorkspace" class="management-card student-practice-history" :class="{ 'student-practice-history--empty': !studentPracticeHistory.length && !studentPracticeLoading }">
         <div class="card-heading"><div><span class="eyebrow">YOUR {{ props.code }} PRACTICE</span><h2>Completed practice</h2><p>{{ studentPracticeHistory.length ? 'Review your completed practice reports.' : 'Your completed practices appear here.' }}</p></div></div>
@@ -2202,21 +2231,21 @@ watch(() => props.code, (code) => {
       <AppCard class="management-card student-exam-list" :class="{ 'student-exam-list--empty': !studentExams.length && !studentExamsLoading }">
         <div class="card-heading"><div><span class="eyebrow">{{ selectedType.code }} EXAMS</span><h2>Your exams</h2></div></div>
         <div v-if="studentExams.length" class="student-exam-card-grid">
-          <article v-for="exam in studentExams" :key="exam.id" class="student-exam-card">
-            <div class="student-exam-card__heading">
-              <span class="student-exam-card__type">{{ exam.examTypeCode }}</span>
-              <span class="student-exam-card__state" :class="`student-exam-card__state--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).label }}</span>
-            </div>
-            <h4>{{ exam.title }}</h4>
-            <p class="student-exam-card__description">{{ exam.paperTitle }}</p>
-            <dl class="student-exam-card__window">
-              <div><dt>Available</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
-            </dl>
-            <div class="student-exam-card__actions">
-              <button v-if="getStudentExamState(exam).canStart" class="secondary-button compact-button" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">{{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}<span v-if="startingExamId !== exam.id">↗</span></button>
-              <button v-if="getStudentExamState(exam).canViewAttempt" class="text-button" @click="viewAttempt(exam)">View attempt</button>
-            </div>
-          </article>
+          <AdminExamCard v-for="exam in studentExams" :key="exam.id" :title="exam.title"
+            :status-label="getStudentExamState(exam).label" :status-tone="studentExamStatusTone(exam)"
+            :description="exam.paperTitle || 'Assigned exam'"
+            :metadata="[
+              { label: 'Available', value: `${formatExamDate(exam.opensAt)} – ${formatExamDate(exam.closesAt)}`, wide: true },
+              { label: 'Program', value: exam.examTypeCode || props.code },
+              { label: 'Duration', value: exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' },
+            ]">
+            <template #actions>
+              <AppButton v-if="getStudentExamState(exam).canStart" variant="secondary" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
+                {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
+              </AppButton>
+              <AppButton v-if="getStudentExamState(exam).canViewAttempt" variant="ghost" @click="viewAttempt(exam)">View attempt</AppButton>
+            </template>
+          </AdminExamCard>
         </div>
         <p v-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
         <p v-if="studentExamsLoading && !studentExams.length" class="table-empty">Loading exams...</p>
@@ -2304,22 +2333,15 @@ watch(() => props.code, (code) => {
 .exam-list-pagination button:disabled { cursor: not-allowed; opacity: .45; }
 .practice-paper-group + .practice-paper-group { margin-top: 18px; }
 .practice-paper-group h3 { margin: 0 0 12px; color: #526783; font-size: 14px; font-weight: 750; }
-.student-exam-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 14px; }
-.student-exam-card { display: flex; min-width: 0; min-height: 224px; flex-direction: column; gap: 11px; border: 1px solid rgba(219, 230, 247, .95); border-radius: 16px; padding: 16px; background: linear-gradient(145deg, #fff, #f8fbff); box-shadow: 0 10px 24px rgba(31, 75, 135, .055); }
-.student-exam-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.student-exam-card__type, .student-exam-card__state { display: inline-flex; align-items: center; min-height: 25px; border-radius: 999px; padding: 4px 9px; background: #f0f5ff; color: #315ba9; font-size: 11px; font-weight: 750; letter-spacing: .04em; }
-.student-exam-card__state { background: #edf2f8; color: #64748b; letter-spacing: 0; }
-.student-exam-card__state--is-active, .student-exam-card__state--is-complete { background: #e8f7f1; color: #16794c; }
-.student-exam-card__state--is-progress, .student-exam-card__state--is-upcoming { background: #eaf1ff; color: #245dd8; }
-.student-exam-card h4 { display: -webkit-box; min-height: 40px; overflow: hidden; margin: 0; color: var(--color-text); font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.student-exam-card__description { display: -webkit-box; min-height: 36px; overflow: hidden; margin: 0; color: var(--color-muted); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.student-exam-card__window { margin: 0; }
-.student-exam-card__window div { display: grid; gap: 3px; border: 1px solid var(--color-border); border-radius: 11px; padding: 8px 9px; background: #fbfdff; }
-.student-exam-card__window dt { color: var(--color-muted); font-size: 10px; font-weight: 750; }
-.student-exam-card__window dd { margin: 0; color: var(--color-text); font-size: 12px; font-weight: 650; line-height: 1.35; }
-.student-exam-card__actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
-.student-exam-card__actions .compact-button { min-height: 39px; padding-inline: 14px; font-size: 12px; }
-.student-exam-card__actions .text-button { padding: 8px 10px; font-size: 13px; font-weight: 700; }
+.student-exam-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 360px)); align-items: stretch; justify-content: start; gap: 16px; min-width: 0; padding: 4px 6px 8px; }
+.student-exam-card-grid :deep(.admin-exam-card) { width: 100%; }
+@media (max-width: 780px) { .student-exam-card-grid { grid-template-columns: minmax(0, 1fr); } }
+.student-practice-list { display: flex; min-height: 390px; max-height: 960px; flex-direction: column; overflow: hidden; }
+.student-practice-list--collapsed { min-height: 0; }
+.student-practice-list .card-heading { flex: 0 0 auto; align-items: center; }
+.student-practice-list .card-heading h2 { margin-top: 0; }
+.student-practice-list .card-heading p { margin: 7px 0 0; color: var(--color-muted); font-size: 14px; line-height: 1.5; }
+.student-practice-list__body { min-height: 0; overflow-y: auto; border-top: 1px solid #e6eefb; padding: 16px 6px 18px 0; scrollbar-color: #9fb6d8 #edf3fb; scrollbar-width: thin; box-shadow: inset 0 -12px 12px -14px rgba(31, 75, 135, .45); }
 .student-exam-list .status-pill.is-progress,
 .student-exam-list .status-pill.is-complete { background: #eaf1ff; color: #245dd8; }
 .student-exam-list .status-pill.is-upcoming { background: #f1f6ff; color: #52627a; }
