@@ -84,7 +84,7 @@ onBeforeUnmount(() => window.removeEventListener('storage', handleSessionChange)
       </RouterLink>
 
       <nav class="main-layout__nav" aria-label="Main navigation">
-        <RouterLink :to="authState.user?.roleCode === 'STUDENT' ? { name: 'student-systems' } : { name: 'home' }">
+        <RouterLink :to="{ name: 'home' }">
           {{ authState.user?.roleCode === 'STUDENT' ? 'Systems' : 'Overview' }}
         </RouterLink>
         <RouterLink v-if="authState.user?.roleCode === 'ADMIN'" to="/users">Accounts</RouterLink>

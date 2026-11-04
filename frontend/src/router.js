@@ -6,7 +6,6 @@ import LoginPage from './views/LoginPage.vue'
 import ExamWorkspaceHome from './views/ExamWorkspaceHome.vue'
 import UsersPage from './views/UsersPage.vue'
 import StudentAttemptPage from './views/StudentAttemptPage.vue'
-import StudentSystemSelectPage from './views/StudentSystemSelectPage.vue'
 import { authState, refreshUser } from './auth'
 
 /** 统一入口路由；角色权限由会话用户和路由元数据共同控制。 */
@@ -21,7 +20,7 @@ export const router = createRouter({
       meta: { roles: ['ADMIN', 'TEACHER', 'STUDENT'] },
     },
     { path: '/users', name: 'users', component: UsersPage, meta: { roles: ['ADMIN'] } },
-    { path: '/student/systems', name: 'student-systems', component: StudentSystemSelectPage,
+    { path: '/student/systems', name: 'student-systems', redirect: { name: 'home' },
       meta: { roles: ['STUDENT'] } },
     { path: '/student/systems/:code', name: 'student-workspace', component: ExamTypePage,
       props: true, meta: { roles: ['STUDENT'] } },
@@ -139,7 +138,7 @@ router.beforeEach(async (to, from) => {
   const user = authState.loaded ? authState.user : await refreshUser()
   if (!user) return { name: 'login', query: { redirect: to.fullPath } }
   // 旧入口和收藏链接统一转到新路径，查询参数及登录后的返回地址继续保留。
-  if (['exam-type', 'student-workspace'].includes(to.name)) {
+  if (to.name === 'exam-type') {
     const code = String(to.params.code || '').toUpperCase()
     if (['SAT', 'PSAT', 'SHSAT'].includes(code)) return { name: `${code.toLowerCase()}-admin`, query: to.query, hash: to.hash }
   }
@@ -161,6 +160,5 @@ router.beforeEach(async (to, from) => {
   if (to.path.startsWith('/psat/student/')) sessionStorage.setItem('sat:workspace', 'PSAT')
   else if (to.path.startsWith('/sat/student/')) sessionStorage.setItem('sat:workspace', 'SAT')
   if (to.meta.roles && !to.meta.roles.includes(user.roleCode)) return { name: 'home' }
-  if (to.name === 'home' && user.roleCode === 'STUDENT') return { name: 'student-systems' }
   return true
 })
