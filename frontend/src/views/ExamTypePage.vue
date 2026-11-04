@@ -21,7 +21,7 @@ import {
   createExam, createPaper, createPaperGroup, createPaperVersion, deleteExam, deletePaper, deletePaperGroup,
   apiRequest, cachedResource, closeExam, getExam, getExamTypes, getPaper, listClasses, listExams, listPaperGroups, listPapers,
   listStudentExams, movePaperToGroup, publishExam, reorderWorkspacePaperGroups, saveExamTargets, startStudentAttempt, unpublishExam,
-  savePaperStructure, sealPaper, setPaperArchived, updateExam, updatePaper, updatePaperGroup,
+  savePaperStructure, sealPaper, updateExam, updatePaper, updatePaperGroup,
 } from '@/api/platform'
 import { authState } from '@/auth'
 import { studentApi as shsatStudentApi } from '@shsat/admin/services/studentApi'
@@ -97,7 +97,6 @@ const paperDetailsTarget = ref(null)
 const paperDetails = ref(null)
 const paperDetailsLoading = ref(false)
 const paperDetailsError = ref('')
-const creatingVersionPaperId = ref(null)
 const deleteFolderTarget = ref(null)
 const availableExamsCollapsed = ref(localStorage.getItem(`admin.available-exams-collapsed.${props.code}`) === 'true')
 const examReleasesCollapsed = ref(localStorage.getItem(`admin.exam-releases-collapsed.${props.code}`) === 'true')
@@ -777,25 +776,19 @@ async function editPaperInfo() {
   }
 }
 
-function openPaperActionDialog(type, summary) {
-  paperActionDialog.value = { type, paper: summary }
+function openDeletePaperDialog(summary) {
+  paperActionDialog.value = summary
   paperActionDialogError.value = ''
 }
 
 async function confirmPaperAction() {
-  const action = paperActionDialog.value
-  if (!action || paperActionDialogSaving.value) return
+  const paper = paperActionDialog.value
+  if (!paper || paperActionDialogSaving.value) return
   paperActionDialogSaving.value = true
   paperActionDialogError.value = ''
   try {
-    if (action.type === 'delete') {
-      await deletePaper(action.paper.id)
-      notice.value = 'Paper deleted.'
-    } else {
-      const archived = action.type === 'archive'
-      await setPaperArchived(action.paper.id, archived)
-      notice.value = archived ? 'Paper archived.' : 'Paper restored.'
-    }
+    await deletePaper(paper.id)
+    notice.value = 'Paper deleted.'
     paperActionDialog.value = null
     await loadWorkspacePapers()
   } catch (requestError) {
@@ -1274,25 +1267,6 @@ async function seal(summary) {
   catch (requestError) { error.value = requestError.message }
 }
 
-async function makeVersion(summary) {
-  if (creatingVersionPaperId.value != null) return
-  error.value = ''; notice.value = ''
-  creatingVersionPaperId.value = summary.id
-  notice.value = 'Creating a new paper version…'
-  try {
-    const created = await createPaperVersion(summary.id)
-    await loadWorkspacePapers()
-    const group = paperGroups.value.find((item) =>
-      String(item.idsByType[created.summary.examTypeCode]) === String(created.summary.groupId))
-    paperFolderExpanded[group?.key || 'default'] = true
-    notice.value = `Version v${created.summary.versionNo} was created.`
-  } catch (requestError) {
-    error.value = requestError.message || 'Unable to create a new paper version.'
-  } finally {
-    creatingVersionPaperId.value = null
-  }
-}
-
 function localDateTime(value) {
   const localValue = new Date(value)
   localValue.setMinutes(localValue.getMinutes() - localValue.getTimezoneOffset())
@@ -1699,13 +1673,13 @@ watch(() => props.code, (code) => {
             </div>
             <div v-if="isPaperFolderExpanded(folder.key) && folder.items.length" class="table-wrap">
               <AdminDataTable class="paper-table">
-                <thead><tr><th>Paper</th><th>Version</th><th>Type</th><th>Duration</th><th>Status</th><th class="paper-actions-header">Actions</th></tr></thead>
+                <thead><tr><th>Paper</th><th>Questions</th><th>Duration</th><th title="Maximum raw points">Score</th><th>Status</th><th class="paper-actions-header">Actions</th></tr></thead>
                 <tbody>
                   <tr v-for="paper in folder.items" :key="paper.id">
                     <td><strong>{{ paper.title }}</strong></td>
-                    <td>v{{ paper.versionNo }}</td>
-                    <td><span class="program-badge">{{ paper.examTypeCode }}</span></td>
+                    <td>{{ paper.questionCount ?? '—' }}</td>
                     <td>{{ paper.defaultDurationSeconds ? `${Math.round(paper.defaultDurationSeconds / 60)} min` : 'No time limit' }}</td>
+                    <td>{{ paper.totalScore == null ? '—' : Number(paper.totalScore) }}</td>
                     <td>{{ paper.status }}</td>
                     <td class="paper-actions-cell">
                       <AdminActionMenu
@@ -1720,14 +1694,11 @@ watch(() => props.code, (code) => {
                         <button v-if="paper.status !== 'ARCHIVED'" type="button" @click="handlePaperAction(() => editPaper(paper))">Edit Paper</button>
                         <button type="button" @click="handlePaperAction(() => router.push({ name: `${props.code.toLowerCase()}-paper-preview`, params: { paperId: paper.id }, query: { returnTo: getWorkspaceReturnPath() } }))">Preview</button>
                         <button type="button" @click="handlePaperAction(() => router.push({ name: `${props.code.toLowerCase()}-paper-export`, params: { paperId: paper.id }, query: { returnTo: getWorkspaceReturnPath() } }))">Export PDF</button>
-                        <button type="button" :disabled="creatingVersionPaperId !== null" @click="handlePaperAction(() => makeVersion(paper))">{{ creatingVersionPaperId === paper.id ? 'Creating…' : 'New version' }}</button>
-                        <button v-if="paper.status !== 'DRAFT'" type="button" @click="handlePaperAction(() => openPaperActionDialog(paper.status === 'ARCHIVED' ? 'restore' : 'archive', paper))">{{ paper.status === 'ARCHIVED' ? 'Restore' : 'Archive' }}</button>
-                        <button class="admin-action-menu__danger" type="button" @click="handlePaperAction(() => openPaperActionDialog('delete', paper))">Delete</button>
+                        <button class="admin-action-menu__danger" type="button" @click="handlePaperAction(() => openDeletePaperDialog(paper))">Delete</button>
                       </AdminActionMenu>
                       <div v-else class="table-actions">
                         <button v-if="paper.status === 'DRAFT'" @click="editPaper(paper)">Edit</button>
                         <button v-if="paper.status === 'DRAFT'" @click="seal(paper)">Seal</button>
-                        <button @click="makeVersion(paper)">New version</button>
                       </div>
                     </td>
                   </tr>
@@ -1842,26 +1813,21 @@ watch(() => props.code, (code) => {
 
       <AppModal
         v-if="paperActionDialog"
-        :title="paperActionDialog.type === 'delete' ? 'Delete paper?' : paperActionDialog.type === 'archive' ? 'Archive paper?' : 'Restore paper?'"
+        title="Delete paper?"
         :busy="paperActionDialogSaving"
         @close="paperActionDialog = null"
       >
-        <p v-if="paperActionDialog.type === 'delete'">
-          Delete “{{ paperActionDialog.paper.title }}”? Papers used by exams or newer versions cannot be deleted.
-        </p>
-        <p v-else>
-          {{ paperActionDialog.type === 'archive' ? 'Archive' : 'Restore' }} “{{ paperActionDialog.paper.title }}”?
-        </p>
+        <p>Delete “{{ paperActionDialog.title }}”? Papers used by exams or newer versions cannot be deleted.</p>
         <p v-if="paperActionDialogError && !isSatWorkspace" class="error-text" role="alert">{{ paperActionDialogError }}</p>
         <template #footer>
           <AppButton type="button" variant="secondary" :disabled="paperActionDialogSaving" @click="paperActionDialog = null">Cancel</AppButton>
           <AppButton
             type="button"
-            :variant="paperActionDialog.type === 'delete' ? 'danger' : 'primary'"
+            variant="danger"
             :disabled="paperActionDialogSaving"
             @click="confirmPaperAction"
           >
-            {{ paperActionDialogSaving ? 'Saving…' : paperActionDialog.type === 'delete' ? 'Delete paper' : paperActionDialog.type === 'archive' ? 'Archive paper' : 'Restore paper' }}
+            {{ paperActionDialogSaving ? 'Deleting…' : 'Delete paper' }}
           </AppButton>
         </template>
       </AppModal>

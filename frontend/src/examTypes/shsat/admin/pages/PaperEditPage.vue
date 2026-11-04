@@ -3683,7 +3683,7 @@ onBeforeUnmount(() => {
                       ></span>
                       <span class="question-drag-handle" aria-hidden="true">⋮⋮</span>
                       <strong>Q{{ question.questionNumber || '-' }}</strong>
-                      <span>{{ getQuestionPreview(question) }}</span>
+                      <span class="question-preview">{{ getQuestionPreview(question) }}</span>
                       <small>
                         <span v-for="tag in getQuestionMetaTags(question)" :key="tag" class="question-meta-tag">{{ tag }}</span>
                       </small>
@@ -3721,7 +3721,7 @@ onBeforeUnmount(() => {
                       ></span>
                       <span class="question-drag-handle" aria-hidden="true">⋮⋮</span>
                       <strong>Q{{ item.question.questionNumber || '-' }}</strong>
-                      <span>{{ getQuestionPreview(item.question) }}</span>
+                      <span class="question-preview">{{ getQuestionPreview(item.question) }}</span>
                       <small>
                         <span v-for="tag in getQuestionMetaTags(item.question)" :key="tag" class="question-meta-tag">{{ tag }}</span>
                       </small>
@@ -4751,7 +4751,7 @@ onBeforeUnmount(() => {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(720px, 1fr);
+  grid-template-columns: minmax(340px, 430px) minmax(720px, 1fr);
   gap: 14px;
   align-items: start;
 }
@@ -4989,15 +4989,15 @@ onBeforeUnmount(() => {
 .question-item {
   position: relative;
   display: grid;
-  grid-template-columns: 18px 42px minmax(0, 1fr);
+  grid-template-columns: 16px 50px minmax(0, 1fr);
   align-items: center;
-  gap: 3px 8px;
+  gap: 5px 8px;
   width: 100%;
   min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--paper-radius-md);
   min-height: 58px;
-  padding: 8px 10px;
+  padding: 10px;
   color: var(--color-text);
   text-align: left;
   background: #ffffff;
@@ -5104,7 +5104,7 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 
-.question-item > span:not(.question-drag-handle) {
+.question-preview {
   grid-column: 3;
   min-width: 0;
   overflow: hidden;
@@ -5122,7 +5122,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 4px;
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.2;
 }
 
@@ -5141,8 +5141,8 @@ onBeforeUnmount(() => {
 }
 
 .question-item strong,
-.question-item span {
-  font-size: 13px;
+.question-preview {
+  font-size: 15px;
   line-height: 1.35;
 }
 

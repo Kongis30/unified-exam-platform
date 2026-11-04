@@ -37,6 +37,14 @@ let classRequest = 0
 const workspaceCode = computed(() => route.name === 'psat-class-detail' ? 'PSAT' : 'SAT')
 const classId = computed(() => route.params.classId)
 const canMonitorExams = computed(() => authState.user?.roleCode === 'ADMIN')
+function examStatusLabel(exam) {
+  if (exam.status === 'CANCELLED') return 'Cancelled'
+  if (exam.status === 'CLOSED') return 'Ended'
+  if (exam.status === 'PUBLISHED') {
+    return exam.endTime && new Date(exam.endTime).getTime() <= Date.now() ? 'Ended' : 'Published'
+  }
+  return exam.status === 'DRAFT' ? 'Draft' : (exam.status || 'Unknown')
+}
 const studentsToAdd = computed(() => {
   const memberIds = new Set(students.value.map((student) => student.id))
   return studentOptions.value.filter((student) => !memberIds.has(student.id))
@@ -286,7 +294,7 @@ watch([classId, workspaceCode], () => {
                   <span><small>Opens</small>{{ formatDate(exam.startTime) }}</span>
                   <span><small>Closes</small>{{ formatDate(exam.endTime) }}</span>
                 </td>
-                <td>{{ exam.status === 'PUBLISHED' ? 'Published' : 'Draft' }}</td>
+                <td>{{ examStatusLabel(exam) }}</td>
                 <td>{{ exam.duration ? `${Math.round(exam.duration / 60)} min` : '—' }}</td>
                 <td class="sat-class-exam-actions">
                   <AppButton type="button" @click="openExamResults(exam)">View Results</AppButton>

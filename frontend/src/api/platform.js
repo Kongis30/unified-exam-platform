@@ -331,12 +331,6 @@ export function deletePaper(paperId) {
   return apiRequest(`/api/admin/papers/${paperId}`, { method: 'DELETE' })
 }
 
-export function setPaperArchived(paperId, archived) {
-  return apiRequest(`/api/admin/papers/${paperId}/archive`, {
-    method: 'PATCH', body: JSON.stringify({ archived }),
-  })
-}
-
 export function createPaper(examTypeCode, paper) {
   return apiRequest(`/api/admin/exam-types/${examTypeCode}/papers`, { method: 'POST', body: JSON.stringify(paper) })
 }

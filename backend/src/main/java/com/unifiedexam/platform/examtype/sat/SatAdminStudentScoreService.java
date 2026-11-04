@@ -58,7 +58,8 @@ public class SatAdminStudentScoreService {
             return view;
         }, studentId);
 
-        String classFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ?)";
+        // 已明确指定班级的考试，以发布目标为准，避免迁移时按当前班级推断的旧成绩串班。
+        String classFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ? AND (EXISTS (SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = a.exam_id AND tc.class_id = ac.class_id) OR NOT EXISTS (SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = a.exam_id)))";
         String typeFilter = examType == null ? "" : " AND p.exam_type_code = ?";
         List<Object> parameters = new java.util.ArrayList<>();
         parameters.add(studentId);

@@ -137,7 +137,8 @@ public class ShsatAdminReportService {
 
     public List<Map<String, Object>> studentAttemptHistory(long studentId, Long classId) {
         requireStudent(studentId);
-        String classFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ?)";
+        // 学生班级历史与班级考试列表采用相同的明确目标优先规则。
+        String classFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ? AND (EXISTS (SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = a.exam_id AND tc.class_id = ac.class_id) OR NOT EXISTS (SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = a.exam_id)))";
         Object[] parameters = classId == null ? new Object[] { studentId } : new Object[] { studentId, classId };
         return jdbcTemplate.query(("""
             SELECT a.id, a.exam_id, a.attempt_no, a.status, a.started_at, a.submitted_at,
