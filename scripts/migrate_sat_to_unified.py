@@ -24,6 +24,8 @@ SOURCE_SYSTEM = "SAT_V1"
 MAPPED_TARGET_TABLES = {
     "category": "question_categories",
     "class": "classes",
+    "class_workspace": "classes",
+    "inferred_attempt_class": "attempts",
     "exam": "exams",
     "exam_live_presence": "attempts",
     "exam_record": "attempts",
@@ -82,13 +84,15 @@ class SatMigration:
         self.target = target
         self.args = args
         self.account_map = self.read_account_map(args.account_map)
+        self.paper_type_map = self.read_paper_type_map(args.paper_type_map)
+        self.class_type_map = self.read_class_type_map(args.class_type_map)
         self.run_id: int | None = None
         self.maps: dict[tuple[str, str], int | None] = {}
         self.paper_types: dict[int, str] = {}
         self.paper_items: dict[int, list[tuple[int, int]]] = defaultdict(list)
         self.question_scores: dict[int, Decimal] = {}
         self.target_users: dict[int, int] = {}
-        self.target_classes: dict[int, int] = {}
+        self.target_classes: dict[int, list[int]] = {}
         self.target_materials: dict[int, int] = {}
         self.target_questions: dict[int, int] = {}
         self.target_papers: dict[int, int] = {}
@@ -115,6 +119,34 @@ class SatMigration:
                         raise ValueError(f"Duplicate source_user_id in account map: {key}")
                     mapped[key] = value
         return mapped
+
+    @staticmethod
+    def read_paper_type_map(path: str | None) -> dict[int, str]:
+        """读取人工核定的试卷类型，缺项时禁止猜测归属。"""
+        if not path:
+            raise ValueError("An explicit --paper-type-map is required for every source paper.")
+        mapped: dict[int, str] = {}
+        with open(path, newline="", encoding="utf-8-sig") as handle:
+            for row in csv.DictReader(handle):
+                source_id = int(row["source_paper_id"])
+                exam_type = row["exam_type"].strip().upper()
+                if source_id in mapped or exam_type not in {"SAT", "PSAT"}:
+                    raise ValueError(f"Invalid or duplicate paper type mapping for {source_id}.")
+                mapped[source_id] = exam_type
+        return mapped
+
+    @staticmethod
+    def read_class_type_map(path: str) -> dict[int, set[str]]:
+        """读取旧班级的明确归属；两个模块均需保留时分别创建班级。"""
+        mapped: dict[int, set[str]] = defaultdict(set)
+        with open(path, newline="", encoding="utf-8-sig") as handle:
+            for row in csv.DictReader(handle):
+                source_id = int(row["source_class_id"])
+                exam_type = row["exam_type"].strip().upper()
+                if exam_type not in {"SAT", "PSAT"} or exam_type in mapped[source_id]:
+                    raise ValueError(f"Invalid or duplicate class type mapping for {source_id}.")
+                mapped[source_id].add(exam_type)
+        return dict(mapped)
 
     def source_rows(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         with self.source.cursor() as cursor:
@@ -253,6 +285,20 @@ class SatMigration:
                     raise ValueError(f"Account map for source user {source_id} does not point to an existing same-role account.")
 
         source_classes = self.source_rows("SELECT id,class_name FROM `class` ORDER BY id")
+        source_class_ids = {int(row["id"]) for row in source_classes}
+        if source_class_ids != set(self.class_type_map):
+            raise ValueError(f"Class type mapping must match source classes; missing={sorted(source_class_ids - set(self.class_type_map))}, extra={sorted(set(self.class_type_map) - source_class_ids)}")
+        if latest_run_id:
+            expected_class_keys = {f"{source_id}:{exam_type}" for source_id, types in self.class_type_map.items() for exam_type in types}
+            class_links = self.target_rows("""SELECT m.source_id,m.target_id,cw.exam_type_code
+                FROM sat_import_id_map m LEFT JOIN class_exam_workspaces cw
+                    ON cw.class_id=m.target_id AND cw.exam_type_code=SUBSTRING_INDEX(m.source_id,':',-1)
+                WHERE m.source_system=%s AND m.entity_type='class_workspace' AND m.import_run_id=%s""",
+                (SOURCE_SYSTEM, latest_run_id))
+            if ({row["source_id"] for row in class_links} != expected_class_keys
+                    or any(row["exam_type_code"] is None for row in class_links)
+                    or len({row["target_id"] for row in class_links}) != len(class_links)):
+                raise ValueError("Imported class workspace mappings do not match the confirmed separate class assignments.")
         target_classes = self.target_rows("SELECT id,name FROM classes")
         target_classes_by_name: dict[str, set[int]] = defaultdict(set)
         for row in target_classes:
@@ -265,11 +311,14 @@ class SatMigration:
                 class_conflicts.append(int(row["id"]))
 
         source_papers = self.source_rows("SELECT id,paper_code,paper_name,status FROM paper ORDER BY id")
+        source_paper_ids = {int(row["id"]) for row in source_papers}
+        if source_paper_ids != set(self.paper_type_map):
+            raise ValueError(f"Paper type mapping must match the source papers; missing={sorted(source_paper_ids - set(self.paper_type_map))}, extra={sorted(set(self.paper_type_map) - source_paper_ids)}")
         paper_conflicts = []
         existing_papers = {(row["exam_type_code"], str(row["paper_code"]).casefold(), int(row["version_no"])): int(row["id"])
                            for row in self.target_rows("SELECT id,exam_type_code,paper_code,version_no FROM papers")}
         for row in source_papers:
-            code = paper_type(row["paper_name"], row["paper_code"])
+            code = self.paper_type_map[int(row["id"])]
             key = (code, str(row["paper_code"]).casefold(), 1)
             mapped_target = prior_targets.get(("paper", str(row["id"])))
             if key in existing_papers and mapped_target != existing_papers[key]:
@@ -340,6 +389,8 @@ class SatMigration:
             "source_database": self.args.source_database,
             "target_database": self.args.target_database,
             "source_counts": counts,
+            "paper_types": self.paper_type_map,
+            "class_types": {key: sorted(value) for key, value in self.class_type_map.items()},
             "username_and_identity_conflicts": user_conflicts,
             "class_name_conflicts": class_conflicts,
             "paper_code_conflicts": paper_conflicts,
@@ -416,15 +467,20 @@ class SatMigration:
     def map_classes(self) -> None:
         for row in self.source_rows("SELECT * FROM `class` ORDER BY id"):
             source_id = int(row["id"])
-            target_id = self.insert("""INSERT INTO classes (name,description,status,sort_order,created_at,updated_at)
+            self.target_classes[source_id] = []
+            for exam_type in sorted(self.class_type_map[source_id], key=lambda value: value != "SAT"):
+                target_id = self.insert("""INSERT INTO classes (name,description,status,sort_order,created_at,updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s)""",
                 (row["class_name"], None, "ACTIVE" if int(row["is_active"]) else "ARCHIVED", int(row["sort"]),
                  row["create_time"], row["update_time"]))
-            self.target_classes[source_id] = target_id
-            self.save_map("class", source_id, target_id, row)
-            teacher = self.target_users.get(int(row["teacher_id"])) if row.get("teacher_id") is not None else None
-            metadata = {key: row.get(key) for key in ("id", "class_name", "teacher_id", "start_date", "end_date", "is_active", "student_count", "sort", "create_time", "update_time")}
-            self.update("""INSERT INTO sat_class_settings
+                if not self.target_classes[source_id]:
+                    self.save_map("class", source_id, target_id, row)
+                self.target_classes[source_id].append(target_id)
+                self.save_map("class_workspace", f"{source_id}:{exam_type}", target_id, row)
+                self.update("INSERT INTO class_exam_workspaces (class_id,exam_type_code) VALUES (%s,%s)", (target_id, exam_type))
+                teacher = self.target_users.get(int(row["teacher_id"])) if row.get("teacher_id") is not None else None
+                metadata = {key: row.get(key) for key in ("id", "class_name", "teacher_id", "start_date", "end_date", "is_active", "student_count", "sort", "create_time", "update_time")}
+                self.update("""INSERT INTO sat_class_settings
                 (class_id,teacher_user_id,starts_on,ends_on,source_status,source_student_count,source_sort_order,source_metadata_json)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,CAST(%s AS JSON))""",
                 (target_id, teacher, row.get("start_date"), row.get("end_date"), int(row["is_active"]),
@@ -432,12 +488,12 @@ class SatMigration:
         for row in self.source_rows("SELECT id,class_id,create_time,update_time FROM `user` WHERE role='student' AND class_id IS NOT NULL ORDER BY id"):
             if int(row["class_id"]) not in self.target_classes:
                 raise ValueError(f"Student source user {row['id']} references missing class {row['class_id']}.")
-            self.update("""INSERT INTO class_memberships (class_id,student_user_id,joined_at)
-                VALUES (%s,%s,%s)""", (self.target_classes[int(row["class_id"])], self.target_users[int(row["id"])], row["create_time"]))
+            for class_id in self.target_classes[int(row["class_id"])]:
+                self.update("""INSERT INTO class_memberships (class_id,student_user_id,joined_at)
+                    VALUES (%s,%s,%s)""", (class_id, self.target_users[int(row["id"])], row["create_time"]))
 
     def derive_paper_types(self) -> None:
-        for row in self.source_rows("SELECT id,paper_name,paper_code FROM paper ORDER BY id"):
-            self.paper_types[int(row["id"])] = paper_type(row["paper_name"], row["paper_code"])
+        self.paper_types = dict(self.paper_type_map)
 
     def map_groups(self) -> None:
         usages: dict[int, set[str]] = defaultdict(set)
@@ -468,7 +524,7 @@ class SatMigration:
         if not target_path.exists():
             shutil.copy2(source_path, target_path)
             self.created_files.append(target_path)
-        public_url = f"/uploads/sat-import/materials/{target_path.name}"
+        public_url = f"/sat-api/uploads/materials/{target_path.name}"
         self.asset_cache[url] = public_url
         return public_url
 
@@ -734,6 +790,8 @@ class SatMigration:
 
     def map_attempts(self) -> None:
         records = self.source_rows("SELECT * FROM exam_record ORDER BY start_time,id")
+        source_classes = {int(row["id"]): row["class_id"] for row in self.source_rows(
+            "SELECT id,class_id FROM `user` WHERE role='student' AND class_id IS NOT NULL")}
         practice_exam_by_paper = self.prepare_practice_archives(records)
         enrollments = {int(row["id"]): row for row in self.source_rows("SELECT * FROM user_exam")}
         formal_exams = {int(row["id"]): row for row in self.source_rows("SELECT * FROM exam")}
@@ -803,6 +861,13 @@ class SatMigration:
                 (exam_id, user_id, attempt_no, is_practice, status, row["start_time"], submitted_at))
             self.target_attempts[source_record_id] = attempt_id
             self.save_map("exam_record", source_record_id, attempt_id, row)
+            # 旧系统仅保存当前班级；只有明确批准时才推断正式考试的班级归属。
+            source_class_id = source_classes.get(source_user_id)
+            if self.args.infer_class_attribution and not is_practice and source_class_id is not None:
+                class_id = self.maps.get(("class_workspace", f"{source_class_id}:{self.paper_types[source_paper_id]}"))
+                if class_id is not None:
+                    self.update("INSERT INTO attempt_classes (attempt_id,class_id) VALUES (%s,%s)", (attempt_id, class_id))
+                    self.save_map("inferred_attempt_class", f"{source_record_id}:{class_id}", attempt_id, row)
 
             item_order: dict[int, int] = {}
             for served_order, (source_link_id, target_item_id) in enumerate(self.paper_items[source_paper_id]):
@@ -817,11 +882,11 @@ class SatMigration:
                 target_item_id = self.target_paper_items[source_link_id]
                 response = answer.get("user_answer")
                 self.update("""INSERT INTO attempt_answers
-                    (attempt_id,paper_item_id,answer_json,is_correct,awarded_points,time_spent_seconds,answered_at)
-                    VALUES (%s,%s,CAST(%s AS JSON),%s,%s,%s,%s)""",
-                    (attempt_id, target_item_id, json_text({"response": response}), answer.get("is_correct"),
+                    (attempt_id,paper_item_id,answer_json,is_correct,awarded_points,time_spent_seconds,answered_at,is_marked_for_review)
+                    VALUES (%s,%s,CAST(%s AS JSON),%s,%s,%s,%s,%s)""",
+                    (attempt_id, target_item_id, json_text({"value": response}), answer.get("is_correct"),
                      self.question_scores.get(qid, Decimal("0")) if answer.get("is_correct") == 1 else Decimal("0"),
-                     int(answer.get("spend_seconds") or 0), answer.get("answer_time") or row["start_time"]))
+                     int(answer.get("spend_seconds") or 0), answer.get("answer_time") or row["start_time"], bool(answer.get("is_marked"))))
                 self.update("""INSERT INTO sat_answer_details
                     (attempt_id,paper_item_id,source_answer_id,source_question_id,source_is_marked,source_answer_time)
                     VALUES (%s,%s,%s,%s,%s,%s)""",
@@ -893,6 +958,9 @@ class SatMigration:
                                       (self.args.source_database,))
             self.map_users()
             self.map_classes()
+            for user_id in self.target_users.values():
+                for workspace in ("SAT", "PSAT", "SHSAT"):
+                    self.update("INSERT IGNORE INTO user_workspace_access (user_id,workspace_code) VALUES (%s,%s)", (user_id, workspace))
             self.derive_paper_types()
             self.map_groups()
             self.map_materials()
@@ -936,6 +1004,7 @@ class SatMigration:
             "user_answer": source_counts["user_answer"],
         }
         actual = self.map_counts()
+        expected["class_workspace"] = sum(len(types) for types in self.class_type_map.values())
         missing = {entity: (actual.get(entity, 0), count) for entity, count in expected.items()
                    if actual.get(entity, 0) != count}
         if missing:
@@ -951,11 +1020,6 @@ class SatMigration:
             except OSError:
                 pass
         self.created_files.clear()
-
-
-def paper_type(name: str, code: str) -> str:
-    value = f"{name or ''} {code or ''}".casefold()
-    return "PSAT" if "psat" in value else "SAT"
 
 
 def duration_seconds(value: Any) -> int:
@@ -1017,6 +1081,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execute", action="store_true", help="Commit the import after a verified backup.")
     parser.add_argument("--allow-missing-assets", action="store_true", help="Keep the original URL for missing SAT uploads.")
     parser.add_argument("--account-map", help="CSV with source_user_id,target_user_id after manual identity review.")
+    parser.add_argument("--paper-type-map", required=True, help="CSV with source_paper_id,exam_type for every source paper.")
+    parser.add_argument("--class-type-map", required=True, help="CSV with source_class_id,exam_type for every source class; repeat an ID to split its class.")
+    parser.add_argument("--infer-class-attribution", action="store_true", help="Explicitly attribute formal attempts to the source student's current class, recording the inference.")
     parser.add_argument("--source-database", default=os.getenv("SOURCE_DB_NAME", "sat_exam"))
     parser.add_argument("--target-database", default=os.getenv("TARGET_DB_NAME", "unified_exam_platform"))
     parser.add_argument("--source-asset-root", default=os.getenv("SOURCE_ASSET_ROOT"), help="SAT_BACK root containing uploads/.")

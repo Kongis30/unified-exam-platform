@@ -1,6 +1,7 @@
 package com.unifiedexam.platform.identity;
 
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -103,6 +104,26 @@ public class UserAdminController {
         jdbcTemplate.update("UPDATE users SET status = ? WHERE id = ?", request.status(), userId);
     }
 
+    /** 更新账户基本资料；修改当前登录名时结束旧会话，避免会话保留失效的身份。 */
+    @PutMapping("/{userId}")
+    @Transactional
+    public void updateUser(@PathVariable long userId, @Valid @RequestBody UpdateUserRequest request,
+                           Authentication authentication, HttpServletRequest httpRequest) {
+        String oldUsername = jdbcTemplate.query("SELECT username FROM users WHERE id = ? FOR UPDATE",
+            rs -> rs.next() ? rs.getString("username") : null, userId);
+        if (oldUsername == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found.");
+        String username = request.username().trim();
+        try {
+            jdbcTemplate.update("UPDATE users SET username = ?, real_name = ?, email = ?, phone = ? WHERE id = ?",
+                username, request.realName().trim(), request.email(), request.phone(), userId);
+        } catch (DuplicateKeyException exception) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "That username is already in use.");
+        }
+        if (authentication != null && oldUsername.equals(authentication.getName()) && !oldUsername.equals(username)) {
+            httpRequest.getSession().invalidate();
+        }
+    }
+
     @DeleteMapping("/{userId}")
     @Transactional
     public void deleteUser(@PathVariable long userId, Authentication authentication) {
@@ -200,6 +221,10 @@ public class UserAdminController {
                                     List<String> workspaceCodes) { }
 
     public record StatusRequest(@NotBlank @Pattern(regexp = "ACTIVE|DISABLED") String status) { }
+    public record UpdateUserRequest(@NotBlank @Size(max = 80) String username,
+                                    @NotBlank @Size(max = 80) String realName,
+                                    @Email @Size(max = 160) String email,
+                                    @Size(max = 30) String phone) { }
     public record RoleRequest(@NotBlank @Pattern(regexp = "ADMIN|TEACHER|STUDENT") String roleCode) { }
     public record PasswordRequest(@NotBlank @Size(min = 6, max = 100) String password) { }
     public record UserView(long id, String username, String realName, String roleCode, String email,

@@ -46,15 +46,20 @@ public class ClassAdminController {
     @GetMapping
     public List<ClassView> listClasses(@RequestParam(required = false) List<String> examTypeCodes) {
         List<String> types = validateExamTypeCodes(examTypeCodes);
-        List<Object> parameters = new java.util.ArrayList<>(types);
+        List<Object> parameters = new java.util.ArrayList<>();
+        String orderColumn = types.size() == 1
+            ? "COALESCE((SELECT cw_order.sort_order FROM class_exam_workspaces cw_order WHERE cw_order.class_id = c.id AND cw_order.exam_type_code = ?), c.sort_order)"
+            : "c.sort_order";
+        if (types.size() == 1) parameters.add(types.get(0));
+        parameters.addAll(types);
         parameters.addAll(types);
         String typeFilter = examTypeFilter(types);
         String workspaceFilter = classWorkspaceFilter(types);
         return jdbcTemplate.query("""
-            SELECT c.id, c.name, c.description, c.status, c.sort_order,
+            SELECT c.id, c.name, c.description, c.status, %s AS sort_order,
                    meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
                 (SELECT COUNT(*) FROM class_memberships m JOIN users u ON u.id = m.student_user_id
-                 WHERE m.class_id = c.id AND m.left_at IS NULL AND u.role_code = 'STUDENT') AS student_count,
+                 WHERE m.class_id = c.id AND m.left_at IS NULL AND u.role_code = 'STUDENT' %s) AS student_count,
                 CASE WHEN NOT EXISTS (
                     SELECT 1 FROM class_memberships active_members
                     WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
@@ -74,23 +79,27 @@ public class ClassAdminController {
                    %s) AS exam_count
             FROM classes c LEFT JOIN shsat_class_metadata meta ON meta.class_id = c.id
             WHERE 1 = 1 %s
-            ORDER BY c.sort_order, c.id DESC
-            """.formatted(typeFilter, workspaceFilter), (rs, rowNum) -> classView(rs), parameters.toArray());
+            ORDER BY sort_order, c.id DESC
+            """.formatted(orderColumn, shsatStudentFilter(types), typeFilter, workspaceFilter), (rs, rowNum) -> classView(rs), parameters.toArray());
     }
 
     @GetMapping("/available-students")
-    public List<StudentOption> availableStudents() {
+    public List<StudentOption> availableStudents(@RequestParam String examTypeCode) {
+        validateExamTypeCodes(List.of(examTypeCode));
         return jdbcTemplate.query("""
             SELECT u.id, u.username, u.real_name, u.email,
                    COALESCE(GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ' · '), '') AS class_names
             FROM users u
             LEFT JOIN class_memberships m ON m.student_user_id = u.id AND m.left_at IS NULL
-            LEFT JOIN classes c ON c.id = m.class_id
+            LEFT JOIN class_exam_workspaces cw ON cw.class_id = m.class_id AND cw.exam_type_code = ?
+            LEFT JOIN classes c ON c.id = cw.class_id
+            JOIN exam_types t ON t.code = ? AND t.is_active = TRUE
+            JOIN user_workspace_access access ON access.user_id = u.id AND access.workspace_code = t.workspace_code
             WHERE u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
             GROUP BY u.id, u.username, u.real_name, u.email
             ORDER BY u.real_name, u.id
             """, (rs, rowNum) -> new StudentOption(rs.getLong("id"), rs.getString("username"),
-                rs.getString("real_name"), rs.getString("email"), rs.getString("class_names")));
+                rs.getString("real_name"), rs.getString("email"), rs.getString("class_names")), examTypeCode, examTypeCode);
     }
 
     @GetMapping("/{classId}")
@@ -115,27 +124,38 @@ public class ClassAdminController {
                         WHEN EXISTS (SELECT 1 FROM exam_target_classes tc
                                      WHERE tc.exam_id = e.id AND tc.class_id = ?) THEN 'SPECIFIC_CLASSES'
                         ELSE 'SPECIFIC_STUDENTS' END AS target_type,
+                   EXISTS (SELECT 1 FROM attempts imported_attempt
+                           JOIN attempt_classes imported_class ON imported_class.attempt_id = imported_attempt.id
+                           JOIN sat_import_id_map imported ON imported.source_system = 'SAT_V1'
+                               AND imported.entity_type = 'inferred_attempt_class' AND imported.target_id = imported_attempt.id
+                               AND SUBSTRING_INDEX(imported.source_id, ':', -1) = CAST(imported_class.class_id AS CHAR)
+                           WHERE imported_attempt.exam_id = e.id AND imported_class.class_id = ?) AS inferred_class_attribution,
                    e.opens_at, e.closes_at,
                    e.duration_seconds, e.attempt_limit, p.title AS paper_name,
                    COALESCE((SELECT JSON_ARRAYAGG(tc.class_id) FROM exam_target_classes tc WHERE tc.exam_id = e.id), JSON_ARRAY()) AS target_class_ids
             FROM exams e JOIN papers p ON p.id = e.paper_id
-            WHERE p.exam_type_code IN (%s) AND EXISTS (
+            WHERE p.exam_type_code IN (%s) AND (EXISTS (
+                SELECT 1 FROM exam_target_classes target
+                WHERE target.exam_id = e.id AND target.class_id = ?
+            ) OR (NOT EXISTS (
+                SELECT 1 FROM exam_target_classes target WHERE target.exam_id = e.id
+            ) AND EXISTS (
                 SELECT 1 FROM attempts a
                 JOIN attempt_classes ac ON ac.attempt_id = a.id
                 WHERE a.exam_id = e.id AND a.is_practice = FALSE AND ac.class_id = ?
-            ) AND NOT EXISTS (
+            ))) AND NOT EXISTS (
                 SELECT 1 FROM sat_exam_settings ses
                 WHERE ses.exam_id = e.id AND ses.is_practice_archive = TRUE
             )
             ORDER BY e.created_at DESC, e.id DESC
             """.formatted(typePlaceholders);
-        Object[] parameters = Stream.concat(Stream.of((Object) classId),
-            Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId))).toArray();
+        Object[] parameters = Stream.concat(Stream.of((Object) classId, (Object) classId),
+            Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId, classId))).toArray();
         return jdbcTemplate.query(sql, (rs, rowNum) -> new ClassExamView(rs.getLong("id"), rs.getString("title"),
                 rs.getString("paper_name"), rs.getString("target_type"), rs.getString("target_class_ids"),
                 "PUBLISHED".equals(rs.getString("status")), rs.getString("status"),
                 rs.getTimestamp("opens_at").toInstant().toString(), rs.getTimestamp("closes_at").toInstant().toString(),
-                nullableInt(rs, "duration_seconds"), rs.getInt("attempt_limit")), parameters);
+                nullableInt(rs, "duration_seconds"), rs.getInt("attempt_limit"), rs.getBoolean("inferred_class_attribution")), parameters);
     }
 
     /** 按考试与考试类型汇总班级成员在班期间的最新已完成成绩，保留 raw/scaled 两种口径。 */
@@ -188,6 +208,9 @@ public class ClassAdminController {
                     GROUP BY attempt_id
                 ) shsat ON shsat.attempt_id = a.id AND p.exam_type_code = 'SHSAT'
                 WHERE ac.class_id = ?
+                  AND (EXISTS (SELECT 1 FROM exam_target_classes target
+                               WHERE target.exam_id = e.id AND target.class_id = ac.class_id)
+                       OR NOT EXISTS (SELECT 1 FROM exam_target_classes target WHERE target.exam_id = e.id))
                   AND a.status IN ('SUBMITTED', 'COMPLETED')
                   AND a.is_practice = FALSE
                   AND p.exam_type_code IN (%s)
@@ -296,7 +319,12 @@ public class ClassAdminController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The class order must include every class exactly once.");
         }
         for (int i = 0; i < requested.size(); i++) {
-            jdbcTemplate.update("UPDATE classes SET sort_order = ? WHERE id = ?", i, requested.get(i));
+            if (types.size() == 1) {
+                jdbcTemplate.update("UPDATE class_exam_workspaces SET sort_order = ? WHERE class_id = ? AND exam_type_code = ?",
+                    i, requested.get(i), types.get(0));
+            } else {
+                jdbcTemplate.update("UPDATE classes SET sort_order = ? WHERE id = ?", i, requested.get(i));
+            }
         }
         return listClasses(types);
     }
@@ -305,11 +333,14 @@ public class ClassAdminController {
     @Transactional
     public ClassView createClass(@Valid @RequestBody SaveClassRequest request,
                                  @RequestParam(required = false) List<String> examTypeCodes) {
+        List<String> types = validateExamTypeCodes(examTypeCodes);
+        if (types.contains("SAT") && types.contains("PSAT")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Create separate classes for SAT and PSAT.");
+        }
         String status = request.active() == null || request.active() ? "ACTIVE" : "ARCHIVED";
         jdbcTemplate.update("INSERT INTO classes (name, description, sort_order, status) VALUES (?, ?, ?, ?)",
             request.name(), request.description(), request.sortOrder(), status);
         Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-        List<String> types = validateExamTypeCodes(examTypeCodes);
         for (String type : types.isEmpty() ? List.of("SAT", "SHSAT") : types) {
             jdbcTemplate.update("INSERT INTO class_exam_workspaces (class_id, exam_type_code) VALUES (?, ?)", id, type);
         }
@@ -411,8 +442,8 @@ public class ClassAdminController {
                   %s
                 GROUP BY a.student_user_id
             ) stats ON stats.student_user_id = m.student_user_id
-            WHERE m.class_id = ? AND m.left_at IS NULL ORDER BY u.real_name, u.id
-            """.formatted(examTypeFilter(types)), (rs, rowNum) -> new StudentView(rs.getLong("id"), rs.getString("username"),
+            WHERE m.class_id = ? AND m.left_at IS NULL %s ORDER BY u.real_name, u.id
+            """.formatted(examTypeFilter(types), shsatStudentFilter(types)), (rs, rowNum) -> new StudentView(rs.getLong("id"), rs.getString("username"),
                 rs.getString("real_name"), rs.getString("email"), rs.getTimestamp("joined_at").toInstant().toString(),
                 rs.getString("gender"), rs.getString("notes"), rs.getBigDecimal("time_multiplier"),
                 "ACTIVE".equals(rs.getString("status")), rs.getBigDecimal("average_score"), rs.getLong("exam_count")),
@@ -435,6 +466,7 @@ public class ClassAdminController {
         String targetClassStatus = jdbcTemplate.query("SELECT status FROM classes WHERE id = ?",
             rs -> rs.next() ? rs.getString(1) : null, targetClassId);
         if (!"ACTIVE".equals(targetClassStatus)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select an active class.");
+        requireShsatAccessForClass(targetClassId, studentUserId);
         jdbcTemplate.update("UPDATE users SET real_name = ?, status = ? WHERE id = ?",
             request.studentName().trim(), Boolean.FALSE.equals(request.active()) ? "DISABLED" : "ACTIVE", studentUserId);
         jdbcTemplate.update("""
@@ -502,7 +534,7 @@ public class ClassAdminController {
             SELECT c.id, c.name, c.description, c.status, c.sort_order,
                 meta.teacher_name, meta.teacher_email, meta.grade_level, meta.academic_year,
                 (SELECT COUNT(*) FROM class_memberships m JOIN users u ON u.id = m.student_user_id
-                 WHERE m.class_id = c.id AND m.left_at IS NULL AND u.role_code = 'STUDENT') AS student_count,
+                 WHERE m.class_id = c.id AND m.left_at IS NULL AND u.role_code = 'STUDENT' %s) AS student_count,
                 CASE WHEN NOT EXISTS (
                     SELECT 1 FROM class_memberships active_members
                     WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
@@ -521,7 +553,7 @@ public class ClassAdminController {
                  WHERE ac.class_id = c.id AND a.is_practice = FALSE
                    %s) AS exam_count
             FROM classes c LEFT JOIN shsat_class_metadata meta ON meta.class_id = c.id WHERE c.id = ? %s
-            """.formatted(typeFilter, classWorkspaceFilter(examTypeCodes)), (rs, rowNum) -> classView(rs),
+            """.formatted(shsatStudentFilter(examTypeCodes), typeFilter, classWorkspaceFilter(examTypeCodes)), (rs, rowNum) -> classView(rs),
             Stream.concat(Stream.concat(examTypeCodes.stream().map(code -> (Object) code), Stream.of(id)),
                 examTypeCodes.stream().map(code -> (Object) code)).toArray());
         if (classes.isEmpty()) {
@@ -613,6 +645,7 @@ public class ClassAdminController {
         if (!"STUDENT".equals(role)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only active student accounts can join a class.");
         }
+        requireShsatAccessForClass(classId, studentUserId);
         jdbcTemplate.update("""
             INSERT INTO class_memberships (class_id, student_user_id, joined_at, left_at)
             VALUES (?, ?, CURRENT_TIMESTAMP(6), NULL)
@@ -620,6 +653,20 @@ public class ClassAdminController {
             """, classId, studentUserId);
         recordMembershipPeriod(classId, studentUserId);
         grantLiveExamEligibility(classId, studentUserId);
+    }
+
+    /** SHSAT 班级仅接收已获该模块权限的学生。 */
+    private void requireShsatAccessForClass(long classId, long studentUserId) {
+        Boolean missingAccess = jdbcTemplate.queryForObject("""
+            SELECT EXISTS (SELECT 1 FROM class_exam_workspaces cw
+              JOIN exam_types t ON t.code = cw.exam_type_code
+              WHERE cw.class_id = ? AND cw.exam_type_code = 'SHSAT'
+                AND NOT EXISTS (SELECT 1 FROM user_workspace_access a
+                  WHERE a.user_id = ? AND a.workspace_code = t.workspace_code))
+            """, Boolean.class, classId, studentUserId);
+        if (Boolean.TRUE.equals(missingAccess)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The student does not have access to the class exam system.");
+        }
     }
 
     /** 学生在开放期间加入整班目标时，同时记录考试资格及其班级来源。 */
@@ -674,6 +721,11 @@ public class ClassAdminController {
         return "AND p.exam_type_code IN (" + String.join(", ", Collections.nCopies(examTypeCodes.size(), "?")) + ")";
     }
 
+    private String shsatStudentFilter(List<String> types) {
+        if (!types.equals(List.of("SHSAT"))) return "";
+        return "AND EXISTS (SELECT 1 FROM user_workspace_access ua JOIN exam_types et ON et.workspace_code = ua.workspace_code WHERE ua.user_id = u.id AND et.code = 'SHSAT')";
+    }
+
     public record SaveClassRequest(@NotBlank @Size(max = 100) String name,
                                    @Size(max = 500) String description, int sortOrder,
                                    @Size(max = 30) String teacherName,
@@ -708,7 +760,7 @@ public class ClassAdminController {
     public record StudentOption(long id, String username, String realName, String email, String classNames) { }
     public record ClassExamView(long examId, String examTitle, String paperName, String targetType,
                                 String targetIds, boolean published, String status, String startTime,
-                                String endTime, Integer duration, int attemptLimit) { }
+                                String endTime, Integer duration, int attemptLimit, boolean inferredClassAttribution) { }
     record TrendAttemptRow(long examId, String examTitle, String examTypeCode,
                            java.time.LocalDateTime examDate, java.math.BigDecimal totalPoints,
                            String sourceScoreJson, java.math.BigDecimal rw1Raw, java.math.BigDecimal rw2Raw,

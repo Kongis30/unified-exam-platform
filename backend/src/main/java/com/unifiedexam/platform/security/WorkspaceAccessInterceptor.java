@@ -32,6 +32,9 @@ public class WorkspaceAccessInterceptor implements HandlerInterceptor {
         Authentication user = SecurityContextHolder.getContext().getAuthentication();
         if (user == null || user.getAuthorities().stream().anyMatch(role -> "ROLE_ADMIN".equals(role.getAuthority()))) return true;
         if (path.startsWith("/api/admin/classes")) {
+            if (path.equals("/api/admin/classes/available-students") && request.getParameter("examTypeCode") != null) {
+                access.requireExamType(user, request.getParameter("examTypeCode"));
+            }
             String[] requestedTypes = request.getParameterValues("examTypeCodes");
             if (requestedTypes != null) {
                 for (String value : requestedTypes) {

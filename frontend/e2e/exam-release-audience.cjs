@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
   const students = id === '1' ? [{id:11,realName:'Alice',username:'alice',active:true},{id:12,realName:'Disabled',username:'disabled',active:false}] : [{id:13,realName:'Bob',username:'bob',active:true},{id:11,realName:'Alice',username:'alice',active:true}];
   return route.fulfill({json:students});
  });
- await page.route('**/api/admin/classes/available-students', route => route.fulfill({json:[{id:11,realName:'Alice',username:'alice'},{id:13,realName:'Bob',username:'bob'},{id:14,realName:'Unassigned',username:'solo'}]}));
+ await page.route('**/api/admin/classes/available-students?*', route => route.fulfill({json:[{id:11,realName:'Alice',username:'alice'},{id:13,realName:'Bob',username:'bob'},{id:14,realName:'Unassigned',username:'solo'}]}));
  await page.goto(`${process.env.E2E_BASE_URL || 'http://localhost:5175'}/login`);
  await page.evaluate(async () => {
   const {createApp, reactive, h} = await import('/node_modules/.vite/deps/vue.js');

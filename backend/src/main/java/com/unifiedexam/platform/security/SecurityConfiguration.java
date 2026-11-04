@@ -75,7 +75,7 @@ public class SecurityConfiguration {
             .authenticationProvider(authenticationProvider)
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/health", "/api/auth/csrf", "/api/auth/login", "/api/exam-types",
-                    "/uploads/paper-materials/**", "/sat-api/uploads/materials/**").permitAll()
+                    "/uploads/paper-materials/**", "/uploads/images/**", "/sat-api/uploads/materials/**").permitAll()
                 .requestMatchers("/api/auth/**").authenticated()
                 .requestMatchers("/api/admin/users/**").hasRole("ADMIN")
                 .requestMatchers("/api/admin/sat/papers/**", "/api/admin/papers/*/sat-settings",

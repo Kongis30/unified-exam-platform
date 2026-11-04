@@ -13,13 +13,21 @@ public class PaperImageResourceConfiguration implements WebMvcConfigurer {
 
     private final PaperImageStorage imageStorage;
     private final String satImportedMaterialsLocation;
+    private final String shsatLegacyImagesLocation;
 
     public PaperImageResourceConfiguration(
             PaperImageStorage imageStorage,
             @Value("${platform.uploads.sat-import-materials-directory:uploads/sat-import/materials}")
-            String satImportedMaterialsDirectory) {
+            String satImportedMaterialsDirectory,
+            @Value("${platform.uploads.shsat-legacy-images-directory:uploads/images}")
+            String shsatLegacyImagesDirectory) {
         this.imageStorage = imageStorage;
         this.satImportedMaterialsLocation = Paths.get(satImportedMaterialsDirectory)
+            .toAbsolutePath()
+            .normalize()
+            .toUri()
+            .toString();
+        this.shsatLegacyImagesLocation = Paths.get(shsatLegacyImagesDirectory)
             .toAbsolutePath()
             .normalize()
             .toUri()
@@ -32,5 +40,7 @@ public class PaperImageResourceConfiguration implements WebMvcConfigurer {
             .addResourceLocations(imageStorage.resourceLocation());
         registry.addResourceHandler("/sat-api/uploads/materials/**")
             .addResourceLocations(satImportedMaterialsLocation);
+        registry.addResourceHandler("/uploads/images/**")
+            .addResourceLocations(shsatLegacyImagesLocation);
     }
 }

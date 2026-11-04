@@ -173,6 +173,10 @@ export function updateUserWorkspaces(userId, workspaceCodes) {
   })
 }
 
+export function updateUser(userId, details) {
+  return apiRequest(`/api/admin/users/${userId}`, { method: 'PUT', body: JSON.stringify(details) })
+}
+
 export function createUser(user) {
   return apiRequest('/api/admin/users', { method: 'POST', body: JSON.stringify(user) })
 }
@@ -262,8 +266,9 @@ export function listClassExamScoreTrend(classId, examTypeCodes = [], options = {
   return cachedResource(`/api/admin/classes/${classId}/score-trend${query}`, [...tags, 'student'], 30_000, options)
 }
 
-export function listAvailableStudents({ force = false } = {}) {
-  return cachedResource('/api/admin/classes/available-students', ['class:SAT', 'class:PSAT', 'class:SHSAT'], 30_000, { force })
+export function listAvailableStudents({ examTypeCode, force = false } = {}) {
+  const params = new URLSearchParams({ examTypeCode })
+  return cachedResource(`/api/admin/classes/available-students?${params}`, [`class:${examTypeCode}`], 30_000, { force })
 }
 
 export function addClassStudent(classId, studentUserId) {

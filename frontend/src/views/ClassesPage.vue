@@ -36,9 +36,7 @@ let suppressClassClickUntil = 0
 const classForm = ref({ name: '', description: '', sortOrder: 0 })
 const classExamTypeCodes = computed(() => [props.examTypeCode || 'SHSAT'])
 const canReorderClasses = computed(() => satWorkspace.value
-  && !keyword.value.trim()
-  && classStatus.value === 'ALL'
-  && classes.value.length > 1
+  && filteredClasses.value.length > 1
   && !isReorderingClasses.value)
 const filteredClasses = computed(() => {
   const query = keyword.value.trim().toLocaleLowerCase()
@@ -121,7 +119,7 @@ function moveClass(sourceId, targetId) {
   classDragMoved.value = true
 }
 
-// SAT 班级卡片沿用 SHSAT 的拖动排序流程，最终通过共享接口保存完整班级顺序。
+// 拖动筛选结果时仍保存完整班级顺序，避免遗漏隐藏的班级。
 function startClassDrag(classroom, event) {
   if (!canReorderClasses.value) {
     event.preventDefault()
@@ -137,7 +135,12 @@ function startClassDrag(classroom, event) {
 function dragOverClass(classroom, event) {
   if (!draggingClassId.value || !canReorderClasses.value) return
   event.preventDefault()
-  moveClass(draggingClassId.value, classroom.id)
+  event.dataTransfer.dropEffect = 'move'
+}
+
+function dropClass(classroom, event) {
+  event.preventDefault()
+  if (draggingClassId.value && canReorderClasses.value) moveClass(draggingClassId.value, classroom.id)
 }
 
 async function finishClassDrag() {
@@ -262,7 +265,7 @@ watch(() => props.initialClasses, (rows) => {
         @keydown.space.prevent="openClass(classroom)"
         @dragstart="startClassDrag(classroom, $event)"
         @dragover="dragOverClass(classroom, $event)"
-        @drop.prevent
+        @drop="dropClass(classroom, $event)"
         @dragend="finishClassDrag"
       >
         <div class="class-card__header">

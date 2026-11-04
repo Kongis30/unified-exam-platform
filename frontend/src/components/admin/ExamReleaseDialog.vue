@@ -92,7 +92,7 @@ onBeforeUnmount(() => clearTimeout(searchTimer))
 onMounted(async () => {
   // 旧草稿可能含班外个人目标；保留名称以便查看和移除。
   if (studentIds.value.length && props.allowIndividualDirectory) {
-    try { directory.value = await listAvailableStudents() } catch { /* 仍可用学生 ID 管理已有目标。 */ }
+    try { directory.value = await listAvailableStudents({ examTypeCode: props.examType }) } catch { /* 仍可用学生 ID 管理已有目标。 */ }
   }
 })
 function toggle(values, id, checked) {

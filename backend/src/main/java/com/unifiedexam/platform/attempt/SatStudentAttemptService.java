@@ -327,7 +327,7 @@ public class SatStudentAttemptService {
         ObjectNode report = mapper.createObjectNode();
         ReportIdentity identity = jdbc.query("""
             SELECT u.real_name, e.title, p.title AS paper_title, p.id AS paper_id, s.scoring_table_code,
-                   r.algorithm_version, d.source_score_json,
+                   r.algorithm_version, r.max_points AS legacy_max_points, d.source_score_json,
                    d.rw_module1_raw, d.rw_module2_raw, d.math_module1_raw, d.math_module2_raw,
                    d.rw_module1_seconds, d.rw_module2_seconds, d.math_module1_seconds, d.math_module2_seconds,
                    COALESCE(state.focus_violation_count, 0) AS focus_violation_count,
@@ -344,7 +344,7 @@ public class SatStudentAttemptService {
             """, rs -> rs.next() ? new ReportIdentity(rs.getString("real_name"), rs.getString("title"),
                 rs.getString("paper_title"), rs.getLong("paper_id"), rs.getString("scoring_table_code"),
                 rs.getInt("focus_violation_count"), rs.getBoolean("score_visible"), rs.getBoolean("answers_visible"),
-                "SAT_LEGACY".equals(rs.getString("algorithm_version")), rs.getString("source_score_json"),
+                "SAT_LEGACY".equals(rs.getString("algorithm_version")), nullableInt(rs, "legacy_max_points"), rs.getString("source_score_json"),
                 nullableInt(rs, "rw_module1_raw"), nullableInt(rs, "rw_module2_raw"),
                 nullableInt(rs, "math_module1_raw"), nullableInt(rs, "math_module2_raw"),
                 nullableInt(rs, "rw_module1_seconds"), nullableInt(rs, "rw_module2_seconds"),
@@ -353,7 +353,7 @@ public class SatStudentAttemptService {
         if (identity == null) throw notFound("Report not found.");
         if (staffView) {
             identity = new ReportIdentity(identity.studentName(), identity.examName(), identity.paperName(), identity.paperId(),
-                identity.scoringType(), identity.focusViolationCount(), true, true, identity.legacyImported(),
+                identity.scoringType(), identity.focusViolationCount(), true, true, identity.legacyImported(), identity.legacyMaxPoints(),
                 identity.sourceScoreJson(), identity.rw1Raw(), identity.rw2Raw(), identity.math1Raw(), identity.math2Raw(),
                 identity.rw1Seconds(), identity.rw2Seconds(), identity.math1Seconds(), identity.math2Seconds());
         }
@@ -428,7 +428,7 @@ public class SatStudentAttemptService {
         report.put("paperName", identity.paperName());
         report.put("paperId", identity.paperId());
         report.put("scoringType", identity.scoringType());
-        report.put("totalScore", "PSAT".equals(identity.scoringType()) ? 1520 : 1600);
+        report.put("totalScore", reportMaxPoints(identity.scoringType(), identity.legacyImported(), identity.legacyMaxPoints()));
         report.put("mode", attempt.practice() ? "practice" : "exam");
         report.put("abnormalCount", identity.focusViolationCount());
         report.put("answersVisible", identity.answersVisible());
@@ -698,6 +698,12 @@ public class SatStudentAttemptService {
         summary.put("totalScaled", rwScaled + mathScaled);
     }
 
+    /** 已迁移报告保留原考试满分，新考试使用当前试卷评分类型。 */
+    static int reportMaxPoints(String scoringType, boolean legacyImported, Integer legacyMaxPoints) {
+        if (legacyImported && legacyMaxPoints != null && legacyMaxPoints > 0) return legacyMaxPoints;
+        return "PSAT".equals(scoringType) ? 1520 : 1600;
+    }
+
     /** 已导入尝试的总分以旧系统封存字段为准，避免与逐题答案计数冲突。 */
     static void applyLegacyReportSummary(JsonNode summaryNode, JsonNode sourceScore,
             Integer rw1Raw, Integer rw2Raw, Integer math1Raw, Integer math2Raw,
@@ -869,7 +875,7 @@ public class SatStudentAttemptService {
     private record AnswerMetadata(int timeSpentSeconds, boolean marked) { }
     private record ReportIdentity(String studentName, String examName, String paperName, long paperId,
             String scoringType, int focusViolationCount, boolean scoreVisible, boolean answersVisible,
-            boolean legacyImported, String sourceScoreJson, Integer rw1Raw, Integer rw2Raw, Integer math1Raw,
+            boolean legacyImported, Integer legacyMaxPoints, String sourceScoreJson, Integer rw1Raw, Integer rw2Raw, Integer math1Raw,
             Integer math2Raw, Integer rw1Seconds, Integer rw2Seconds, Integer math1Seconds, Integer math2Seconds) { }
     private static final class ModuleReportStats {
         private int questions;

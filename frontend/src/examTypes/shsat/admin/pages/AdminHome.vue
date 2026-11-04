@@ -148,7 +148,7 @@ const draggingPaperGroupId = ref('');
 const draggingClassId = ref('');
 const paperGroupDropTargetId = ref('');
 const classDragMoved = ref(false);
-const suppressNextClassClick = ref(false);
+let suppressClassClickUntil = 0;
 const expandedFolders = reactive({});
 const paperMoveTargets = reactive({});
 
@@ -343,7 +343,7 @@ const visibleClasses = computed(() => {
 });
 
 const canReorderClasses = computed(() => {
-  return !classFilters.keyword.trim() && classFilters.status === 'ALL' && visibleClasses.value.length > 1;
+  return !loading.reorderingClasses && visibleClasses.value.length > 1;
 });
 
 const relatedClassExams = computed(() => {
@@ -1540,7 +1540,7 @@ async function finishClassDrag() {
   }
 
   const shouldSave = classDragMoved.value;
-  suppressNextClassClick.value = shouldSave;
+  suppressClassClickUntil = shouldSave ? Date.now() + 250 : 0;
   draggingClassId.value = '';
   classDragMoved.value = false;
 
@@ -1562,8 +1562,7 @@ async function finishClassDrag() {
 }
 
 function openClassCard(item) {
-  if (suppressNextClassClick.value || classDragMoved.value || draggingClassId.value) {
-    suppressNextClassClick.value = false;
+  if (Date.now() < suppressClassClickUntil || classDragMoved.value || draggingClassId.value) {
     return;
   }
 

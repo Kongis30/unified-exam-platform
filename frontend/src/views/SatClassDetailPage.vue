@@ -171,7 +171,7 @@ async function loadStudentOptions() {
   studentOptionsLoading.value = true
   studentOptionsError.value = ''
   try {
-    studentOptions.value = await listAvailableStudents({ force: true })
+    studentOptions.value = await listAvailableStudents({ examTypeCode: workspaceCode.value, force: true })
   } catch (requestError) {
     studentOptionsError.value = requestError.message || 'Unable to load students.'
   } finally {
@@ -277,7 +277,10 @@ watch([classId, workspaceCode], () => {
             <thead><tr><th>Exam</th><th>Paper</th><th>Exam Window</th><th>Status</th><th>Duration</th><th>Actions</th></tr></thead>
             <tbody>
               <tr v-for="exam in exams" :key="exam.examId">
-                <td><strong>{{ exam.examTitle }}</strong></td>
+                <td>
+                  <strong>{{ exam.examTitle }}</strong>
+                  <small v-if="exam.inferredClassAttribution" class="sat-class-exam-inferred" title="Based on the student's class when data was migrated.">Class assignment inferred during migration</small>
+                </td>
                 <td>{{ exam.paperName }}</td>
                 <td class="class-exam-window">
                   <span><small>Opens</small>{{ formatDate(exam.startTime) }}</span>
@@ -424,6 +427,7 @@ watch([classId, workspaceCode], () => {
 .admin-table-scroll { overflow-x: auto; }
 .mobile-table-scroll-hint { display: none; }
 .class-exam-window { min-width: 250px; white-space: nowrap; }
+.sat-class-exam-inferred { display: block; margin-top: 4px; color: var(--color-muted); font-size: 12px; }
 .class-exam-window span { display: flex; align-items: baseline; gap: 8px; }
 .class-exam-window small { min-width: 42px; color: #71819a; font-size: 11px; font-weight: 650; }
 .sat-class-exam-actions { min-width: 190px; white-space: nowrap; }

@@ -38,6 +38,8 @@
    export TARGET_ASSET_ROOT='/绝对路径/unified_exam_platform/backend/uploads'
    ```
 
+SHSAT 主素材存入 `TARGET_ASSET_ROOT/paper-materials/shsat-import/`，与 `/uploads/paper-materials/` 资源路径对应。题目正文和历史快照中若嵌入旧素材路径，还需使用 `scripts/localize_migrated_images.py` 检查并复制这些引用的文件。
+
 ## 账户冲突人工核对
 
 脚本不会根据姓名或用户名自动合并账户。若目标库已有同用户名，先人工确认确为同一人，再复制示例映射文件并填写 `source_user_id,target_user_id`：

@@ -23,6 +23,13 @@ class SatStudentAttemptServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
+    void migratedPsatReportKeepsOriginalSatMaximumWhileNewPsatUsesItsOwnScale() {
+        assertEquals(1600, SatStudentAttemptService.reportMaxPoints("PSAT", true, 1600));
+        assertEquals(1520, SatStudentAttemptService.reportMaxPoints("PSAT", false, 1600));
+        assertEquals(1520, SatStudentAttemptService.reportMaxPoints("PSAT", true, null));
+    }
+
+    @Test
     void importedReportUsesArchivedLegacyScoresInsteadOfRecountingAnswers() throws Exception {
         ObjectNode summary = mapper.createObjectNode();
         summary.put("rw1Raw", 25);

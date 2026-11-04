@@ -24,9 +24,19 @@ import static org.mockito.Mockito.when;
 class ClassAdminControllerTest {
 
     @Test
+    void rejectCreatingOneClassInBothSatAndPsat() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        var request = new ClassAdminController.SaveClassRequest("Test Class", null, 0, null, null, null, null, true);
+        var error = assertThrows(ResponseStatusException.class,
+            () -> new ClassAdminController(jdbcTemplate).createClass(request, List.of("SAT", "PSAT")));
+        assertEquals(400, error.getStatusCode().value());
+        verify(jdbcTemplate, never()).update(anyString(), any(Object[].class));
+    }
+
+    @Test
     void availableStudentsIncludesEmailAndCurrentClassNames() throws Exception {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
-        when(jdbcTemplate.query(anyString(), any(RowMapper.class))).thenAnswer(invocation -> {
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq("SHSAT"), eq("SHSAT"))).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             RowMapper<ClassAdminController.StudentOption> mapper = invocation.getArgument(1);
             ResultSet row = mock(ResultSet.class);
@@ -38,7 +48,7 @@ class ClassAdminControllerTest {
             return List.of(mapper.mapRow(row, 0));
         });
 
-        List<ClassAdminController.StudentOption> result = new ClassAdminController(jdbcTemplate).availableStudents();
+        List<ClassAdminController.StudentOption> result = new ClassAdminController(jdbcTemplate).availableStudents("SHSAT");
 
         assertEquals(1, result.size());
         assertEquals("student@example.com", result.get(0).email());
@@ -46,7 +56,7 @@ class ClassAdminControllerTest {
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.<String>argThat(sql -> sql.contains("u.email")
                 && sql.contains("GROUP BY u.id, u.username, u.real_name, u.email")),
-            any(RowMapper.class));
+            any(RowMapper.class), eq("SHSAT"), eq("SHSAT"));
     }
 
     @Test
@@ -134,6 +144,8 @@ class ClassAdminControllerTest {
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("ROW_NUMBER()")
                 && sql.contains("a.is_practice = FALSE") && sql.contains("p.exam_type_code IN (?, ?)")
                 && sql.contains("FROM attempt_classes ac")
+                && sql.contains("target.class_id = ac.class_id")
+                && sql.contains("NOT EXISTS (SELECT 1 FROM exam_target_classes target WHERE target.exam_id = e.id)")
                 && sql.contains("source_score_json") && sql.contains("rb.breakdown_code = ps.section_code")
                 && sql.contains("'$.moduleNumber')) AS UNSIGNED) = 1")),
             any(RowMapper.class),
@@ -155,6 +167,36 @@ class ClassAdminControllerTest {
                 && sql.contains("AS deletable")
                 && sql.contains("FROM shsat_wrong_answer_tasks review_tasks")),
             any(RowMapper.class), eq("SAT"), eq("PSAT"), eq("SAT"), eq("PSAT"));
+    }
+
+    @Test
+    void classListUsesWorkspaceOrderWithLegacyFallback() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
+
+        new ClassAdminController(jdbcTemplate).listClasses(List.of("PSAT"));
+
+        verify(jdbcTemplate).query(org.mockito.ArgumentMatchers.argThat(sql ->
+                sql.contains("cw_order.exam_type_code = ?") && sql.contains("c.sort_order) AS sort_order")
+                    && sql.contains("ORDER BY sort_order, c.id DESC")),
+            any(RowMapper.class), eq("PSAT"), eq("PSAT"), eq("PSAT"));
+    }
+
+    @Test
+    void reorderPersistsOnlyInRequestedWorkspace() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        var first = new ClassAdminController.ClassView(1L, "First", null, "ACTIVE", 0, 0, 0);
+        var second = new ClassAdminController.ClassView(2L, "Second", null, "ACTIVE", 1, 0, 0);
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
+            .thenReturn(List.of(first, second), List.of(second, first));
+
+        var result = new ClassAdminController(jdbcTemplate).reorderClasses(
+            new ClassAdminController.ReorderClassesRequest(List.of(2L, 1L)), List.of("PSAT"));
+
+        assertEquals(List.of(2L, 1L), result.stream().map(ClassAdminController.ClassView::id).toList());
+        verify(jdbcTemplate).update("UPDATE class_exam_workspaces SET sort_order = ? WHERE class_id = ? AND exam_type_code = ?", 0, 2L, "PSAT");
+        verify(jdbcTemplate).update("UPDATE class_exam_workspaces SET sort_order = ? WHERE class_id = ? AND exam_type_code = ?", 1, 1L, "PSAT");
+        verify(jdbcTemplate, never()).update(eq("UPDATE classes SET sort_order = ? WHERE id = ?"), any(Object[].class));
     }
 
     @Test
@@ -245,7 +287,7 @@ class ClassAdminControllerTest {
     }
 
     @Test
-    void classExamListIncludesOnlyAttemptsAttributedToClass() {
+    void classExamListIncludesReleaseTargetsAndAttributedAttempts() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(List.of());
@@ -255,10 +297,13 @@ class ClassAdminControllerTest {
         verify(jdbcTemplate).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("ELSE 'SPECIFIC_STUDENTS'")
                 && sql.contains("FROM attempts a")
+                && sql.contains("target.exam_id = e.id AND target.class_id = ?")
+                && sql.contains(") OR (NOT EXISTS (")
+                && sql.contains("target.exam_id = e.id\n")
                 && sql.contains("a.is_practice = FALSE AND ac.class_id = ?")
                 && sql.contains("JOIN attempt_classes ac ON ac.attempt_id = a.id")
                 && sql.contains("ses.is_practice_archive = TRUE")),
-            any(RowMapper.class), eq(12L), eq("SAT"), eq(12L));
+            any(RowMapper.class), eq(12L), eq(12L), eq("SAT"), eq(12L), eq(12L));
     }
 
     @Test

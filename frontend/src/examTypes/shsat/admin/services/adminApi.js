@@ -592,12 +592,7 @@ export const adminApi = {
   },
 
   async reorderClasses(classIds) {
-    return (await reorderPlatformClasses(classIds, ['SHSAT'])).map((classroom) => ({
-      classId: classroom.id, name: classroom.name, className: classroom.name,
-      description: classroom.description, status: classroom.status,
-      displayOrder: classroom.sortOrder, studentCount: classroom.studentCount,
-      examCount: classroom.examCount,
-    }));
+    return (await reorderPlatformClasses(classIds, ['SHSAT'])).map(classSummary);
   },
 
   async getClassStudents(classId, { force = false } = {}) {
@@ -639,7 +634,7 @@ export const adminApi = {
   },
 
   async getAvailableStudentAccounts({ force = false } = {}) {
-    return (await listAvailableStudents({ force })).map((student) => ({
+    return (await listAvailableStudents({ examTypeCode: 'SHSAT', force })).map((student) => ({
       userId: student.id,
       studentId: student.id,
       username: student.username,

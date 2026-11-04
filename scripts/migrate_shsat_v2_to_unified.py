@@ -375,7 +375,7 @@ class Migration:
             self.asset_cache[url] = relative_key
             return relative_key
         target_root = Path(self.args.target_asset_root).resolve()
-        target_path = target_root / relative_key
+        target_path = target_root / "paper-materials" / relative_key
         if not target_path.exists():
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target_path)

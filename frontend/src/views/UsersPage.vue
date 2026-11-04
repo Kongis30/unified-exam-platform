@@ -4,7 +4,8 @@ import AppButton from '@/components/AppButton.vue'
 import AppCard from '@/components/AppCard.vue'
 import AppModal from '@/components/AppModal.vue'
 import ResponsiveActionGroup from '@/components/admin/ResponsiveActionGroup.vue'
-import { createUser, deleteUser, listAccountWorkspaces, listUsers, resetUserPassword, setUserStatus, updateUserRole, updateUserWorkspaces } from '@/api/platform'
+import { createUser, deleteUser, listAccountWorkspaces, listUsers, resetUserPassword, setUserStatus, updateUser, updateUserRole, updateUserWorkspaces } from '@/api/platform'
+import { authState } from '@/auth'
 
 const DEFAULT_STUDENT_PASSWORD = '9297019872'
 
@@ -21,6 +22,10 @@ const activeWorkspace = ref('')
 const selectedWorkspaces = ref([])
 const workspaceEditorUser = ref(null)
 const savingWorkspaces = ref(false)
+const editUser = ref(null)
+const editForm = ref({ username: '', realName: '', email: '', phone: '' })
+const editError = ref('')
+const savingUser = ref(false)
 const error = ref('')
 const notice = ref('')
 const showCreateDialog = ref(false)
@@ -108,11 +113,43 @@ function userWorkspaces(user) {
 
 function accountActions(user) {
   return [
+    { key: 'edit', label: 'Edit', onSelect: () => openUserEditor(user) },
     ...(user.roleCode === 'ADMIN' ? [] : [{ key: 'workspaces', label: 'Manage workspaces', onSelect: () => openWorkspaceEditor(user) }]),
     { key: 'password', label: 'Reset password', onSelect: () => changePassword(user) },
     { key: 'status', label: user.status === 'ACTIVE' ? 'Disable' : 'Enable', onSelect: () => toggleStatus(user) },
     { key: 'delete', label: 'Delete permanently', danger: true, onSelect: () => openDeleteDialog(user) },
   ]
+}
+
+function openUserEditor(user) {
+  editUser.value = user
+  editForm.value = { username: user.username, realName: user.realName || '', email: user.email || '', phone: user.phone || '' }
+  editError.value = ''
+}
+
+// 保存基本资料；当前账号更改用户名后由服务端注销旧会话。
+async function saveUser() {
+  if (!editUser.value || savingUser.value) return
+  const details = Object.fromEntries(Object.entries(editForm.value).map(([key, value]) => [key, value.trim()]))
+  if (!details.username || !details.realName) {
+    editError.value = 'Name and username are required.'
+    return
+  }
+  savingUser.value = true
+  editError.value = ''
+  try {
+    const renamedSelf = editUser.value.username === authState.user?.username && details.username !== editUser.value.username
+    await updateUser(editUser.value.id, { ...details, email: details.email || null, phone: details.phone || null })
+    if (renamedSelf) {
+      window.location.assign('/login')
+      return
+    }
+    editUser.value = null
+    notice.value = 'Account details updated.'
+    await loadUsers()
+  } catch (requestError) {
+    editError.value = requestError.message || 'Unable to update account details.'
+  } finally { savingUser.value = false }
 }
 
 function openCreateDialog() {
@@ -471,6 +508,21 @@ onMounted(() => { loadUsers(); loadWorkspaces() })
       <template #footer>
         <AppButton type="button" variant="secondary" :disabled="creating" @click="closeCreateDialog">Cancel</AppButton>
         <AppButton type="submit" form="create-account-form" :disabled="creating">{{ creating ? 'Creating…' : 'Create account' }}</AppButton>
+      </template>
+    </AppModal>
+
+    <AppModal v-if="editUser" title="Edit account" description="Update the account's basic information." :busy="savingUser" @close="editUser = null">
+      <form id="edit-account-form" class="account-create-form" @submit.prevent="saveUser">
+        <label class="form-label">Full name<input v-model="editForm.realName" class="form-input" maxlength="80" required /></label>
+        <label class="form-label">Username<input v-model="editForm.username" class="form-input" maxlength="80" required /></label>
+        <label class="form-label">Email<input v-model="editForm.email" class="form-input" type="email" maxlength="160" /></label>
+        <label class="form-label">Phone<input v-model="editForm.phone" class="form-input" type="tel" maxlength="30" /></label>
+        <p v-if="editUser.username === authState.user?.username" class="form-hint">Changing your username will require you to sign in again.</p>
+        <p v-if="editError" class="error-text" role="alert">{{ editError }}</p>
+      </form>
+      <template #footer>
+        <AppButton variant="secondary" :disabled="savingUser" @click="editUser = null">Cancel</AppButton>
+        <AppButton type="submit" form="edit-account-form" :disabled="savingUser">{{ savingUser ? 'Saving…' : 'Save changes' }}</AppButton>
       </template>
     </AppModal>
 
