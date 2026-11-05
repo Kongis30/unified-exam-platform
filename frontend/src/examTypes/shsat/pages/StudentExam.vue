@@ -238,7 +238,7 @@ const currentMaterialDisplay = computed(() => {
     return null;
   }
 
-  return buildMaterialDisplayLines(material.materialContent || '');
+  return buildMaterialDisplayLines(material.materialContent || '', { category: material.materialCategory || material.category, title: material.materialTitle || material.title });
 });
 const currentQuestionTypeAnswer = computed(() => {
   if (!currentQuestion.value) {

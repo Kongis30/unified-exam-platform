@@ -7,6 +7,7 @@ import AppCard from '@/components/AppCard.vue'
 import AppModal from '@/components/AppModal.vue'
 import AdminDataTable from '@/components/admin/AdminDataTable.vue'
 import ClassExamScoreTrend from '@/components/admin/ClassExamScoreTrend.vue'
+import DeleteClassExamDialog from '@/components/admin/DeleteClassExamDialog.vue'
 import { notifyOperation } from '@/utils/operationNotification'
 import { authState } from '@/auth'
 import {
@@ -20,6 +21,8 @@ const classroom = ref(null)
 const students = ref([])
 const studentOptions = ref([])
 const exams = ref([])
+const deleteExamTarget = ref(null)
+const trendVersion = ref(0)
 const isLoading = ref(false)
 const isSaving = ref(false)
 const error = ref('')
@@ -274,7 +277,7 @@ watch([classId, workspaceCode], () => {
         </dl>
       </AppCard>
 
-      <ClassExamScoreTrend :class-id="classId" :exam-type-codes="[workspaceCode]" />
+      <ClassExamScoreTrend :key="trendVersion" :class-id="classId" :exam-type-codes="[workspaceCode]" />
 
       <AppCard class="sat-class-detail-section" title="Exam Releases" subtitle="Review releases targeted to this class, including drafts and published exams.">
         <div v-if="isLoading" class="admin-state">Loading exam records...</div>
@@ -299,6 +302,7 @@ watch([classId, workspaceCode], () => {
                 <td class="sat-class-exam-actions">
                   <AppButton type="button" @click="openExamResults(exam)">View Results</AppButton>
                   <AppButton v-if="canMonitorExams" type="button" variant="secondary" @click="openExamMonitor(exam)">Monitor</AppButton>
+                  <AppButton v-if="canMonitorExams" type="button" variant="danger" @click="deleteExamTarget = exam">Delete</AppButton>
                 </td>
               </tr>
             </tbody>
@@ -335,6 +339,7 @@ watch([classId, workspaceCode], () => {
         </template>
       </AppCard>
     </template>
+    <DeleteClassExamDialog v-if="deleteExamTarget" :class-id="classId" :exam-id="deleteExamTarget.examId" :title="deleteExamTarget.examTitle" @close="deleteExamTarget = null" @deleted="deleteExamTarget = null; trendVersion++; notifyOperation('Class exam deleted.'); loadPage()" />
 
     <AppModal v-if="editOpen" title="Edit class" description="Update this class's name and description." :busy="isSaving" @close="editOpen = false">
       <form id="sat-edit-class-form" class="sat-class-form" @submit.prevent="saveClass">

@@ -2603,8 +2603,8 @@ async function confirmDeleteExam() {
   notices.examForm = '';
 
   try {
-    await adminApi.deleteExam(examId);
-    notices.examForm = `Exam release "${exam.examTitle}" and its student attempts were permanently deleted.`;
+    await adminApi.hideExamRelease(examId);
+    notices.examForm = `Exam release "${exam.examTitle}" was hidden. Class records and reports were retained.`;
     selectedDeleteExam.value = null;
     clearExamDeleteCooldown();
     examDeleteCooldown.value = 0;
@@ -2614,7 +2614,7 @@ async function confirmDeleteExam() {
     clearExamDeleteCooldown();
     examDeleteCooldown.value = 0;
     openExamActionDialog({
-      title: 'Unable to Delete Exam',
+      title: 'Unable to Hide Exam',
       message: error.message || 'This exam release could not be deleted.',
       variant: 'error',
     });
@@ -3105,6 +3105,8 @@ async function refreshAdminData() {
 }
 
 // 首页卡片始终加载考试和复习任务，其余数据在对应 tab 首次打开时加载。
+// 暂时隐藏 SHSAT 班级页的未分配学生管理区块，重新启用时改为 true。
+const showUnassignedStudents = false;
 const loadedAdminData = new Set();
 const pendingAdminData = new Map();
 async function ensureAdminData(key, load, failed, revalidate = false) {
@@ -3130,7 +3132,7 @@ async function ensureAdminTab(tab) {
   if (['classes', 'exams', 'wrong-answer-tasks'].includes(tab)) requests.push(ensureClasses());
   if (tab === 'classes') {
     requests.push(ensureClasses().then(() => ensureAdminData('students', loadStudents, () => !selectedClassId.value || Boolean(errors.students))));
-    if (!isTeacherPortal.value) requests.push(ensureAdminData('unassigned', loadUnassignedStudents, () => Boolean(errors.unassignedStudents)));
+    if (showUnassignedStudents && !isTeacherPortal.value) requests.push(ensureAdminData('unassigned', loadUnassignedStudents, () => Boolean(errors.unassignedStudents)));
   }
   await Promise.all(requests);
 }
@@ -3228,7 +3230,7 @@ function refreshActiveWorkspace() {
   if (loadedAdminData.has('papers')) requests.push(ensureAdminData('papers', loadPapers, () => Boolean(errors.papers), true));
   if (loadedAdminData.has('classes')) requests.push(ensureAdminData('classes', loadClasses, () => Boolean(errors.classes), true));
   if (loadedAdminData.has('students')) requests.push(loadStudents());
-  if (loadedAdminData.has('unassigned')) requests.push(loadUnassignedStudents());
+  if (showUnassignedStudents && loadedAdminData.has('unassigned')) requests.push(loadUnassignedStudents());
   Promise.all(requests).catch((error) => { errors.initial = error.message || 'Failed to refresh the workspace'; });
 }
 function refreshOnVisibility() {
@@ -4276,8 +4278,8 @@ onBeforeUnmount(() => {
               <header class="modal-card__header">
                 <div>
                   <span class="admin-eyebrow">Delete Release</span>
-                  <h3 id="delete-exam-confirm-title">Delete this exam release?</h3>
-                  <p>The exam release and all related student records will be permanently deleted.</p>
+                  <h3 id="delete-exam-confirm-title">Hide this exam release?</h3>
+                  <p>This exam will be hidden from the release list and students.</p>
                 </div>
                 <button
                   class="modal-card__close"
@@ -4316,20 +4318,20 @@ onBeforeUnmount(() => {
               </dl>
 
               <p class="publish-confirm-note publish-confirm-note--danger">
-                This permanently deletes every student attempt, answer, score, report, and linked review assignment. This cannot be undone.
+                Class records, student attempts, scores, and reports will be retained.
               </p>
 
               <p v-if="examDeleteCooldown > 0" class="paper-delete-confirm__cooldown">
                 You can confirm deletion in {{ examDeleteCooldown }} {{ examDeleteCooldown === 1 ? 'second' : 'seconds' }}.
               </p>
               <p v-else class="paper-delete-confirm__cooldown paper-delete-confirm__cooldown--ready">
-                You can now confirm permanent deletion.
+                You can now confirm.
               </p>
 
               <footer class="modal-card__footer">
                 <AppButton variant="secondary" type="button" :disabled="Boolean(loading.deletingExamId)" @click="closeDeleteExamConfirm">Cancel</AppButton>
                 <AppButton type="button" :disabled="Boolean(loading.deletingExamId) || examDeleteCooldown > 0" @click="confirmDeleteExam">
-                  {{ loading.deletingExamId ? 'Deleting...' : examDeleteCooldown > 0 ? `Delete Exam (${examDeleteCooldown})` : 'Delete Exam Permanently' }}
+                  {{ loading.deletingExamId ? 'Hiding...' : examDeleteCooldown > 0 ? `Hide Exam (${examDeleteCooldown})` : 'Hide Exam' }}
                 </AppButton>
               </footer>
             </section>
@@ -4757,7 +4759,7 @@ onBeforeUnmount(() => {
               </div>
           </AppCard>
 
-          <AppCard class="unassigned-students-card" title="Unassigned Students" subtitle="Select students, then add them to a class in one step.">
+          <AppCard v-if="showUnassignedStudents" class="unassigned-students-card" title="Unassigned Students" subtitle="Select students, then add them to a class in one step.">
             <template #actions>
               <AppButton
                 variant="primary"

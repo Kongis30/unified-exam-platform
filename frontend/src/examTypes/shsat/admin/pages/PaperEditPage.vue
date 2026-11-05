@@ -320,7 +320,9 @@ const currentTextMaterialFields = computed(() => {
 });
 
 const currentTextMaterialPreview = computed(() => {
-  return buildMaterialDisplayLines(currentTextMaterialFields.value);
+  return buildMaterialDisplayLines(currentTextMaterialFields.value, {
+    category: currentQuestion.value?.materialCategory, title: currentQuestion.value?.materialTitle,
+  });
 });
 
 const textMaterialPreviewToggleLabel = computed(() => {

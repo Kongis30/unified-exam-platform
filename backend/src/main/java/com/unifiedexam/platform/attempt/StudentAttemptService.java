@@ -172,8 +172,13 @@ public class StudentAttemptService {
             throw notFound("This exam is not available yet.");
         }
 
+        if (!practice && Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+                "SELECT release_hidden_at IS NOT NULL FROM exams WHERE id = ?", Boolean.class, examId))) {
+            throw notFound("Exam not found.");
+        }
+
         Boolean open = jdbcTemplate.queryForObject("""
-            SELECT status = 'PUBLISHED' AND opens_at <= CURRENT_TIMESTAMP(6) AND closes_at > CURRENT_TIMESTAMP(6)
+            SELECT status = 'PUBLISHED' AND release_hidden_at IS NULL AND opens_at <= CURRENT_TIMESTAMP(6) AND closes_at > CURRENT_TIMESTAMP(6)
             FROM exams WHERE id = ?
             """, Boolean.class, examId);
         if (practice && !Boolean.TRUE.equals(open)) {

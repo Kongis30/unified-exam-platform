@@ -284,19 +284,16 @@ class ExamReleaseServiceTest {
     }
 
     @Test
-    void deleteClearsDependentRowsBeforeDeletingExam() {
+    void hideReleaseKeepsStudentRecords() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
         when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(41L))).thenReturn(false);
-        when(jdbc.query(any(String.class), any(RowMapper.class), eq(41L))).thenReturn(List.of(41L));
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq(41L))).thenReturn(41L);
 
-        service.delete(41L);
+        service.hideFromReleaseList(41L);
 
-        var ordered = inOrder(jdbc);
-        ordered.verify(jdbc).update("DELETE FROM shsat_wrong_answer_tasks WHERE exam_id = ?", 41L);
-        ordered.verify(jdbc).update("DELETE FROM attempts WHERE exam_id = ?", 41L);
-        ordered.verify(jdbc).update("DELETE FROM exam_participants WHERE exam_id = ?", 41L);
-        ordered.verify(jdbc).update("DELETE FROM exams WHERE id = ?", 41L);
+        verify(jdbc).update("UPDATE exams SET release_hidden_at = COALESCE(release_hidden_at, CURRENT_TIMESTAMP(6)) WHERE id = ?", 41L);
+        verify(jdbc, never()).update(argThat(sql -> sql.startsWith("DELETE")), any(Object[].class));
     }
 
     @Test
@@ -305,10 +302,25 @@ class ExamReleaseServiceTest {
         ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
         when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(41L))).thenReturn(true);
 
-        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.delete(41L));
+        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.hideFromReleaseList(41L));
 
         assertEquals(404, error.getStatusCode().value());
         verify(jdbc, never()).update(any(String.class), eq(41L));
+    }
+
+    @Test
+    void classDeleteRejectsAmbiguousAttemptsWithoutMutation() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(41L))).thenReturn(false);
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq(41L))).thenReturn(41L);
+        when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(7L), eq(41L), eq(7L), eq(41L), eq(7L), eq(41L), eq(7L))).thenReturn(true);
+        when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(7L), eq(7L), eq(7L), eq(7L), eq(7L), eq(7L))).thenReturn(true);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> service.deleteClassExam(7L, 41L));
+
+        assertEquals(409, error.getStatusCode().value());
+        verify(jdbc, never()).update(any(String.class), any(Object[].class));
     }
 
     @Test

@@ -104,7 +104,7 @@ function materialModel(material) {
   if (String(material.materialType || '').toUpperCase() === 'IMAGE' && material.assetUrl) {
     return { imageUrl: material.assetUrl, title: '' };
   }
-  const display = buildMaterialDisplayLines(material.materialContent);
+  const display = buildMaterialDisplayLines(material.materialContent, { category: material.materialCategory || material.category, title: material.materialTitle || material.title });
   const title = String(material.materialTitle || '').trim();
   return {
     ...display,

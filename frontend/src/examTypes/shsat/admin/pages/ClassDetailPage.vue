@@ -5,6 +5,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
 import ClassExamScoreTrend from '@/components/admin/ClassExamScoreTrend.vue';
+import DeleteClassExamDialog from '@/components/admin/DeleteClassExamDialog.vue';
 import { listClassExamScoreTrend } from '@/api/platform';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
@@ -37,6 +38,8 @@ const removingStudent = ref(false);
 const classInfo = ref(null);
 const classes = ref([]);
 const exams = ref([]);
+const deleteExamTarget = ref(null);
+const trendVersion = ref(0);
 const students = ref([]);
 let classRequest = 0;
 const examKeyword = ref('');
@@ -928,7 +931,7 @@ onBeforeUnmount(() => {
       </AppCard>
 
       <template v-else>
-        <ClassExamScoreTrend :class-id="classId" :exam-type-codes="['SHSAT']" @loaded="markClassScoreTrendReady" />
+        <ClassExamScoreTrend :key="trendVersion" :class-id="classId" :exam-type-codes="['SHSAT']" @loaded="markClassScoreTrendReady" />
 
         <AppCard class="class-exams-card" title="Class Exams" subtitle="Review the exams that students in this class have actually taken.">
           <div class="admin-toolbar class-exams-toolbar">
@@ -995,6 +998,7 @@ onBeforeUnmount(() => {
                     <div class="class-exam-table__actions">
                       <AppButton class="class-exam-result-button" @click="viewClassExamScores(exam)">View Results</AppButton>
                       <AppButton class="class-exam-monitor-button" variant="secondary" @click="openExamMonitor(exam)">Monitor</AppButton>
+                      <AppButton variant="danger" @click="deleteExamTarget = exam">Delete</AppButton>
                     </div>
                   </td>
                 </tr>
@@ -1304,6 +1308,7 @@ onBeforeUnmount(() => {
           </section>
         </div>
       </Teleport>
+      <DeleteClassExamDialog v-if="deleteExamTarget" :class-id="classId" :exam-id="deleteExamTarget.examId" :title="deleteExamTarget.examTitle" @close="deleteExamTarget = null" @deleted="deleteExamTarget = null; trendVersion++; showClassToast('Class exam deleted.'); loadPage({ forceTrend: true })" />
     </section>
 
 </template>

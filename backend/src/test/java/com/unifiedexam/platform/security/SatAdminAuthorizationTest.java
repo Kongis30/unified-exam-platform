@@ -146,7 +146,7 @@ class SatAdminAuthorizationTest {
                 .with(user("admin").roles("ADMIN"))
                 .with(csrf()))
             .andExpect(status().isOk());
-        verify(examReleaseService).delete(42L);
+        verify(examReleaseService).hideFromReleaseList(42L);
 
         mockMvc.perform(delete("/api/admin/exams/42")
                 .with(user("teacher").roles("TEACHER"))

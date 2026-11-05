@@ -27,7 +27,7 @@ const materialDisplay = computed(() => {
   if (!material.value || material.value.assetUrl) {
     return null;
   }
-  return buildMaterialDisplayLines(material.value.materialContent || '');
+  return buildMaterialDisplayLines(material.value.materialContent || '', { category: material.value.materialCategory || material.value.category, title: material.value.materialTitle || material.value.title });
 });
 const correctAnswerValue = computed(() => buildCorrectAnswerValue(normalizedQuestion.value));
 const correctAnswerDisplay = computed(() => formatCorrectAnswer(normalizedQuestion.value));

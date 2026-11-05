@@ -87,7 +87,13 @@ public class ExamReleaseController {
     @DeleteMapping("/admin/exams/{examId}")
     public void deleteExam(@PathVariable long examId, Authentication authentication) {
         satAccess.requireAdminForExam(examId, authentication);
-        examReleaseService.delete(examId);
+        examReleaseService.hideFromReleaseList(examId);
+    }
+
+    @DeleteMapping("/admin/classes/{classId}/exams/{examId}")
+    public void deleteClassExam(@PathVariable long classId, @PathVariable long examId, Authentication authentication) {
+        satAccess.requireAdminForExam(examId, authentication);
+        examReleaseService.deleteClassExam(classId, examId);
     }
 
     @GetMapping("/student/exams")

@@ -566,7 +566,7 @@ export const adminApi = {
     return http.post(`/admin/exams/${examId}/unpublish`);
   },
 
-  deleteExam(examId) {
+  hideExamRelease(examId) {
     return http.delete(`/admin/exams/${examId}`);
   },
 

@@ -63,16 +63,23 @@ export function composeStructuredMaterialContent(fields = {}) {
   return `${passageTitle}\n${author}\n${body}`;
 }
 
-export function buildMaterialDisplayLines(materialContentOrFields) {
+export function buildMaterialDisplayLines(materialContentOrFields, { category = '', title = '' } = {}) {
   const fields = isStructuredMaterialFields(materialContentOrFields)
     ? createTextMaterialFields(materialContentOrFields)
     : parseStructuredMaterialContent(materialContentOrFields);
-  const introduction = normalizeTextMaterialNewlines(fields.introduction);
+  const reflow = /^reading passage$/i.test(String(category).trim())
+    && !/\b(poem|poetry|verse|song)\b/i.test(`${title} ${fields.passageTitle}`);
+  const introductionItems = splitBodyRowsWithOffsetsPreservingBlockMath(fields.introduction)
+    .map((row, index) => createBodyTextDisplayItem(row.text, index));
+  const introduction = reflow
+    ? reflowProseItems(introductionItems).map((item) => item.text).join('\n')
+    : normalizeTextMaterialNewlines(fields.introduction);
   const headerLines = [
     createHeaderLine(TEXT_MATERIAL_HEADER_ROLES.TITLE, fields.passageTitle),
     createHeaderLine(TEXT_MATERIAL_HEADER_ROLES.AUTHOR, fields.author),
   ].filter((line) => line.text.trim());
-  const bodyItems = buildBodyDisplayItems(fields.body);
+  const rawBodyItems = buildBodyDisplayItems(fields.body);
+  const bodyItems = reflow ? reflowProseItems(rawBodyItems) : rawBodyItems;
   const bodyLines = bodyItems.filter((item) => item.type === 'text');
 
   return {
@@ -85,6 +92,27 @@ export function buildMaterialDisplayLines(materialContentOrFields) {
     hasHeader: headerLines.length > 0,
     hasBody: bodyItems.some((item) => item.type === 'image' || !item.isEmpty),
   };
+}
+
+// 仅合并疑似固定行宽的文章续行；保留段落、列表、公式和图片的位置。
+function reflowProseItems(items) {
+  const result = [];
+  let previousLine = '';
+  for (const item of items) {
+    const text = item.type === 'text' ? item.text : '';
+    const structural = item.type !== 'text' || item.isEmpty
+      || /^\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|\d+\s|\[\[|\$\$|\\\[|>)/.test(text)
+      || /\$\$|\\\[|\\\]/.test(text);
+    const previous = result[result.length - 1];
+    if (!structural && previous?.type === 'text' && previousLine.trim().length >= 60
+        && !/\s{2}$/.test(previousLine)) {
+      previous.text = `${previous.text.trimEnd()} ${text.trimStart()}`;
+    } else {
+      result.push({ ...item });
+    }
+    previousLine = structural && !/^\s*\d+\s/.test(text) ? '' : text;
+  }
+  return result;
 }
 
 export function buildBodyDisplayLines(body) {

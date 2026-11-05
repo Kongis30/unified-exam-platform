@@ -303,7 +303,7 @@ class ClassAdminControllerTest {
                 && sql.contains("a.is_practice = FALSE AND ac.class_id = ?")
                 && sql.contains("JOIN attempt_classes ac ON ac.attempt_id = a.id")
                 && sql.contains("ses.is_practice_archive = TRUE")),
-            any(RowMapper.class), eq(12L), eq(12L), eq("SAT"), eq(12L), eq(12L));
+            any(RowMapper.class), eq(12L), eq(12L), eq("SAT"), eq(12L), eq(12L), eq(12L), eq(12L));
     }
 
     @Test

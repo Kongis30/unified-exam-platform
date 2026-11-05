@@ -18,7 +18,7 @@ import { getStudentExamState } from '@/utils/studentExamState.js'
 import { examApi as satExamApi } from '@/examTypes/sat/student/api/exam'
 import ClassesPage from '@/views/ClassesPage.vue'
 import {
-  createExam, createPaper, createPaperGroup, createPaperVersion, deleteExam, deletePaper, deletePaperGroup,
+  createExam, createPaper, createPaperGroup, createPaperVersion, hideExamRelease, deletePaper, deletePaperGroup,
   apiRequest, cachedResource, closeExam, getExam, getExamTypes, getPaper, listClasses, listExams, listPaperGroups, listPapers,
   listStudentExams, movePaperToGroup, publishExam, reorderWorkspacePaperGroups, saveExamTargets, startStudentAttempt, unpublishExam,
   savePaperStructure, sealPaper, updateExam, updatePaper, updatePaperGroup,
@@ -235,11 +235,19 @@ const releaseForm = reactive({
 
 const releaseFields = { paper: 'paperId', title: 'title', description: 'description', start: 'opensAt', end: 'closesAt', duration: 'durationMinutes', attemptLimit: 'attemptLimit', scope: 'targetScope' }
 const releasePaperGroups = computed(() => {
-  const options = readyPapers.value.map((paper) => ({ id: paper.id, title: `${paper.title} · v${paper.versionNo}` }))
-  if (draftExamId.value && !options.some((paper) => String(paper.id) === String(releaseForm.paperId))) {
-    options.push({ id: releaseForm.paperId, title: `${draftPaperTitle.value} · unavailable for new releases` })
+  const groups = new Map()
+  for (const paper of readyPapers.value) {
+    const folder = paperFolderRecords.value.find((item) => item.examTypeCode === paper.examTypeCode && String(item.id) === String(paper.groupId))
+    const label = folder?.name || 'Default Folder'
+    if (!groups.has(label)) groups.set(label, [])
+    groups.get(label).push({ id: paper.id, title: `${paper.title} · v${paper.versionNo}` })
   }
-  return [{ label: 'Papers', papers: options }]
+  if (draftExamId.value && !readyPapers.value.some((paper) => String(paper.id) === String(releaseForm.paperId))) {
+    const label = 'Unavailable papers'
+    if (!groups.has(label)) groups.set(label, [])
+    groups.get(label).push({ id: releaseForm.paperId, title: `${draftPaperTitle.value} · unavailable for new releases` })
+  }
+  return [...groups].map(([label, papers]) => ({ label, papers }))
 })
 
 function emptySection(sectionCode = `SECTION_${Date.now()}`, sortOrder = 0) {
@@ -969,18 +977,18 @@ async function confirmDeleteExam() {
   notice.value = ''
   examActionId.value = exam.id
   try {
-    await deleteExam(exam.id)
+    await hideExamRelease(exam.id)
     examDeleteTarget.value = null
     examDeleteCooldown.value = 0
     clearExamDeleteCooldown()
     await loadWorkspaceExams()
     showNotification({
-      title: 'Exam deleted',
-      message: 'The exam and related student records were deleted.',
+      title: 'Exam hidden',
+      message: 'The exam is hidden from this list and students. Class records and reports are retained.',
       variant: 'success',
     })
   } catch (requestError) {
-    error.value = requestError.message || 'Unable to delete this exam.'
+    error.value = requestError.message || 'Unable to hide this exam.'
     examDeleteTarget.value = null
     examDeleteCooldown.value = 0
     clearExamDeleteCooldown()
@@ -2037,21 +2045,21 @@ watch(() => props.code, (code) => {
 
       <AppModal
         v-if="examDeleteTarget"
-        title="Delete exam permanently?"
+        title="Hide this exam?"
         eyebrow="Delete Release"
         :busy="examActionId === examDeleteTarget.id"
         @close="closeDeleteExamConfirm"
       >
         <p class="exam-delete-warning">
-          This permanently deletes the exam and all related student attempts, answers, scores, reports, and review assignments. This cannot be undone.
+          This hides the exam from the release list and students. Class records and reports will be retained.
         </p>
         <p class="exam-delete-cooldown" :class="{ 'exam-delete-cooldown--ready': examDeleteCooldown === 0 }" aria-live="polite">
-          {{ examDeleteCooldown > 0 ? `You can confirm deletion in ${examDeleteCooldown} ${examDeleteCooldown === 1 ? 'second' : 'seconds'}.` : 'You can now confirm permanent deletion.' }}
+          {{ examDeleteCooldown > 0 ? `You can confirm in ${examDeleteCooldown} ${examDeleteCooldown === 1 ? 'second' : 'seconds'}.` : 'You can now confirm.' }}
         </p>
         <template #footer>
           <AppButton variant="secondary" :disabled="examActionId !== null" @click="closeDeleteExamConfirm">Cancel</AppButton>
           <AppButton :disabled="examActionId !== null || examDeleteCooldown > 0" @click="confirmDeleteExam">
-            {{ examActionId !== null ? 'Deleting…' : examDeleteCooldown > 0 ? `Delete Exam (${examDeleteCooldown})` : 'Delete Exam Permanently' }}
+            {{ examActionId !== null ? 'Hiding…' : examDeleteCooldown > 0 ? `Hide Exam (${examDeleteCooldown})` : 'Hide Exam' }}
           </AppButton>
         </template>
       </AppModal>

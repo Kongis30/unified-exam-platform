@@ -137,20 +137,23 @@ public class ClassAdminController {
             WHERE p.exam_type_code IN (%s) AND (EXISTS (
                 SELECT 1 FROM exam_target_classes target
                 WHERE target.exam_id = e.id AND target.class_id = ?
+            ) OR EXISTS (
+                SELECT 1 FROM exam_target_student_classes target_student
+                WHERE target_student.exam_id = e.id AND target_student.class_id = ?
             ) OR (NOT EXISTS (
                 SELECT 1 FROM exam_target_classes target WHERE target.exam_id = e.id
             ) AND EXISTS (
                 SELECT 1 FROM attempts a
                 JOIN attempt_classes ac ON ac.attempt_id = a.id
                 WHERE a.exam_id = e.id AND a.is_practice = FALSE AND ac.class_id = ?
-            ))) AND NOT EXISTS (
+            ))) AND NOT EXISTS (SELECT 1 FROM exam_excluded_classes excluded WHERE excluded.exam_id = e.id AND excluded.class_id = ?) AND NOT EXISTS (
                 SELECT 1 FROM sat_exam_settings ses
                 WHERE ses.exam_id = e.id AND ses.is_practice_archive = TRUE
             )
             ORDER BY e.created_at DESC, e.id DESC
             """.formatted(typePlaceholders);
         Object[] parameters = Stream.concat(Stream.of((Object) classId, (Object) classId),
-            Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId, classId))).toArray();
+            Stream.concat(types.stream().map(code -> (Object) code), Stream.of(classId, classId, classId, classId))).toArray();
         return jdbcTemplate.query(sql, (rs, rowNum) -> new ClassExamView(rs.getLong("id"), rs.getString("title"),
                 rs.getString("paper_name"), rs.getString("target_type"), rs.getString("target_class_ids"),
                 "PUBLISHED".equals(rs.getString("status")), rs.getString("status"),

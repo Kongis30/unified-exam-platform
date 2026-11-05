@@ -387,8 +387,12 @@ export function closeExam(examId) {
   return apiRequest(`/api/admin/exams/${examId}/close`, { method: 'POST' })
 }
 
-export function deleteExam(examId) {
+export function hideExamRelease(examId) {
   return apiRequest(`/api/admin/exams/${examId}`, { method: 'DELETE' })
+}
+
+export function deleteClassExam(classId, examId) {
+  return apiRequest(`/api/admin/classes/${classId}/exams/${examId}`, { method: 'DELETE' })
 }
 
 export function listStudentExams({ force = false } = {}) {

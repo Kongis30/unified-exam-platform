@@ -34,6 +34,14 @@ const pendingRequests = new Map()
 let searchTimer
 let searchVersion = 0
 const selected = (values, id) => values.some((value) => String(value) === String(id))
+// 创建和编辑考试使用同一份排序规则，不改变传入的试卷列表。
+const sortedPaperGroups = computed(() => {
+  const compare = (a, b) => String(a || '').localeCompare(String(b || ''), 'en', { sensitivity: 'base', numeric: true })
+  return props.paperGroups.map((group) => ({
+    ...group,
+    papers: [...group.papers].sort((a, b) => compare(a.title, b.title)),
+  })).sort((a, b) => compare(a.label, b.label))
+})
 const activeClasses = computed(() => props.classes
   .filter((item) => (item.status ? item.status === 'ACTIVE' : (item.isActive ?? item.active ?? true)))
   .map((item) => ({ id: item.id ?? item.classId, name: item.name ?? item.className, count: item.studentCount || 0 }))
@@ -142,7 +150,7 @@ function toggleClassDetails(classId) {
           <label class="release-field release-wide"><span>Paper</span>
             <select v-model="form[fields.paper]" class="form-input" :disabled="paperLocked" required>
               <option value="" disabled>Select a paper</option>
-              <optgroup v-for="group in paperGroups" :key="group.label" :label="group.label">
+              <optgroup v-for="group in sortedPaperGroups" :key="group.label" :label="group.label">
                 <option v-for="paper in group.papers" :key="paper.id" :value="paper.id">{{ paper.title }}</option>
               </optgroup>
             </select>

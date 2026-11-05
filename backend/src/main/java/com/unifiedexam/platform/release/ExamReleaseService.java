@@ -54,7 +54,7 @@ public class ExamReleaseService {
                    e.created_at, e.updated_at, e.published_at,
                    %s
             FROM exams e JOIN papers p ON p.id = e.paper_id
-            WHERE p.exam_type_code = ? AND NOT EXISTS (
+            WHERE p.exam_type_code = ? AND e.release_hidden_at IS NULL AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id
             ) AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id
@@ -189,9 +189,15 @@ public class ExamReleaseService {
         jdbcTemplate.update("DELETE FROM exam_target_classes WHERE exam_id = ?", examId);
         jdbcTemplate.update("DELETE FROM exam_target_students WHERE exam_id = ?", examId);
         jdbcTemplate.update("DELETE FROM exam_target_student_classes WHERE exam_id = ?", examId);
-        for (Long classId : classIds) jdbcTemplate.update("INSERT INTO exam_target_classes (exam_id, class_id) VALUES (?, ?)", examId, classId);
+        for (Long classId : classIds) {
+            jdbcTemplate.update("DELETE FROM exam_excluded_classes WHERE exam_id = ? AND class_id = ?", examId, classId);
+            jdbcTemplate.update("INSERT INTO exam_target_classes (exam_id, class_id) VALUES (?, ?)", examId, classId);
+        }
         for (Long studentId : studentIds) jdbcTemplate.update("INSERT INTO exam_target_students (exam_id, student_user_id) VALUES (?, ?)", examId, studentId);
-        for (StudentClassTarget target : studentTargets) jdbcTemplate.update("INSERT INTO exam_target_student_classes (exam_id, student_user_id, class_id) VALUES (?, ?, ?)", examId, target.studentId(), target.classId());
+        for (StudentClassTarget target : studentTargets) {
+            jdbcTemplate.update("DELETE FROM exam_excluded_classes WHERE exam_id = ? AND class_id = ?", examId, target.classId());
+            jdbcTemplate.update("INSERT INTO exam_target_student_classes (exam_id, student_user_id, class_id) VALUES (?, ?, ?)", examId, target.studentId(), target.classId());
+        }
         return get(examId);
     }
 
@@ -262,7 +268,16 @@ public class ExamReleaseService {
                 INSERT IGNORE INTO exam_participants (exam_id, student_user_id)
                 SELECT ?, u.id FROM users u
                 WHERE u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
-                """, examId);
+                  AND (NOT EXISTS (SELECT 1 FROM exam_excluded_classes excluded JOIN class_memberships cm
+                                   ON cm.class_id = excluded.class_id AND cm.left_at IS NULL
+                                   WHERE excluded.exam_id = ? AND cm.student_user_id = u.id)
+                       OR EXISTS (SELECT 1 FROM exams e JOIN papers p ON p.id = e.paper_id
+                                  JOIN class_exam_workspaces cw ON cw.exam_type_code = p.exam_type_code
+                                  JOIN class_memberships cm ON cm.class_id = cw.class_id AND cm.left_at IS NULL
+                                  WHERE e.id = ? AND cm.student_user_id = u.id
+                                    AND NOT EXISTS (SELECT 1 FROM exam_excluded_classes excluded
+                                                    WHERE excluded.exam_id = e.id AND excluded.class_id = cw.class_id)))
+                """, examId, examId, examId);
         }
         Integer participantCount = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM exam_participants WHERE exam_id = ? AND revoked_at IS NULL", Integer.class, examId);
@@ -314,15 +329,113 @@ public class ExamReleaseService {
     }
 
     @Transactional
-    public void delete(long examId) {
+    public void hideFromReleaseList(long examId) {
         requireManageableExam(examId);
-        List<Long> lockedExamIds = jdbcTemplate.query("SELECT id FROM exams WHERE id = ? FOR UPDATE",
-            (rs, rowNum) -> rs.getLong(1), examId);
-        if (lockedExamIds.isEmpty()) throw notFound();
-        jdbcTemplate.update("DELETE FROM shsat_wrong_answer_tasks WHERE exam_id = ?", examId);
-        jdbcTemplate.update("DELETE FROM attempts WHERE exam_id = ?", examId);
-        jdbcTemplate.update("DELETE FROM exam_participants WHERE exam_id = ?", examId);
-        jdbcTemplate.update("DELETE FROM exams WHERE id = ?", examId);
+        Long locked = jdbcTemplate.query("SELECT id FROM exams WHERE id = ? FOR UPDATE", rs -> rs.next() ? rs.getLong(1) : null, examId);
+        if (locked == null) throw notFound();
+        jdbcTemplate.update("UPDATE exams SET release_hidden_at = COALESCE(release_hidden_at, CURRENT_TIMESTAMP(6)) WHERE id = ?", examId);
+    }
+
+    /** 移除一个班的考试和其专属作答；仍被其他班引用的作答和资格必须保留。 */
+    @Transactional
+    public void deleteClassExam(long classId, long examId) {
+        requireManageableExam(examId);
+        Long locked = jdbcTemplate.query("SELECT id FROM exams WHERE id = ? FOR UPDATE", rs -> rs.next() ? rs.getLong(1) : null, examId);
+        if (locked == null) throw notFound();
+        Boolean linked = jdbcTemplate.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM exam_target_classes WHERE exam_id = ? AND class_id = ?)
+                OR EXISTS(SELECT 1 FROM exam_participant_classes WHERE exam_id = ? AND class_id = ?)
+                OR EXISTS(SELECT 1 FROM exam_target_student_classes WHERE exam_id = ? AND class_id = ?)
+                OR EXISTS(SELECT 1 FROM attempts a JOIN attempt_classes ac ON ac.attempt_id = a.id
+                          WHERE a.exam_id = ? AND ac.class_id = ? AND a.is_practice = FALSE)
+            """, Boolean.class, examId, classId, examId, classId, examId, classId, examId, classId);
+        if (!Boolean.TRUE.equals(linked)) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Exam not found for this class.");
+
+        Boolean unattributed = jdbcTemplate.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM attempts a
+                          WHERE a.exam_id = ? AND a.is_practice = FALSE
+                            AND (EXISTS(SELECT 1 FROM exam_participant_classes pc WHERE pc.exam_id = a.exam_id AND pc.student_user_id = a.student_user_id AND pc.class_id = ?)
+                                 OR EXISTS(SELECT 1 FROM exam_target_student_classes ts WHERE ts.exam_id = a.exam_id AND ts.student_user_id = a.student_user_id AND ts.class_id = ?)
+                                 OR EXISTS(SELECT 1 FROM class_memberships cm WHERE cm.student_user_id = a.student_user_id AND cm.class_id = ? AND cm.left_at IS NULL))
+                            AND NOT EXISTS(SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id)
+                            AND (EXISTS(SELECT 1 FROM exam_participant_classes pc WHERE pc.exam_id = a.exam_id
+                                        AND pc.student_user_id = a.student_user_id AND pc.class_id <> ?)
+                                 OR EXISTS(SELECT 1 FROM exam_target_student_classes ts WHERE ts.exam_id = a.exam_id
+                                           AND ts.student_user_id = a.student_user_id AND ts.class_id <> ?)
+                                 OR EXISTS(SELECT 1 FROM exams e JOIN papers p ON p.id = e.paper_id
+                                           JOIN class_exam_workspaces cw ON cw.exam_type_code = p.exam_type_code
+                                           JOIN class_memberships other ON other.class_id = cw.class_id AND other.left_at IS NULL
+                                           WHERE e.id = a.exam_id AND other.student_user_id = a.student_user_id
+                                             AND other.class_id <> ?)))
+            """, Boolean.class, examId, classId, classId, classId, classId, classId, classId);
+        if (Boolean.TRUE.equals(unattributed)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Some student attempts cannot be assigned to a single class. Resolve their class assignment before deleting.");
+        }
+
+        List<Long> users = jdbcTemplate.query("""
+            SELECT student_user_id FROM exam_participant_classes WHERE exam_id = ? AND class_id = ?
+            UNION SELECT a.student_user_id FROM attempts a JOIN attempt_classes ac ON ac.attempt_id = a.id
+                  WHERE a.exam_id = ? AND ac.class_id = ? AND a.is_practice = FALSE
+            UNION SELECT student_user_id FROM exam_target_student_classes WHERE exam_id = ? AND class_id = ?
+            UNION SELECT ep.student_user_id FROM exam_participants ep JOIN class_memberships cm
+                  ON cm.student_user_id = ep.student_user_id AND cm.left_at IS NULL
+                  WHERE ep.exam_id = ? AND cm.class_id = ?
+            """, (rs, rowNum) -> rs.getLong(1), examId, classId, examId, classId, examId, classId, examId, classId);
+        jdbcTemplate.update("DELETE FROM shsat_wrong_answer_tasks WHERE exam_id = ? AND class_id = ?", examId, classId);
+        // 旧数据没有作答归属时，仅清理能够确定只属于本班的学生记录。
+        jdbcTemplate.update("""
+            DELETE a FROM attempts a
+            WHERE a.exam_id = ? AND a.is_practice = FALSE
+              AND NOT EXISTS(SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id)
+              AND (EXISTS(SELECT 1 FROM exam_participant_classes pc WHERE pc.exam_id = a.exam_id AND pc.student_user_id = a.student_user_id AND pc.class_id = ?)
+                   OR EXISTS(SELECT 1 FROM exam_target_student_classes ts WHERE ts.exam_id = a.exam_id AND ts.student_user_id = a.student_user_id AND ts.class_id = ?)
+                   OR EXISTS(SELECT 1 FROM class_memberships cm WHERE cm.student_user_id = a.student_user_id AND cm.class_id = ? AND cm.left_at IS NULL))
+            """, examId, classId, classId, classId);
+        jdbcTemplate.update("""
+            DELETE a FROM attempts a JOIN attempt_classes ac ON ac.attempt_id = a.id AND ac.class_id = ?
+            WHERE a.exam_id = ? AND a.is_practice = FALSE AND NOT EXISTS (
+                SELECT 1 FROM attempt_classes other_class WHERE other_class.attempt_id = a.id AND other_class.class_id <> ?)
+              AND NOT EXISTS(SELECT 1 FROM exam_participant_classes pc WHERE pc.exam_id = a.exam_id
+                             AND pc.student_user_id = a.student_user_id AND pc.class_id <> ?)
+              AND NOT EXISTS(SELECT 1 FROM exam_target_student_classes ts WHERE ts.exam_id = a.exam_id
+                             AND ts.student_user_id = a.student_user_id AND ts.class_id <> ?)
+              AND NOT EXISTS(SELECT 1 FROM exam_target_classes tc JOIN class_memberships cm
+                             ON cm.class_id = tc.class_id AND cm.left_at IS NULL
+                             WHERE tc.exam_id = a.exam_id AND tc.class_id <> ? AND cm.student_user_id = a.student_user_id)
+              AND NOT EXISTS(SELECT 1 FROM exams e JOIN papers p ON p.id = e.paper_id
+                             JOIN class_exam_workspaces cw ON cw.exam_type_code = p.exam_type_code AND cw.class_id <> ?
+                             JOIN class_memberships cm ON cm.class_id = cw.class_id AND cm.left_at IS NULL
+                             WHERE e.id = a.exam_id AND e.target_scope = 'ALL_STUDENTS' AND cm.student_user_id = a.student_user_id
+                               AND NOT EXISTS(SELECT 1 FROM exam_excluded_classes excluded
+                                              WHERE excluded.exam_id = e.id AND excluded.class_id = cw.class_id))
+            """, classId, examId, classId, classId, classId, classId, classId);
+        jdbcTemplate.update("DELETE ac FROM attempt_classes ac JOIN attempts a ON a.id = ac.attempt_id WHERE a.exam_id = ? AND ac.class_id = ? AND a.is_practice = FALSE", examId, classId);
+        jdbcTemplate.update("DELETE FROM exam_target_classes WHERE exam_id = ? AND class_id = ?", examId, classId);
+        jdbcTemplate.update("DELETE FROM exam_target_student_classes WHERE exam_id = ? AND class_id = ?", examId, classId);
+        jdbcTemplate.update("DELETE FROM exam_participant_classes WHERE exam_id = ? AND class_id = ?", examId, classId);
+        for (Long user : users) {
+            Boolean shared = jdbcTemplate.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM exam_participant_classes WHERE exam_id = ? AND student_user_id = ?)
+                    OR EXISTS(SELECT 1 FROM exam_target_student_classes WHERE exam_id = ? AND student_user_id = ?)
+                    OR EXISTS(SELECT 1 FROM attempts a JOIN attempt_classes ac ON ac.attempt_id = a.id
+                              WHERE a.exam_id = ? AND a.student_user_id = ? AND a.is_practice = FALSE)
+                    OR EXISTS(SELECT 1 FROM exam_target_classes tc JOIN class_memberships cm ON cm.class_id = tc.class_id AND cm.left_at IS NULL
+                              WHERE tc.exam_id = ? AND cm.student_user_id = ?)
+                    OR EXISTS(SELECT 1 FROM exams e JOIN papers p ON p.id = e.paper_id
+                              JOIN class_exam_workspaces cw ON cw.exam_type_code = p.exam_type_code AND cw.class_id <> ?
+                              JOIN class_memberships cm ON cm.class_id = cw.class_id AND cm.left_at IS NULL
+                              WHERE e.id = ? AND e.target_scope = 'ALL_STUDENTS' AND cm.student_user_id = ?
+                                AND NOT EXISTS(SELECT 1 FROM exam_excluded_classes excluded
+                                               WHERE excluded.exam_id = e.id AND excluded.class_id = cw.class_id))
+                """, Boolean.class, examId, user, examId, user, examId, user, examId, user, classId, examId, user);
+            if (!Boolean.TRUE.equals(shared)) {
+                jdbcTemplate.update("DELETE FROM exam_target_students WHERE exam_id = ? AND student_user_id = ?", examId, user);
+                jdbcTemplate.update("DELETE FROM exam_participants WHERE exam_id = ? AND student_user_id = ?", examId, user);
+            }
+        }
+        jdbcTemplate.update("INSERT IGNORE INTO exam_excluded_classes (exam_id, class_id) VALUES (?, ?)", examId, classId);
+        jdbcTemplate.update("INSERT INTO audit_events (action_code, entity_type, entity_key, detail_json) VALUES ('DELETE_CLASS_EXAM', 'EXAM', ?, JSON_OBJECT('classId', ?, 'affectedStudents', ?))",
+            Long.toString(examId), classId, users.size());
     }
 
     public List<StudentExamView> listForStudent(String username) {
@@ -346,7 +459,7 @@ public class ExamReleaseService {
             FROM exam_participants ep JOIN exams e ON e.id = ep.exam_id
             JOIN papers p ON p.id = e.paper_id
             JOIN exam_types et ON et.code = p.exam_type_code AND et.is_active = TRUE
-            WHERE ep.student_user_id = ? AND ep.revoked_at IS NULL AND e.status IN ('PUBLISHED', 'CLOSED', 'DRAFT')
+            WHERE ep.student_user_id = ? AND ep.revoked_at IS NULL AND e.release_hidden_at IS NULL AND e.status IN ('PUBLISHED', 'CLOSED', 'DRAFT')
                 AND NOT EXISTS (SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id)
                 AND NOT EXISTS (SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id)
                 AND ((e.status = 'PUBLISHED' AND e.closes_at > CURRENT_TIMESTAMP(6)) OR EXISTS (
