@@ -201,22 +201,26 @@ public class PaperService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Source paper not found.");
         }
         List<SectionView> sourceSections = loadSections(sourcePaperId, null);
+        List<QuestionView> sourceQuestions = flatten(sourceSections);
         Map<Long, String> sourceSectionCodes = new HashMap<>();
         collectQuestionSectionCodes(sourceSections, null, sourceSectionCodes);
         Map<Long, Long> sourceSectionIds = new HashMap<>();
         collectQuestionSectionIds(sourceSections, sourceSectionIds);
+        Map<Long, Integer> sourceOrderByItemId = new HashMap<>();
         Map<Integer, QuestionView> sourceByNumber = new HashMap<>();
-        flatten(sourceSections).forEach(question -> {
+        Map<Long, QuestionView> sourceByItemId = new HashMap<>();
+        for (int index = 0; index < sourceQuestions.size(); index++) {
+            QuestionView question = sourceQuestions.get(index);
+            sourceOrderByItemId.put(question.paperItemId(), index);
+            sourceByItemId.put(question.paperItemId(), question);
             int number = question.displayNumber() == null ? question.sortOrder() : question.displayNumber();
             sourceByNumber.put(number, question);
-        });
+        }
         List<QuestionView> selected;
         if (request.paperItemIds() != null && !request.paperItemIds().isEmpty()) {
             List<Long> requested = request.paperItemIds().stream().distinct().toList();
             if (requested.size() != request.paperItemIds().size()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A question is selected more than once.");
-            Map<Long, QuestionView> sourceByItem = flatten(sourceSections).stream()
-                    .collect(java.util.stream.Collectors.toMap(QuestionView::paperItemId, java.util.function.Function.identity()));
-            selected = requested.stream().map(sourceByItem::get).toList();
+            selected = requested.stream().map(sourceByItemId::get).toList();
         } else {
             if (request.questionNumbers() == null || request.questionNumbers().isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select at least one question.");
             List<Integer> requested = request.questionNumbers().stream().distinct().toList();
@@ -226,6 +230,10 @@ public class PaperService {
         if (selected.stream().anyMatch(java.util.Objects::isNull)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more selected questions are unavailable.");
         }
+        // 保持来源卷中的题目顺序，避免管理员按任意顺序勾选后打散同一材料的题组。
+        selected = selected.stream()
+            .sorted(java.util.Comparator.comparingInt(question -> sourceOrderByItemId.get(question.paperItemId())))
+            .toList();
         Map<String, Long> targetSections = new HashMap<>();
         collectSectionIds(loadSections(targetPaperId, null), null, targetSections);
         int nextDisplayNumber = flatten(loadSections(targetPaperId, null)).stream()

@@ -69,7 +69,7 @@ async function main() {
         ...toSectionRequest(subtype),
         sortOrder: subtypeIndex,
         questions: part.sectionCode === 'ELA' && subtypeIndex === 0
-          ? [imageQuestion(stem)]
+          ? [imageQuestion(stem, 1), imageQuestion(`${stem} second`, 2)]
           : [],
       })),
     }));
@@ -165,7 +165,7 @@ async function main() {
     assert.match(await page.locator('.import-question-row').first().innerText(), /No answers/,
       'the latest exam displays its own empty performance data');
     await page.getByRole('button', { name: 'No answers', exact: true }).click();
-    assert.equal(await page.locator('.import-question-row').count(), 1, 'no-answer filtering keeps the unanswered question');
+    assert.equal(await page.locator('.import-question-row').count(), 2, 'no-answer filtering keeps both unanswered questions');
     await examSelect.selectOption(`${sourcePaperId}:${examId}`);
     const row = page.locator('.import-question-row').first();
     await row.waitFor();
@@ -202,11 +202,23 @@ async function main() {
     assert.ok(mobileScroll.workspaceScroll > 0,
       `the question and preview area can be scrolled on mobile: ${JSON.stringify(mobileScroll)}`);
     await page.setViewportSize({ width: 1440, height: 900 });
-    const questionNumber = Number((await row.innerText()).match(/Q(\d+)/)?.[1]);
-    assert.ok(questionNumber > 0, 'the source image question is listed for import');
-    await page.getByLabel(`Select question ${questionNumber}`, { exact: true }).check();
-    await page.getByRole('button', { name: 'Add 1 questions', exact: true }).click();
-    await page.getByText('1 questions added from', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'All questions', exact: true }).click();
+    const questionNumbers = await page.locator('.import-question-row').evaluateAll(rows => rows.map(row => {
+      return Number(row.innerText.match(/Q(\d+)/)?.[1]);
+    }));
+    assert.deepEqual(questionNumbers, [1, 2], 'the source questions are shown in paper order');
+    // 故意反向勾选，验证导入顺序仍服从来源试卷，使同材料题保持相邻成组。
+    await page.getByLabel('Select question 2', { exact: true }).check();
+    await page.getByLabel('Select question 1', { exact: true }).check();
+    await page.getByRole('button', { name: 'Add 2 questions', exact: true }).click();
+    await page.getByText('2 questions added from', { exact: false }).waitFor();
+
+    const importedPassage = page.locator('.passage-set').filter({ hasText: 'Q1-Q2' });
+    assert.equal(await importedPassage.locator('.question-item--nested').count(), 2,
+      'questions imported in reverse selection order remain together under one passage');
+    assert.equal(await importedPassage.locator('.question-import-indicator').count(), 2,
+      'each newly imported question has the temporary import marker');
+    await page.screenshot({ path: `/tmp/shsat-import-material-group-${stamp}.png` });
 
     const targetDetail = await api(page, `/api/admin/papers/${targetPaperId}`);
     const imported = readQuestions(targetDetail).find(question => question.stem === stem);
@@ -247,6 +259,7 @@ async function main() {
       targetPaperId,
       examId,
       imageUrl: uploadedImage.assetUrl,
+      importedPassageScreenshot: `/tmp/shsat-import-material-group-${stamp}.png`,
       desktopScreenshot: `/tmp/shsat-import-image-material-${stamp}.png`,
       mobileScreenshot: `/tmp/shsat-import-image-material-mobile-${stamp}.png`,
       pageErrors: pageErrors.length,
@@ -355,7 +368,7 @@ function toSectionRequest(section) {
   };
 }
 
-function imageQuestion(stem) {
+function imageQuestion(stem, displayNumber) {
   return {
     questionTypeCode: 'MULTIPLE_CHOICE',
     payloadSchemaVersion: 1,
@@ -370,8 +383,8 @@ function imageQuestion(stem) {
     grading: {},
     explanation: 'A is correct.',
     categoryId: null,
-    sortOrder: 0,
-    displayNumber: 1,
+    sortOrder: displayNumber - 1,
+    displayNumber,
     maxPoints: 1,
     scoringSectionCode: 'ELA',
   };
