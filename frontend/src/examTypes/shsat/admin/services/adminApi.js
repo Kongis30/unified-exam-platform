@@ -4,7 +4,7 @@ import {
   createExam as createPlatformExam, createUser as createPlatformUser,
   deleteClass as deletePlatformClass, listAvailableStudents, listClassStudents, listClasses, listExams, listPapers, listPaperGroups,
   publishExam as publishPlatformExam, removeClassStudent, reorderClasses as reorderPlatformClasses, saveExamTargets,
-  sealPaper as sealPlatformPaper, updateClass as updatePlatformClass, updateExam as updatePlatformExam,
+  updateClass as updatePlatformClass, updateExam as updatePlatformExam,
 } from '@/api/platform';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromFullName } from '@shsat/utils/accountCredentials';
 import { applyShsatSkillTagToConfig } from '@shsat/utils/shsatSkillTags';
@@ -393,10 +393,6 @@ export const adminApi = {
 
   createPaperVersion(paperId) {
     return http.post(`/admin/papers/${paperId}/versions`);
-  },
-
-  sealPaper(paperId) {
-    return sealPlatformPaper(paperId);
   },
 
   createPart(paperId, payload) {

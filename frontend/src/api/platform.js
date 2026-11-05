@@ -351,10 +351,6 @@ export function createPaperVersion(paperId) {
   return apiRequest(`/api/admin/papers/${paperId}/versions`, { method: 'POST' })
 }
 
-export function sealPaper(paperId) {
-  return apiRequest(`/api/admin/papers/${paperId}/seal`, { method: 'POST' })
-}
-
 export function listExams(examTypeCode, { force = false } = {}) {
   return cachedResource(`/api/admin/exam-types/${examTypeCode}/exams`, [`exam:${examTypeCode}`], 15_000, { force })
 }

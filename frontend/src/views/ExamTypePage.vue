@@ -21,7 +21,7 @@ import {
   createExam, createPaper, createPaperGroup, createPaperVersion, hideExamRelease, deletePaper, deletePaperGroup,
   apiRequest, cachedResource, closeExam, getExam, getExamTypes, getPaper, listClasses, listExams, listPaperGroups, listPapers,
   listStudentExams, movePaperToGroup, publishExam, reorderWorkspacePaperGroups, saveExamTargets, startStudentAttempt, unpublishExam,
-  savePaperStructure, sealPaper, updateExam, updatePaper, updatePaperGroup,
+  savePaperStructure, updateExam, updatePaper, updatePaperGroup,
 } from '@/api/platform'
 import { authState } from '@/auth'
 import { studentApi as shsatStudentApi } from '@shsat/admin/services/studentApi'
@@ -1269,12 +1269,6 @@ function removeSection(sectionCode) {
   paperForm.sections = paperForm.sections.filter((section) => !removed.has(section.sectionCode))
 }
 
-async function seal(summary) {
-  error.value = ''; notice.value = ''
-  try { await sealPaper(summary.id); await loadWorkspacePapers(); notice.value = 'Paper sealed and ready for exam releases.' }
-  catch (requestError) { error.value = requestError.message }
-}
-
 function localDateTime(value) {
   const localValue = new Date(value)
   localValue.setMinutes(localValue.getMinutes() - localValue.getTimezoneOffset())
@@ -1706,7 +1700,6 @@ watch(() => props.code, (code) => {
                       </AdminActionMenu>
                       <div v-else class="table-actions">
                         <button v-if="paper.status === 'DRAFT'" @click="editPaper(paper)">Edit</button>
-                        <button v-if="paper.status === 'DRAFT'" @click="seal(paper)">Seal</button>
                       </div>
                     </td>
                   </tr>

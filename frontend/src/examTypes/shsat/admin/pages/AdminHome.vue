@@ -175,7 +175,6 @@ const loading = reactive({
   deletingExamId: '',
   deletingClassId: '',
   movingPaperId: '',
-  sealingPaperId: '',
   deletingGroupId: '',
   paperDeleteImpactId: '',
   deletingPaperId: '',
@@ -3032,29 +3031,6 @@ function handlePaperAction(action) {
   action();
 }
 
-async function sealPaper(paper) {
-  if (!paper?.paperId || loading.sealingPaperId) return;
-
-  loading.sealingPaperId = String(paper.paperId);
-  try {
-    await adminApi.sealPaper(paper.paperId);
-    await loadPapers();
-    showActionToast({
-      title: 'Paper ready',
-      message: 'Paper sealed and ready for exam releases.',
-      variant: 'success',
-    });
-  } catch (error) {
-    showActionToast({
-      title: 'Unable to seal paper',
-      message: error.message || 'Review the paper before sealing it.',
-      variant: 'error',
-    });
-  } finally {
-    loading.sealingPaperId = '';
-  }
-}
-
 function openPaperEditor(paper) {
   if (!paper?.paperId) {
     return;
@@ -3601,14 +3577,6 @@ onBeforeUnmount(() => {
                             <button type="button" @click="handlePaperAction(() => loadPaperDetail(paper.paperId))">Detail</button>
                             <button type="button" @click="handlePaperAction(() => openPaperEditModal(paper))">Edit Info</button>
                             <button type="button" @click="handlePaperAction(() => openPaperEditor(paper))">Edit Paper</button>
-                            <button
-                              v-if="paper.status === 'DRAFT'"
-                              type="button"
-                              :disabled="loading.sealingPaperId === String(paper.paperId)"
-                              @click="handlePaperAction(() => sealPaper(paper))"
-                            >
-                              {{ loading.sealingPaperId === String(paper.paperId) ? 'Sealing...' : 'Seal' }}
-                            </button>
                             <button type="button" @click="handlePaperAction(() => openPaperPreview(paper))">Preview</button>
                             <button type="button" @click="handlePaperAction(() => openPaperExport(paper))">Export PDF</button>
                             <button
