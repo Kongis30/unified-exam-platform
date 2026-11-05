@@ -247,7 +247,7 @@ const allVisibleImportQuestionsSelected = computed(() => (
   && selectedVisibleImportQuestionCount.value === visibleImportAnalytics.value.length
 ));
 const selectedImportQuestionCount = computed(() => selectedImportItemIds.value.length);
-const selectedImportPaper = computed(() => importPapers.value.find((paper) => String(paper.paperId) === String(importPaperId.value)) || null);
+const selectedImportPaper = computed(() => importPapers.value.find((paper) => String(paper.paperId) === String(importPaperId.value).split(':')[0]) || null);
 const groupedImportPapers = computed(() => {
   const groups = new Map();
   const groupDetails = new Map(importPaperGroups.value.map((group) => [String(group.paperGroupId), group]));
@@ -2142,7 +2142,7 @@ function scrollQuestionListTo(questionId) {
   });
 }
 
-// 摘题窗口按试卷加载题目，可用时附带最近一次有答题数据的考试统计。
+// 按试卷加载题目；同一试卷有多场考试时，用户可选择查看哪场考试的统计。
 async function openImportQuestions() {
   showImportQuestionsModal.value = true;
   loadingImportPapers.value = true;
@@ -2163,9 +2163,8 @@ async function openImportQuestions() {
     importPaperGroups.value = unwrapResponse(groupResponse) || [];
     importPapers.value = (unwrapResponse(paperResponse) || []).map((sourcePaper) => ({
       ...sourcePaper,
-      sourceExam: exams.filter((exam) => String(exam.paperId) === String(sourcePaper.paperId) && ['PUBLISHED', 'CLOSED'].includes(exam.status))
-        .sort((a, b) => Number(Boolean(b.hasStudentAttempts)) - Number(Boolean(a.hasStudentAttempts))
-          || new Date(b.publishedAt || b.startTime || 0) - new Date(a.publishedAt || a.startTime || 0))[0] || null,
+      sourceExams: exams.filter((exam) => String(exam.paperId) === String(sourcePaper.paperId) && ['PUBLISHED', 'CLOSED'].includes(exam.status))
+        .sort((a, b) => new Date(b.publishedAt || b.startTime || 0) - new Date(a.publishedAt || a.startTime || 0)),
     }));
     if (groupedImportPapers.value[0]?.papers[0]) await selectImportSourcePaper(groupedImportPapers.value[0].papers[0].paperId);
   } catch (error) {
@@ -2192,9 +2191,11 @@ async function selectImportSourcePaper(sourcePaperId) {
 
   loadingImportAnalytics.value = true;
   try {
-    const paper = await adminApi.getPaper(importPaperId.value);
+    const [sourcePaperId, sourceExamId] = importPaperId.value.split(':');
+    const paper = await adminApi.getPaper(sourcePaperId);
     importSourcePaper.value = unwrapResponse(paper);
-    importSourceExam.value = selectedImportPaper.value?.sourceExam || null;
+    const sourceExams = selectedImportPaper.value?.sourceExams || [];
+    importSourceExam.value = (sourceExamId ? sourceExams.find((exam) => String(exam.examId) === sourceExamId) : sourceExams[0]) || null;
     let stats = [];
     if (importSourceExam.value) {
       try {
@@ -2202,6 +2203,7 @@ async function selectImportSourcePaper(sourcePaperId) {
         stats = unwrapResponse(response)?.questionAnalytics || [];
       } catch {
         importSourceExam.value = null;
+        importQuestionsError.value = 'Could not load exam performance data. You can still preview and import questions.';
       }
     }
     const statsByNumber = new Map(stats.map((row) => [Number(row.questionNumber), row]));
@@ -2289,7 +2291,7 @@ async function confirmImportQuestions() {
     }
 
     const response = await adminApi.importQuestionsFromPaper(paperId.value, {
-      sourcePaperId: Number(importPaperId.value),
+      sourcePaperId: Number(importPaperId.value.split(':')[0]),
       paperItemIds: selectedImportItemIds.value.map(Number),
     });
     const importedQuestions = unwrapResponse(response) || [];
@@ -2315,6 +2317,15 @@ async function confirmImportQuestions() {
   } finally {
     importingQuestions.value = false;
   }
+}
+
+function formatImportExamDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23',
+  }).format(date);
 }
 
 function formatImportAccuracy(value) {
@@ -3363,9 +3374,14 @@ onBeforeUnmount(() => {
                 <select :value="importPaperId" :disabled="loadingImportPapers || loadingImportAnalytics || importingQuestions" @change="selectImportSourcePaper($event.target.value)">
                   <option value="">Choose a paper</option>
                   <optgroup v-for="group in groupedImportPapers" :key="group.key" :label="group.name">
-                    <option v-for="sourcePaper in group.papers" :key="sourcePaper.paperId" :value="sourcePaper.paperId">
-                      {{ sourcePaper.paperName }}
-                    </option>
+                    <template v-for="sourcePaper in group.papers" :key="sourcePaper.paperId">
+                      <option :value="sourcePaper.paperId">
+                        {{ sourcePaper.paperName }}<template v-if="sourcePaper.sourceExams[0]"> · {{ sourcePaper.sourceExams[0].examTitle }} · {{ formatImportExamDate(sourcePaper.sourceExams[0].publishedAt || sourcePaper.sourceExams[0].startTime) }}</template>
+                      </option>
+                      <option v-for="exam in sourcePaper.sourceExams.slice(1)" :key="exam.examId" :value="`${sourcePaper.paperId}:${exam.examId}`">
+                        {{ sourcePaper.paperName }} · {{ exam.examTitle }} · {{ formatImportExamDate(exam.publishedAt || exam.startTime) }}
+                      </option>
+                    </template>
                   </optgroup>
                 </select>
               </label>
@@ -3378,21 +3394,20 @@ onBeforeUnmount(() => {
               </label>
             </div>
 
-            <p v-if="importSourceExam" class="import-questions__source-note">Performance data: {{ importSourceExam.examTitle }}</p>
-            <p v-else class="import-questions__source-note">No exam performance data is available for this paper.</p>
-            <div class="import-questions-filters" role="group" aria-label="Filter questions by accuracy">
-              <button v-for="filter in [
-                { id: 'all', label: 'All questions' },
-                { id: 'low', label: 'Below 50%' },
-                { id: 'medium', label: '50% to <75%' },
-                { id: 'high', label: '75%+' },
-                { id: 'no-data', label: 'No answers' },
-              ]" :key="filter.id" type="button" :class="{ active: importAnalyticsFilter === filter.id }" @click="importAnalyticsFilter = filter.id">
-                {{ filter.label }}
-              </button>
+            <div>
+              <div class="import-questions-filters" role="group" aria-label="Filter questions by accuracy">
+                <button v-for="filter in [
+                  { id: 'all', label: 'All questions' },
+                  { id: 'low', label: 'Below 50%' },
+                  { id: 'medium', label: '50% to <75%' },
+                  { id: 'high', label: '75%+' },
+                  { id: 'no-data', label: 'No answers' },
+                ]" :key="filter.id" type="button" :class="{ active: importAnalyticsFilter === filter.id }" @click="importAnalyticsFilter = filter.id">
+                  {{ filter.label }}
+                </button>
+              </div>
+              <p v-if="importQuestionsError" class="import-questions-error" role="alert">{{ importQuestionsError }}</p>
             </div>
-
-            <p v-if="importQuestionsError" class="import-questions-error" role="alert">{{ importQuestionsError }}</p>
 
             <div v-if="loadingImportPapers || loadingImportAnalytics" class="import-questions-loading">Loading paper questions...</div>
             <div v-else-if="importPapers.length === 0" class="import-questions-empty">No papers are available.</div>
@@ -6463,13 +6478,6 @@ select.form-input {
   background: #fff;
   font: inherit;
   font-size: 13px;
-}
-
-.import-questions__source-note {
-  margin: 0;
-  padding: 0 24px 10px;
-  color: #64748b;
-  font-size: 12px;
 }
 
 .import-questions-filters {

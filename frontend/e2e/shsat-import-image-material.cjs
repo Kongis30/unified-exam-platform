@@ -24,6 +24,7 @@ async function main() {
   let targetPaperId;
   let draftTargetPaperId;
   let examId;
+  let secondExamId;
   let studentId;
   let classId;
   let groupId;
@@ -94,10 +95,18 @@ async function main() {
     assert.ok(await sourceSelect.locator('optgroup[label="Default Folder"]').count(),
       'ungrouped papers are listed under Default Folder');
     await sourceSelect.selectOption(String(sourcePaperId));
-    await page.getByText('No exam performance data is available for this paper.').waitFor();
     await page.locator('.import-question-row').first().waitFor();
+    assert.match(await page.locator('.import-question-row').first().innerText(), /No answers/,
+      'a paper without an exam displays no performance data');
+    await assertImportLayout(page);
     const draftNumber = Number((await page.locator('.import-question-row').first().innerText()).match(/Q(\d+)/)?.[1]);
     await page.getByLabel(`Select question ${draftNumber}`, { exact: true }).check();
+    await page.route(`**/api/admin/papers/${draftTargetPaperId}/questions/import-from-exam`, route => route.fulfill({
+      status: 409, contentType: 'application/json', body: JSON.stringify({ message: 'Temporary import error' }),
+    }), { times: 1 });
+    await page.getByRole('button', { name: 'Add 1 questions', exact: true }).click();
+    await page.getByText('Temporary import error', { exact: true }).waitFor();
+    await assertImportLayout(page);
     await page.getByRole('button', { name: 'Add 1 questions', exact: true }).click();
     await page.getByText('1 questions added from', { exact: false }).waitFor();
     assert.ok(readQuestions(await api(page, `/api/admin/papers/${draftTargetPaperId}`)).some(question => question.stem === stem),
@@ -136,15 +145,63 @@ async function main() {
     });
     await api(studentPage, `/api/student/attempts/${attemptId}/submit`, 'POST');
     await api(page, `/api/admin/exams/${examId}/close`, 'POST');
+    const secondRelease = await api(page, `/api/admin/papers/${sourcePaperId}/exams`, 'POST', {
+      title: `Second Image Import ${stamp}`, description: 'Second exam for the same paper',
+      opensAt: new Date(Date.now() - 60_000).toISOString(),
+      closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      durationSeconds: 10_800, attemptLimit: 1, targetScope: 'SELECTED',
+    });
+    secondExamId = Number(secondRelease.summary.id);
+    await api(page, `/api/admin/exams/${secondExamId}/targets`, 'PUT', { classIds: [classId], studentUserIds: [] });
+    await api(page, `/api/admin/exams/${secondExamId}/publish`, 'POST');
 
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin/papers/${targetPaperId}/edit`);
     await page.getByRole('heading', { name: `Image Target ${stamp}`, exact: true }).waitFor();
     await page.getByRole('button', { name: 'Import from Paper', exact: true }).click();
     await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
-    await page.locator('.import-source-select select').selectOption(String(sourcePaperId));
+    const examSelect = page.locator('.import-source-select select');
+    await examSelect.selectOption(String(sourcePaperId));
+    await page.locator('.import-question-row').first().waitFor();
+    assert.match(await page.locator('.import-question-row').first().innerText(), /No answers/,
+      'the latest exam displays its own empty performance data');
+    await page.getByRole('button', { name: 'No answers', exact: true }).click();
+    assert.equal(await page.locator('.import-question-row').count(), 1, 'no-answer filtering keeps the unanswered question');
+    await examSelect.selectOption(`${sourcePaperId}:${examId}`);
     const row = page.locator('.import-question-row').first();
     await row.waitFor();
-    assert.match(await row.innerText(), /1 \/ 1 answered/, 'the closed exam retains its student performance data');
+    assert.match(await row.innerText(), /1 \/ 1 answered/, 'selecting the closed exam displays its own student performance');
+    await page.getByRole('button', { name: 'Below 50%', exact: true }).click();
+    await page.getByText('No questions match this filter.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '75%+', exact: true }).click();
+    await row.waitFor();
+    const groupHeading = page.locator('.import-question-group__heading').first();
+    await groupHeading.click();
+    assert.equal(await groupHeading.getAttribute('aria-expanded'), 'false', 'the question group can be collapsed');
+    await groupHeading.click();
+    await row.waitFor();
+    await assertImportLayout(page);
+    await page.screenshot({ path: '/tmp/shsat-import-window-restored-desktop.png' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await assertImportLayout(page);
+    await page.screenshot({ path: '/tmp/shsat-import-window-restored-mobile.png' });
+    const mobileScroll = await page.evaluate(() => {
+      const filters = document.querySelector('.import-questions-filters');
+      const workspace = document.querySelector('.import-questions-workspace');
+      filters.scrollLeft = filters.scrollWidth;
+      workspace.scrollTop = workspace.scrollHeight;
+      const lastFilter = filters.lastElementChild.getBoundingClientRect();
+      const filterBounds = filters.getBoundingClientRect();
+      return {
+        filterScroll: filters.scrollLeft,
+        lastFilterVisible: lastFilter.right <= filterBounds.right + 1,
+        workspaceScroll: workspace.scrollTop,
+      };
+    });
+    assert.ok(mobileScroll.filterScroll > 0 && mobileScroll.lastFilterVisible,
+      `all filters can be reached on mobile: ${JSON.stringify(mobileScroll)}`);
+    assert.ok(mobileScroll.workspaceScroll > 0,
+      `the question and preview area can be scrolled on mobile: ${JSON.stringify(mobileScroll)}`);
+    await page.setViewportSize({ width: 1440, height: 900 });
     const questionNumber = Number((await row.innerText()).match(/Q(\d+)/)?.[1]);
     assert.ok(questionNumber > 0, 'the source image question is listed for import');
     await page.getByLabel(`Select question ${questionNumber}`, { exact: true }).check();
@@ -195,6 +252,7 @@ async function main() {
       pageErrors: pageErrors.length,
     }, null, 2));
   } finally {
+    if (secondExamId) await api(page, `/api/admin/exams/${secondExamId}`, 'DELETE').catch(() => {});
     if (examId) await api(page, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (studentPage) await studentPage.close().catch(() => {});
     if (classId && studentId) await api(page, `/api/admin/classes/${classId}/students/${studentId}`, 'DELETE').catch(() => {});
@@ -213,6 +271,23 @@ async function main() {
     }
     await browser.close();
   }
+}
+
+// 筛选栏、题目区和底部操作必须各占独立区域，避免被窗口内部内容覆盖。
+async function assertImportLayout(page) {
+  const geometry = await page.evaluate(() => {
+    const dialog = document.querySelector('.import-questions-dialog').getBoundingClientRect();
+    const filters = document.querySelector('.import-questions-filters').getBoundingClientRect();
+    const workspace = document.querySelector('.import-questions-workspace').getBoundingClientRect();
+    const footer = document.querySelector('.import-questions-footer').getBoundingClientRect();
+    return { dialogTop: dialog.top, dialogBottom: dialog.bottom, filtersTop: filters.top,
+      filtersBottom: filters.bottom, workspaceTop: workspace.top, workspaceBottom: workspace.bottom,
+      footerTop: footer.top, footerBottom: footer.bottom };
+  });
+  assert.ok(geometry.filtersTop >= geometry.dialogTop && geometry.filtersBottom <= geometry.workspaceTop + 1,
+    `the filters remain visible above the questions: ${JSON.stringify(geometry)}`);
+  assert.ok(geometry.workspaceBottom <= geometry.footerTop + 1 && geometry.footerBottom <= geometry.dialogBottom + 1,
+    `the footer remains visible below the questions: ${JSON.stringify(geometry)}`);
 }
 
 async function login(page, loginUsername = username, loginPassword = password) {
