@@ -61,19 +61,21 @@ const showPartsModal = ref(false);
 const showTypesModal = ref(false);
 const showLeaveConfirmModal = ref(false);
 const showImportQuestionsModal = ref(false);
-const loadingImportExams = ref(false);
+const loadingImportPapers = ref(false);
 const loadingImportAnalytics = ref(false);
-const loadingImportDetail = ref(false);
 const importingQuestions = ref(false);
-const importExams = ref([]);
-const importPaperNames = ref({});
-const importExamId = ref('');
+const importPapers = ref([]);
+const importPaperGroups = ref([]);
+const importSourcePaper = ref(null);
+const importSourceExam = ref(null);
+const importPaperId = ref('');
 const importAnalytics = ref([]);
 const importAnalyticsFilter = ref('all');
 const importQuestionTypeFilter = ref('all');
 const collapsedImportGroupCodes = ref(new Set());
-const selectedImportQuestionNumbers = ref([]);
+const selectedImportItemIds = ref([]);
 const previewImportQuestionNumber = ref(null);
+const previewImportItemId = ref(null);
 const previewImportQuestion = ref(null);
 const importQuestionsError = ref('');
 const questionPendingDeletion = ref(null);
@@ -212,7 +214,7 @@ const visibleImportAnalyticsGroups = computed(() => [
   const entriesByKey = new Map();
   questions.forEach((row) => {
     const materialId = row.materialId === null || row.materialId === undefined ? null : String(row.materialId);
-    const key = materialId === null ? `question-${row.questionNumber}` : `material-${materialId}`;
+    const key = materialId === null ? `question-${row.paperItemId}` : `material-${materialId}`;
     if (!entriesByKey.has(key)) {
       entriesByKey.set(key, materialId === null
         ? { key, material: false, questions: [row], firstQuestionNumber: Number(row.questionNumber) }
@@ -238,14 +240,37 @@ const visibleImportAnalyticsGroups = computed(() => [
 }).filter((group) => group.questions.length > 0));
 
 const selectedVisibleImportQuestionCount = computed(() => visibleImportAnalytics.value.reduce((count, row) => (
-  selectedImportQuestionNumbers.value.includes(Number(row.questionNumber)) ? count + 1 : count
+  selectedImportItemIds.value.includes(String(row.paperItemId)) ? count + 1 : count
 ), 0));
 const allVisibleImportQuestionsSelected = computed(() => (
   visibleImportAnalytics.value.length > 0
   && selectedVisibleImportQuestionCount.value === visibleImportAnalytics.value.length
 ));
-const selectedImportQuestionCount = computed(() => selectedImportQuestionNumbers.value.length);
-const selectedImportExam = computed(() => importExams.value.find((exam) => String(exam.examId) === String(importExamId.value)) || null);
+const selectedImportQuestionCount = computed(() => selectedImportItemIds.value.length);
+const selectedImportPaper = computed(() => importPapers.value.find((paper) => String(paper.paperId) === String(importPaperId.value)) || null);
+const groupedImportPapers = computed(() => {
+  const groups = new Map();
+  const groupDetails = new Map(importPaperGroups.value.map((group) => [String(group.paperGroupId), group]));
+  for (const sourcePaper of importPapers.value) {
+    const group = groupDetails.get(String(sourcePaper.paperGroupId));
+    const name = group?.groupName || sourcePaper.paperGroupName || '';
+    const isDefault = !sourcePaper.paperGroupId || ['default', 'default folder', 'ungrouped'].includes(name.trim().toLowerCase());
+    const key = isDefault ? 'default-folder' : String(sourcePaper.paperGroupId);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        name: isDefault ? 'Default Folder' : name || 'Ungrouped',
+        order: isDefault ? -1 : Number(group?.displayOrder || 0),
+        papers: [],
+      });
+    }
+    groups.get(key).papers.push(sourcePaper);
+  }
+  const compareNames = (a, b) => String(a || '').localeCompare(String(b || ''), 'en', { numeric: true, sensitivity: 'base' });
+  return [...groups.values()]
+    .map((group) => ({ ...group, papers: group.papers.sort((a, b) => compareNames(a.paperName, b.paperName)) }))
+    .sort((a, b) => a.order - b.order || compareNames(a.name, b.name));
+});
 
 function toggleImportQuestionGroup(groupCode) {
   const nextCollapsedGroups = new Set(collapsedImportGroupCodes.value);
@@ -2117,76 +2142,102 @@ function scrollQuestionListTo(questionId) {
   });
 }
 
-// 摘题窗口只读取统计列表和当前选中的题目详情，确认加入时才调用事务式复制接口。
+// 摘题窗口按试卷加载题目，可用时附带最近一次有答题数据的考试统计。
 async function openImportQuestions() {
   showImportQuestionsModal.value = true;
-  loadingImportExams.value = true;
+  loadingImportPapers.value = true;
   importQuestionsError.value = '';
-  importExamId.value = '';
+  importPaperId.value = '';
   importAnalytics.value = [];
   collapsedImportGroupCodes.value = new Set();
-  selectedImportQuestionNumbers.value = [];
+  selectedImportItemIds.value = [];
   previewImportQuestionNumber.value = null;
+  previewImportItemId.value = null;
   previewImportQuestion.value = null;
 
   try {
-    const [examResponse, paperResponse] = await Promise.all([adminApi.getExams(), adminApi.getPapers()]);
-    importExams.value = (unwrapResponse(examResponse) || [])
-      .filter((exam) => exam.published)
-      .sort((left, right) => new Date(right.publishedAt || right.startTime || 0) - new Date(left.publishedAt || left.startTime || 0));
-    importPaperNames.value = Object.fromEntries((unwrapResponse(paperResponse) || []).map((item) => [item.paperId, item.paperName]));
-    const firstExam = importExams.value[0];
-    if (firstExam) await selectImportSourceExam(firstExam.examId);
+    const [examResponse, paperResponse, groupResponse] = await Promise.all([
+      adminApi.getExams().catch(() => []), adminApi.getPapers({}, { force: true }), adminApi.getPaperGroups({ force: true }),
+    ]);
+    const exams = unwrapResponse(examResponse) || [];
+    importPaperGroups.value = unwrapResponse(groupResponse) || [];
+    importPapers.value = (unwrapResponse(paperResponse) || []).map((sourcePaper) => ({
+      ...sourcePaper,
+      sourceExam: exams.filter((exam) => String(exam.paperId) === String(sourcePaper.paperId) && ['PUBLISHED', 'CLOSED'].includes(exam.status))
+        .sort((a, b) => Number(Boolean(b.hasStudentAttempts)) - Number(Boolean(a.hasStudentAttempts))
+          || new Date(b.publishedAt || b.startTime || 0) - new Date(a.publishedAt || a.startTime || 0))[0] || null,
+    }));
+    if (groupedImportPapers.value[0]?.papers[0]) await selectImportSourcePaper(groupedImportPapers.value[0].papers[0].paperId);
   } catch (error) {
-    importQuestionsError.value = error.message || 'Failed to load published exams.';
+    importQuestionsError.value = error.message || 'Failed to load papers.';
   } finally {
-    loadingImportExams.value = false;
+    loadingImportPapers.value = false;
   }
 }
 
-async function selectImportSourceExam(examId) {
-  importExamId.value = String(examId || '');
+async function selectImportSourcePaper(sourcePaperId) {
+  importPaperId.value = String(sourcePaperId || '');
+  importSourcePaper.value = null;
+  importSourceExam.value = null;
   importAnalytics.value = [];
   importAnalyticsFilter.value = 'all';
   importQuestionTypeFilter.value = 'all';
   collapsedImportGroupCodes.value = new Set();
-  selectedImportQuestionNumbers.value = [];
+  selectedImportItemIds.value = [];
   previewImportQuestionNumber.value = null;
+  previewImportItemId.value = null;
   previewImportQuestion.value = null;
   importQuestionsError.value = '';
-  if (!importExamId.value) return;
+  if (!importPaperId.value) return;
 
   loadingImportAnalytics.value = true;
   try {
-    const response = await adminApi.getExamMonitorAnalytics(importExamId.value);
-    const payload = unwrapResponse(response);
-    importAnalytics.value = payload?.questionAnalytics || [];
+    const paper = await adminApi.getPaper(importPaperId.value);
+    importSourcePaper.value = unwrapResponse(paper);
+    importSourceExam.value = selectedImportPaper.value?.sourceExam || null;
+    let stats = [];
+    if (importSourceExam.value) {
+      try {
+        const response = await adminApi.getExamMonitorAnalytics(importSourceExam.value.examId);
+        stats = unwrapResponse(response)?.questionAnalytics || [];
+      } catch {
+        importSourceExam.value = null;
+      }
+    }
+    const statsByNumber = new Map(stats.map((row) => [Number(row.questionNumber), row]));
+    const sourceQuestions = importSourcePaper.value?.questions || [];
+    const numberCounts = new Map();
+    sourceQuestions.forEach((question) => numberCounts.set(Number(question.questionNumber), (numberCounts.get(Number(question.questionNumber)) || 0) + 1));
+    importAnalytics.value = sourceQuestions.map((question) => {
+      const part = importSourcePaper.value.parts.find((item) => String(item.partId) === String(question.partId));
+      const material = importSourcePaper.value.materials.find((item) => String(item.materialId) === String(question.materialId));
+      return {
+        questionNumber: question.questionNumber, questionType: question.questionType,
+        shsatSubjectCode: part?.partCode, attempted: 0, wrongCount: 0, accuracy: null,
+        ...(numberCounts.get(Number(question.questionNumber)) === 1 ? statsByNumber.get(Number(question.questionNumber)) || {} : {}),
+        paperItemId: question.paperItemId, materialId: material?.materialId ?? null, materialTitle: material?.materialTitle ?? null,
+      };
+    });
     const firstQuestion = sortedImportAnalytics.value[0];
-    if (firstQuestion) await previewImportQuestionDetails(firstQuestion.questionNumber);
+    if (firstQuestion) await previewImportQuestionDetails(firstQuestion.paperItemId);
   } catch (error) {
-    importQuestionsError.value = error.message || 'Failed to load question performance.';
+    importQuestionsError.value = error.message || 'Failed to load paper questions.';
   } finally {
     loadingImportAnalytics.value = false;
   }
 }
 
-async function previewImportQuestionDetails(questionNumber) {
-  previewImportQuestionNumber.value = Number(questionNumber);
-  previewImportQuestion.value = null;
-  loadingImportDetail.value = true;
-  importQuestionsError.value = '';
-  try {
-    const response = await adminApi.getExamMonitorQuestion(importExamId.value, questionNumber);
-    const payload = unwrapResponse(response);
-    previewImportQuestion.value = {
-      ...(payload.question || {}),
-      material: payload.material || null,
-    };
-  } catch (error) {
-    importQuestionsError.value = error.message || 'Failed to load this question.';
-  } finally {
-    loadingImportDetail.value = false;
-  }
+async function previewImportQuestionDetails(itemId) {
+  previewImportItemId.value = String(itemId);
+  const question = importSourcePaper.value?.questions.find((item) => String(item.paperItemId) === String(itemId));
+  previewImportQuestionNumber.value = question?.questionNumber ?? null;
+  if (!question) { previewImportQuestion.value = null; return; }
+  const material = importSourcePaper.value.materials.find((item) => String(item.materialId) === String(question.materialId));
+  previewImportQuestion.value = {
+    ...question,
+    correctAnswerData: parseJson(question.correctAnswerData),
+    material: material || null,
+  };
 }
 
 function previewImportedImage(src) {
@@ -2203,16 +2254,16 @@ function previewImportedImage(src) {
   editorImagePreviewPanState = null;
 }
 
-function toggleImportQuestion(questionNumber) {
-  const normalizedNumber = Number(questionNumber);
-  selectedImportQuestionNumbers.value = selectedImportQuestionNumbers.value.includes(normalizedNumber)
-    ? selectedImportQuestionNumbers.value.filter((number) => number !== normalizedNumber)
-    : [...selectedImportQuestionNumbers.value, normalizedNumber];
+function toggleImportQuestion(itemId) {
+  const normalizedNumber = String(itemId);
+  selectedImportItemIds.value = selectedImportItemIds.value.includes(normalizedNumber)
+    ? selectedImportItemIds.value.filter((number) => number !== normalizedNumber)
+    : [...selectedImportItemIds.value, normalizedNumber];
 }
 
 function toggleAllVisibleImportQuestions() {
-  const visibleNumbers = visibleImportAnalytics.value.map((row) => Number(row.questionNumber));
-  const selectedNumbers = new Set(selectedImportQuestionNumbers.value);
+  const visibleNumbers = visibleImportAnalytics.value.map((row) => String(row.paperItemId));
+  const selectedNumbers = new Set(selectedImportItemIds.value);
 
   if (allVisibleImportQuestionsSelected.value) {
     visibleNumbers.forEach((number) => selectedNumbers.delete(number));
@@ -2220,11 +2271,11 @@ function toggleAllVisibleImportQuestions() {
     visibleNumbers.forEach((number) => selectedNumbers.add(number));
   }
 
-  selectedImportQuestionNumbers.value = [...selectedNumbers];
+  selectedImportItemIds.value = [...selectedNumbers];
 }
 
 async function confirmImportQuestions() {
-  if (importingQuestions.value || selectedImportQuestionNumbers.value.length === 0 || !selectedImportExam.value) return;
+  if (importingQuestions.value || selectedImportItemIds.value.length === 0 || !selectedImportPaper.value) return;
 
   importingQuestions.value = true;
   importQuestionsError.value = '';
@@ -2237,9 +2288,9 @@ async function confirmImportQuestions() {
       }
     }
 
-    const response = await adminApi.importQuestionsFromExam(paperId.value, {
-      sourceExamId: Number(importExamId.value),
-      questionNumbers: selectedImportQuestionNumbers.value,
+    const response = await adminApi.importQuestionsFromPaper(paperId.value, {
+      sourcePaperId: Number(importPaperId.value),
+      paperItemIds: selectedImportItemIds.value.map(Number),
     });
     const importedQuestions = unwrapResponse(response) || [];
     const firstImportedQuestionId = importedQuestions[0]?.questionId;
@@ -2258,21 +2309,12 @@ async function confirmImportQuestions() {
       await nextTick();
       scrollQuestionListTo(addedQuestion.questionId);
     }
-    showNotice(`${importedQuestions.length} questions added from ${selectedImportExam.value?.examTitle || 'the selected exam'}.`);
+    showNotice(`${importedQuestions.length} questions added from ${selectedImportPaper.value?.paperName || 'the selected paper'}.`);
   } catch (error) {
     importQuestionsError.value = error.message || 'Failed to add selected questions.';
   } finally {
     importingQuestions.value = false;
   }
-}
-
-function formatImportExamDate(value) {
-  if (!value) return 'Date unavailable';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Date unavailable';
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23',
-  }).format(date);
 }
 
 function formatImportAccuracy(value) {
@@ -3308,21 +3350,23 @@ onBeforeUnmount(() => {
           <section class="import-questions-dialog" role="dialog" aria-modal="true" aria-labelledby="import-questions-title">
             <header class="import-questions-header">
               <div>
-                <p class="import-questions-eyebrow">BUILD FROM EXAM DATA</p>
+                <p class="import-questions-eyebrow">BUILD FROM PAPER DATA</p>
                 <h2 id="import-questions-title">Import questions</h2>
-                <p>Choose questions using student performance, then add them to {{ paper?.paperName }}.</p>
+                <p>Choose questions from a paper, then add them to {{ paper?.paperName }}.</p>
               </div>
               <button class="modal-card__close" type="button" aria-label="Close" :disabled="importingQuestions" @click="showImportQuestionsModal = false">&times;</button>
             </header>
 
             <div class="import-source-toolbar">
               <label class="import-source-select">
-                <span>Published exam</span>
-                <select :value="importExamId" :disabled="loadingImportExams || loadingImportAnalytics || importingQuestions" @change="selectImportSourceExam($event.target.value)">
-                  <option value="">Choose an exam</option>
-                  <option v-for="exam in importExams" :key="exam.examId" :value="exam.examId">
-                    {{ exam.examTitle }} · {{ importPaperNames[exam.paperId] || 'Paper' }} · {{ formatImportExamDate(exam.publishedAt || exam.startTime) }}
-                  </option>
+                <span>Source paper</span>
+                <select :value="importPaperId" :disabled="loadingImportPapers || loadingImportAnalytics || importingQuestions" @change="selectImportSourcePaper($event.target.value)">
+                  <option value="">Choose a paper</option>
+                  <optgroup v-for="group in groupedImportPapers" :key="group.key" :label="group.name">
+                    <option v-for="sourcePaper in group.papers" :key="sourcePaper.paperId" :value="sourcePaper.paperId">
+                      {{ sourcePaper.paperName }}
+                    </option>
+                  </optgroup>
                 </select>
               </label>
               <label class="import-type-select">
@@ -3334,6 +3378,8 @@ onBeforeUnmount(() => {
               </label>
             </div>
 
+            <p v-if="importSourceExam" class="import-questions__source-note">Performance data: {{ importSourceExam.examTitle }}</p>
+            <p v-else class="import-questions__source-note">No exam performance data is available for this paper.</p>
             <div class="import-questions-filters" role="group" aria-label="Filter questions by accuracy">
               <button v-for="filter in [
                 { id: 'all', label: 'All questions' },
@@ -3348,11 +3394,11 @@ onBeforeUnmount(() => {
 
             <p v-if="importQuestionsError" class="import-questions-error" role="alert">{{ importQuestionsError }}</p>
 
-            <div v-if="loadingImportExams || loadingImportAnalytics" class="import-questions-loading">Loading exam questions...</div>
-            <div v-else-if="importExams.length === 0" class="import-questions-empty">No published exams are available.</div>
-            <div v-else-if="importAnalytics.length === 0" class="import-questions-empty">This exam has no question performance data.</div>
+            <div v-if="loadingImportPapers || loadingImportAnalytics" class="import-questions-loading">Loading paper questions...</div>
+            <div v-else-if="importPapers.length === 0" class="import-questions-empty">No papers are available.</div>
+            <div v-else-if="importAnalytics.length === 0" class="import-questions-empty">This paper has no questions.</div>
             <div v-else class="import-questions-workspace">
-              <section class="import-question-list" aria-label="Questions from selected exam">
+              <section class="import-question-list" aria-label="Questions from selected paper">
                 <label v-if="visibleImportAnalytics.length > 0" class="import-question-list__select-all">
                   <input
                     type="checkbox"
@@ -3387,19 +3433,19 @@ onBeforeUnmount(() => {
                       </div>
                       <article
                         v-for="row in entry.questions"
-                        :key="row.questionNumber"
+                        :key="row.paperItemId"
                         class="import-question-row"
-                        :class="{ selected: previewImportQuestionNumber === Number(row.questionNumber), checked: selectedImportQuestionNumbers.includes(Number(row.questionNumber)) }"
+                        :class="{ selected: previewImportItemId === String(row.paperItemId), checked: selectedImportItemIds.includes(String(row.paperItemId)) }"
                       >
                         <label class="import-question-select">
                           <input
                             type="checkbox"
-                            :checked="selectedImportQuestionNumbers.includes(Number(row.questionNumber))"
+                            :checked="selectedImportItemIds.includes(String(row.paperItemId))"
                             :aria-label="`Select question ${row.questionNumber}`"
-                            @change="toggleImportQuestion(row.questionNumber)"
+                            @change="toggleImportQuestion(row.paperItemId)"
                           />
                         </label>
-                        <button class="import-question-row__preview" type="button" @click="previewImportQuestionDetails(row.questionNumber)">
+                        <button class="import-question-row__preview" type="button" @click="previewImportQuestionDetails(row.paperItemId)">
                           <span class="import-question-row__main">
                             <strong>Q{{ row.questionNumber }} <small>{{ getQuestionTypeLabel(row.questionType) }}</small></strong>
                             <span>{{ row.correctCount || 0 }} / {{ row.attemptedCount || 0 }} answered · {{ row.wrongCount || 0 }} incorrect</span>
@@ -3419,8 +3465,7 @@ onBeforeUnmount(() => {
               </section>
 
               <section class="import-question-preview" aria-label="Question preview">
-                <div v-if="loadingImportDetail" class="import-questions-loading">Loading question preview...</div>
-                <div v-else-if="previewImportQuestion" class="import-question-preview__content">
+                <div v-if="previewImportQuestion" class="import-question-preview__content">
                   <div class="import-question-preview__heading">
                     <strong>Question {{ previewImportQuestionNumber }}</strong>
                     <span>{{ getQuestionTypeLabel(previewImportQuestion.questionType) }}</span>
@@ -3436,10 +3481,10 @@ onBeforeUnmount(() => {
             </div>
 
             <footer class="import-questions-footer">
-              <p>{{ selectedImportQuestionCount }} selected<span v-if="selectedImportExam"> · {{ selectedImportExam.examTitle }}</span></p>
+              <p>{{ selectedImportQuestionCount }} selected<span v-if="selectedImportPaper"> · {{ selectedImportPaper.paperName }}</span></p>
               <div>
                 <AppButton variant="ghost" :disabled="importingQuestions" @click="showImportQuestionsModal = false">Cancel</AppButton>
-                <AppButton :disabled="importingQuestions || selectedImportQuestionCount === 0 || loadingImportExams || loadingImportAnalytics" @click="confirmImportQuestions">
+                <AppButton :disabled="importingQuestions || selectedImportQuestionCount === 0 || loadingImportPapers || loadingImportAnalytics" @click="confirmImportQuestions">
                   {{ importingQuestions ? 'Adding questions...' : `Add ${selectedImportQuestionCount} questions` }}
                 </AppButton>
               </div>
@@ -3612,7 +3657,7 @@ onBeforeUnmount(() => {
                 <p>{{ parts.length }} parts · {{ subTypes.length }} types</p>
               </div>
               <div class="sidebar-actions">
-                <AppButton variant="secondary" @click="openImportQuestions">Import from Exam</AppButton>
+                <AppButton variant="secondary" @click="openImportQuestions">Import from Paper</AppButton>
                 <AppButton variant="secondary" @click="showPartsModal = true">Parts</AppButton>
                 <AppButton variant="secondary" @click="showTypesModal = true">Types</AppButton>
               </div>
@@ -6418,6 +6463,13 @@ select.form-input {
   background: #fff;
   font: inherit;
   font-size: 13px;
+}
+
+.import-questions__source-note {
+  margin: 0;
+  padding: 0 24px 10px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .import-questions-filters {

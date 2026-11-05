@@ -22,13 +22,26 @@ async function main() {
   const stem = `Image material import ${stamp}`;
   let sourcePaperId;
   let targetPaperId;
+  let draftTargetPaperId;
   let examId;
   let studentId;
+  let classId;
+  let groupId;
+  const groupedPaperIds = [];
   let uploadedAssetUrl;
   try {
     await login(page);
     sourcePaperId = Number((await createPaper(page, `IMPORT_IMAGE_SOURCE_${stamp}`, `Image Source ${stamp}`)).summary.id);
     targetPaperId = Number((await createPaper(page, `IMPORT_IMAGE_TARGET_${stamp}`, `Image Target ${stamp}`)).summary.id);
+    draftTargetPaperId = Number((await createPaper(page, `IMPORT_DRAFT_TARGET_${stamp}`, `Draft Target ${stamp}`)).summary.id);
+    const group = await api(page, '/api/admin/exam-types/SHSAT/paper-groups', 'POST', {
+      name: `Import Folder ${stamp}`, description: 'Temporary grouping test', sortOrder: 0,
+    });
+    groupId = Number(group.id);
+    for (const title of [`Zulu ${stamp}`, `Alpha ${stamp}`]) {
+      const grouped = await createPaper(page, `GROUP_${title.split(' ')[0]}_${stamp}`, title, groupId);
+      groupedPaperIds.push(Number(grouped.summary.id));
+    }
 
     const imageBase64 = await page.evaluate(() => {
       const canvas = document.createElement('canvas');
@@ -68,12 +81,38 @@ async function main() {
       }],
       sections: sourceSections,
     });
+    // 未发布过考试的草稿试卷也应可选、可预览；取消后不改变目标试卷。
+    await page.goto(`${baseUrl}/exam-types/SHSAT/admin/papers/${draftTargetPaperId}/edit`);
+    await page.getByRole('heading', { name: `Draft Target ${stamp}`, exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Import from Paper', exact: true }).click();
+    await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
+    const sourceSelect = page.locator('.import-source-select select');
+    await sourceSelect.locator('optgroup', { hasText: `Alpha ${stamp}` }).waitFor({ state: 'attached' });
+    const groupOptions = await sourceSelect.locator(`optgroup[label="Import Folder ${stamp}"] option`).allTextContents();
+    assert.deepEqual(groupOptions.map(text => text.trim()), [`Alpha ${stamp}`, `Zulu ${stamp}`],
+      'source papers are grouped by folder and sorted by name');
+    assert.ok(await sourceSelect.locator('optgroup[label="Default Folder"]').count(),
+      'ungrouped papers are listed under Default Folder');
+    await sourceSelect.selectOption(String(sourcePaperId));
+    await page.getByText('No exam performance data is available for this paper.').waitFor();
+    await page.locator('.import-question-row').first().waitFor();
+    const draftNumber = Number((await page.locator('.import-question-row').first().innerText()).match(/Q(\d+)/)?.[1]);
+    await page.getByLabel(`Select question ${draftNumber}`, { exact: true }).check();
+    await page.getByRole('button', { name: 'Add 1 questions', exact: true }).click();
+    await page.getByText('1 questions added from', { exact: false }).waitFor();
+    assert.ok(readQuestions(await api(page, `/api/admin/papers/${draftTargetPaperId}`)).some(question => question.stem === stem),
+      'a draft paper without an exam can be imported');
     await api(page, `/api/admin/papers/${sourcePaperId}/seal`, 'POST');
     const student = await api(page, '/api/admin/users', 'POST', {
       username: `imageimport${stamp}@jin`, password: `Image-Import-${stamp}-Pass!`,
-      realName: `Image Import ${stamp}`, roleCode: 'STUDENT', email: null, phone: null,
+      realName: `Image Import ${stamp}`, roleCode: 'STUDENT', email: null, phone: null, workspaceCodes: ['SHSAT'],
     });
     studentId = Number(student.id);
+    const classroom = await api(page, '/api/admin/classes?examTypeCodes=SHSAT', 'POST', {
+      name: `Image Import Class ${stamp}`, description: 'Temporary import test', sortOrder: 999, active: true,
+    });
+    classId = Number(classroom.classId || classroom.id);
+    await api(page, `/api/admin/classes/${classId}/students`, 'POST', { studentUserId: studentId });
     const release = await api(page, `/api/admin/papers/${sourcePaperId}/exams`, 'POST', {
       title: `Image Import Source ${stamp}`,
       description: 'Temporary source exam for image material import regression',
@@ -84,7 +123,7 @@ async function main() {
       targetScope: 'SELECTED',
     });
     examId = Number(release.summary.id);
-    await api(page, `/api/admin/exams/${examId}/targets`, 'PUT', { classIds: [], studentUserIds: [studentId] });
+    await api(page, `/api/admin/exams/${examId}/targets`, 'PUT', { classIds: [classId], studentUserIds: [] });
     await api(page, `/api/admin/exams/${examId}/publish`, 'POST');
     studentPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
     studentPage.on('pageerror', error => pageErrors.push(error.message));
@@ -96,14 +135,16 @@ async function main() {
       answer: { answers: ['A'] }, timeSpentSeconds: 12,
     });
     await api(studentPage, `/api/student/attempts/${attemptId}/submit`, 'POST');
+    await api(page, `/api/admin/exams/${examId}/close`, 'POST');
 
     await page.goto(`${baseUrl}/exam-types/SHSAT/admin/papers/${targetPaperId}/edit`);
     await page.getByRole('heading', { name: `Image Target ${stamp}`, exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Import from Exam', exact: true }).click();
+    await page.getByRole('button', { name: 'Import from Paper', exact: true }).click();
     await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
-    await page.locator('.import-source-select select').selectOption(String(examId));
+    await page.locator('.import-source-select select').selectOption(String(sourcePaperId));
     const row = page.locator('.import-question-row').first();
     await row.waitFor();
+    assert.match(await row.innerText(), /1 \/ 1 answered/, 'the closed exam retains its student performance data');
     const questionNumber = Number((await row.innerText()).match(/Q(\d+)/)?.[1]);
     assert.ok(questionNumber > 0, 'the source image question is listed for import');
     await page.getByLabel(`Select question ${questionNumber}`, { exact: true }).check();
@@ -123,7 +164,7 @@ async function main() {
       'the imported material keeps its valid image asset URL');
 
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${targetPaperId}/preview`);
+    await page.waitForURL(url => url.pathname.endsWith(`/admin/papers/${targetPaperId}/preview`));
     const image = page.locator('.material-section img');
     await image.waitFor({ state: 'visible' });
     await page.waitForFunction(() => {
@@ -156,7 +197,12 @@ async function main() {
   } finally {
     if (examId) await api(page, `/api/admin/exams/${examId}`, 'DELETE').catch(() => {});
     if (studentPage) await studentPage.close().catch(() => {});
+    if (classId && studentId) await api(page, `/api/admin/classes/${classId}/students/${studentId}`, 'DELETE').catch(() => {});
+    if (classId) await api(page, `/api/admin/classes/${classId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (studentId) await api(page, `/api/admin/users/${studentId}`, 'DELETE').catch(() => {});
+    for (const id of groupedPaperIds) await api(page, `/api/admin/papers/${id}`, 'DELETE').catch(() => {});
+    if (groupId) await api(page, `/api/admin/paper-groups/${groupId}`, 'DELETE').catch(() => {});
+    if (draftTargetPaperId) await api(page, `/api/admin/papers/${draftTargetPaperId}`, 'DELETE').catch(() => {});
     if (targetPaperId) await api(page, `/api/admin/papers/${targetPaperId}`, 'DELETE').catch(() => {});
     if (sourcePaperId) await api(page, `/api/admin/papers/${sourcePaperId}`, 'DELETE').catch(() => {});
     if (uploadedAssetUrl?.startsWith('/uploads/paper-materials/')) {
@@ -177,10 +223,10 @@ async function login(page, loginUsername = username, loginPassword = password) {
   await page.waitForURL(url => !url.pathname.endsWith('/login'));
 }
 
-async function createPaper(page, code, title) {
+async function createPaper(page, code, title, groupId = null) {
   return api(page, '/api/admin/exam-types/SHSAT/papers', 'POST', {
     paperCode: code, title, description: 'Temporary image material import test',
-    groupId: null, defaultDurationSeconds: 1_200,
+    groupId, defaultDurationSeconds: 1_200,
   });
 }
 

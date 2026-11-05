@@ -35,6 +35,7 @@ async function main() {
   const tempUserIds = [];
   const tempStudentPages = [];
   let sourceExamId;
+  let importClassId;
 
   try {
     await login(page);
@@ -610,7 +611,7 @@ async function main() {
         username: `editorimport${stamp}_${index}@jin`,
         password: `Import-${stamp}-${index}-Pass!`,
         realName: `Editor Import ${stamp} ${index + 1}`,
-        roleCode: 'STUDENT',
+        roleCode: 'STUDENT', workspaceCodes: ['SHSAT'],
         email: null,
         phone: null,
       });
@@ -620,6 +621,13 @@ async function main() {
         username: `editorimport${stamp}_${index}@jin`,
         password: `Import-${stamp}-${index}-Pass!`,
       });
+    }
+    const importClass = await api(page, '/api/admin/classes?examTypeCodes=SHSAT', 'POST', {
+      name: `Editor Import Class ${stamp}`, description: 'Temporary import test', sortOrder: 999, active: true,
+    });
+    importClassId = Number(importClass.classId || importClass.id);
+    for (const student of importStudents) {
+      await api(page, `/api/admin/classes/${importClassId}/students`, 'POST', { studentUserId: student.id });
     }
     const importRelease = await api(page, `/api/admin/papers/${sourcePaperId}/exams`, 'POST', {
       title: `Editor Import Source ${stamp}`,
@@ -632,7 +640,7 @@ async function main() {
     });
     sourceExamId = Number(importRelease.summary.id);
     await api(page, `/api/admin/exams/${sourceExamId}/targets`, 'PUT', {
-      classIds: [], studentUserIds: importStudents.map(student => student.id),
+      classIds: [importClassId], studentUserIds: [],
     });
     await api(page, `/api/admin/exams/${sourceExamId}/publish`, 'POST');
 
@@ -680,13 +688,10 @@ async function main() {
       'the material-backed source question retains its submitted 100% accuracy');
 
     await page.locator('.notice').waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: 'Import from Exam', exact: true }).click();
+    await page.getByRole('button', { name: 'Import from Paper', exact: true }).click();
     await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
     const sourceExamSelect = page.locator('.import-source-select select');
-    await page.waitForFunction((examId) => {
-      const select = document.querySelector('.import-source-select select');
-      return select && select.value === String(examId);
-    }, sourceExamId);
+    await sourceExamSelect.selectOption(String(sourcePaperId));
     const questionTypeFilter = page.locator('.import-type-select select');
     await questionTypeFilter.selectOption({ label: 'Multiple Choice' });
     assert.ok(await page.locator('.import-question-row').count() >= importPerformanceQuestions.length,
@@ -759,12 +764,9 @@ async function main() {
       'cancelling import does not change the target paper');
 
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole('button', { name: 'Import from Exam', exact: true }).click();
+    await page.getByRole('button', { name: 'Import from Paper', exact: true }).click();
     await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
-    await page.waitForFunction((examId) => {
-      const select = document.querySelector('.import-source-select select');
-      return select && select.value === String(examId);
-    }, sourceExamId);
+    await page.locator('.import-source-select select').selectOption(String(sourcePaperId));
     await page.getByRole('button', { name: '75%+', exact: true }).click();
     await page.getByLabel('Select all visible questions', { exact: true }).check();
     const highAccuracyQuestions = importPerformanceQuestions.slice(0, 2);
@@ -980,8 +982,10 @@ async function main() {
     if (sourceExamId) await api(page, `/api/admin/exams/${sourceExamId}`, 'DELETE').catch(() => {});
     await Promise.all(tempStudentPages.map(studentPage => studentPage.close().catch(() => {})));
     for (const tempUserId of tempUserIds) {
+      if (importClassId) await api(page, `/api/admin/classes/${importClassId}/students/${tempUserId}`, 'DELETE').catch(() => {});
       await api(page, `/api/admin/users/${tempUserId}`, 'DELETE').catch(() => {});
     }
+    if (importClassId) await api(page, `/api/admin/classes/${importClassId}?examTypeCodes=SHSAT`, 'DELETE').catch(() => {});
     if (metadataPaperId) await api(page, `/api/admin/papers/${metadataPaperId}`, 'DELETE').catch(() => {});
     if (paperId) await api(page, `/api/admin/papers/${paperId}`, 'DELETE').catch(() => {});
     await browser.close();

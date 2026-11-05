@@ -186,22 +186,19 @@ public class PaperService {
         return summary(paperId);
     }
 
-    /** 从同类型已发布考试复制题目，按 section_code 对齐目标试卷结构。 */
+    /** 从同类型试卷复制题目，按 section_code 对齐目标试卷结构。 */
     @Transactional
     public List<QuestionView> importQuestions(long targetPaperId, ImportQuestionsRequest request) {
         String examTypeCode = typeCode(targetPaperId);
         requireEditable(targetPaperId, examTypeCode);
-        long sourcePaperId = jdbcTemplate.query("""
-            SELECT e.paper_id FROM exams e WHERE e.id = ? AND e.status = 'PUBLISHED'
-                AND (SELECT exam_type_code FROM papers WHERE id = e.paper_id) = ?
-            """, rs -> rs.next() ? rs.getLong(1) : 0L, request.sourceExamId(), examTypeCode);
-        if (sourcePaperId == 0L) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Source exam not found.");
-        if (sourcePaperId == targetPaperId) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Create a new paper version before importing questions from the same paper.");
+        // 新入口以试卷为来源；旧的考试入口仍按考试解析对应试卷。
+        Long sourcePaperId = request.sourcePaperId();
+        if (sourcePaperId == null && request.sourceExamId() != null) {
+            sourcePaperId = jdbcTemplate.query("SELECT paper_id FROM exams WHERE id = ?",
+                    rs -> rs.next() ? rs.getLong(1) : null, request.sourceExamId());
         }
-        List<Integer> requested = request.questionNumbers().stream().distinct().toList();
-        if (requested.size() != request.questionNumbers().size()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A question is selected more than once.");
+        if (sourcePaperId == null || !examTypeCode.equals(typeCode(sourcePaperId))) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Source paper not found.");
         }
         List<SectionView> sourceSections = loadSections(sourcePaperId, null);
         Map<Long, String> sourceSectionCodes = new HashMap<>();
@@ -213,7 +210,19 @@ public class PaperService {
             int number = question.displayNumber() == null ? question.sortOrder() : question.displayNumber();
             sourceByNumber.put(number, question);
         });
-        List<QuestionView> selected = requested.stream().map(sourceByNumber::get).toList();
+        List<QuestionView> selected;
+        if (request.paperItemIds() != null && !request.paperItemIds().isEmpty()) {
+            List<Long> requested = request.paperItemIds().stream().distinct().toList();
+            if (requested.size() != request.paperItemIds().size()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A question is selected more than once.");
+            Map<Long, QuestionView> sourceByItem = flatten(sourceSections).stream()
+                    .collect(java.util.stream.Collectors.toMap(QuestionView::paperItemId, java.util.function.Function.identity()));
+            selected = requested.stream().map(sourceByItem::get).toList();
+        } else {
+            if (request.questionNumbers() == null || request.questionNumbers().isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select at least one question.");
+            List<Integer> requested = request.questionNumbers().stream().distinct().toList();
+            if (requested.size() != request.questionNumbers().size()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A question is selected more than once.");
+            selected = requested.stream().map(sourceByNumber::get).toList();
+        }
         if (selected.stream().anyMatch(java.util.Objects::isNull)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more selected questions are unavailable.");
         }
@@ -1174,8 +1183,9 @@ public class PaperService {
                 material.materialType(), material.category(), material.title(), material.content(), material.assetUrl(), material.sortOrder());
         }
     }
-    public record ImportQuestionsRequest(@NotNull Long sourceExamId,
-            @NotNull @Size(min = 1, max = 100) List<@NotNull @Positive Integer> questionNumbers) { }
+    public record ImportQuestionsRequest(Long sourceExamId, Long sourcePaperId,
+            @Size(max = 100) List<@NotNull @Positive Integer> questionNumbers,
+            @Size(max = 100) List<@NotNull @Positive Long> paperItemIds) { }
     public record SectionRequest(@NotBlank @Size(max = 60) String sectionCode,
                                 @NotBlank @Size(max = 30) String sectionKind,
                                 @NotBlank @Size(max = 200) String title,

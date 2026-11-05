@@ -459,7 +459,7 @@ export const adminApi = {
     return http.post(`/admin/papers/${paperId}/questions`, payload);
   },
 
-  importQuestionsFromExam(paperId, payload) {
+  importQuestionsFromPaper(paperId, payload) {
     return http.post(`/admin/papers/${paperId}/questions/import-from-exam`, payload);
   },
 
