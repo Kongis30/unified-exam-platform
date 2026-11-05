@@ -127,6 +127,10 @@ const createExamStructureConfirm = reactive({
 });
 const selectedDeleteExam = ref(null);
 const examDeleteCooldown = ref(0);
+const historicalBulkMode = ref(false);
+const selectedHistoricalExamIds = ref([]);
+const showHistoricalBulkConfirm = ref(false);
+const hidingHistoricalExams = ref(false);
 const selectedDeleteClass = ref(null);
 const deleteClassError = ref('');
 const examActionDialog = reactive({
@@ -555,6 +559,8 @@ const paginatedHistoricalExamReleases = computed(() => {
 
   return historicalExamReleases.value.slice(start, start + pageSize);
 });
+const allVisibleHistoricalExamsSelected = computed(() => paginatedHistoricalExamReleases.value.length > 0
+  && paginatedHistoricalExamReleases.value.every((exam) => selectedHistoricalExamIds.value.includes(String(exam.examId))));
 
 const historicalExamPageStart = computed(() => {
   if (historicalExamReleases.value.length === 0) {
@@ -2566,6 +2572,42 @@ function closeDeleteExamConfirm() {
   examDeleteCooldown.value = 0;
 }
 
+function toggleHistoricalExamSelection(examId, checked) {
+  const id = String(examId);
+  selectedHistoricalExamIds.value = checked
+    ? [...new Set([...selectedHistoricalExamIds.value, id])]
+    : selectedHistoricalExamIds.value.filter((selectedId) => selectedId !== id);
+}
+
+function toggleVisibleHistoricalExams(checked) {
+  const visibleIds = paginatedHistoricalExamReleases.value.map((exam) => String(exam.examId));
+  const remaining = selectedHistoricalExamIds.value.filter((id) => !visibleIds.includes(id));
+  selectedHistoricalExamIds.value = checked ? [...remaining, ...visibleIds] : remaining;
+}
+
+async function confirmHideHistoricalExams() {
+  if (hidingHistoricalExams.value || selectedHistoricalExamIds.value.length === 0) return;
+  hidingHistoricalExams.value = true;
+  errors.exams = '';
+  notices.examForm = '';
+  try {
+    const results = await Promise.allSettled(selectedHistoricalExamIds.value.map((id) => adminApi.hideExamRelease(id)));
+    const failedIds = selectedHistoricalExamIds.value.filter((_, index) => results[index].status === 'rejected');
+    const hiddenCount = results.length - failedIds.length;
+    selectedHistoricalExamIds.value = failedIds;
+    showHistoricalBulkConfirm.value = false;
+    if (failedIds.length) {
+      errors.exams = `${hiddenCount} exam${hiddenCount === 1 ? '' : 's'} hidden. ${failedIds.length} could not be hidden; try again.`;
+    } else {
+      notices.examForm = `${hiddenCount} historical exam${hiddenCount === 1 ? '' : 's'} hidden. Class records and reports were retained.`;
+      historicalBulkMode.value = false;
+    }
+    await Promise.all([loadExams(), loadAdminExams()]);
+  } finally {
+    hidingHistoricalExams.value = false;
+  }
+}
+
 async function confirmPublishChange() {
   const exam = selectedPublishExam.value;
   const examId = exam?.examId;
@@ -4091,6 +4133,20 @@ onBeforeUnmount(() => {
 
         <AppCard class="exam-history-card" title="Historical Exams" subtitle="Ended exam releases are listed here for review.">
           <div class="card-top-actions">
+            <AppButton
+              v-if="!isTeacherPortal"
+              type="button"
+              variant="secondary"
+              :disabled="historicalExamsCollapsed || historicalExamReleases.length === 0"
+              @click="historicalBulkMode = !historicalBulkMode; selectedHistoricalExamIds = []"
+            >{{ historicalBulkMode ? 'Cancel bulk' : 'Bulk actions' }}</AppButton>
+            <AppButton
+              v-if="historicalBulkMode"
+              type="button"
+              variant="danger"
+              :disabled="selectedHistoricalExamIds.length === 0 || hidingHistoricalExams"
+              @click="showHistoricalBulkConfirm = true"
+            >Hide selected ({{ selectedHistoricalExamIds.length }})</AppButton>
             <button
               class="collapse-arrow-button"
               type="button"
@@ -4116,6 +4172,7 @@ onBeforeUnmount(() => {
             <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
             <AdminDataTable class="exam-release-table exam-release-table--history">
               <colgroup>
+                <col v-if="historicalBulkMode" class="historical-bulk-select-column" />
                 <col class="exam-release-table__title-column" />
                 <col class="exam-release-table__time-column" />
                 <col class="exam-release-table__target-column" />
@@ -4125,6 +4182,9 @@ onBeforeUnmount(() => {
               </colgroup>
               <thead>
                 <tr>
+                  <th v-if="historicalBulkMode" class="historical-bulk-select-cell">
+                    <input type="checkbox" aria-label="Select visible historical exams" :checked="allVisibleHistoricalExamsSelected" @change="toggleVisibleHistoricalExams($event.target.checked)" />
+                  </th>
                   <th>Exam / Paper</th>
                   <th>Ended At</th>
                   <th>Assigned To</th>
@@ -4135,6 +4195,9 @@ onBeforeUnmount(() => {
               </thead>
               <tbody>
                 <tr v-for="exam in paginatedHistoricalExamReleases" :key="`history-${exam.examId}`">
+                  <td v-if="historicalBulkMode" class="historical-bulk-select-cell">
+                    <input type="checkbox" :aria-label="`Select ${exam.examTitle}`" :checked="selectedHistoricalExamIds.includes(String(exam.examId))" @change="toggleHistoricalExamSelection(exam.examId, $event.target.checked)" />
+                  </td>
                   <td class="exam-release-table__title-cell">
                     <strong :title="getExamReleaseIdentity(exam).title">{{ getExamReleaseIdentity(exam).title }}</strong>
                     <small v-if="getExamReleaseIdentity(exam).detail" :title="getExamReleaseIdentity(exam).detail">{{ getExamReleaseIdentity(exam).detail }}</small>
@@ -4333,6 +4396,22 @@ onBeforeUnmount(() => {
                 <AppButton type="button" :disabled="Boolean(loading.deletingExamId) || examDeleteCooldown > 0" @click="confirmDeleteExam">
                   {{ loading.deletingExamId ? 'Hiding...' : examDeleteCooldown > 0 ? `Hide Exam (${examDeleteCooldown})` : 'Hide Exam' }}
                 </AppButton>
+              </footer>
+            </section>
+          </div>
+        </Teleport>
+
+        <Teleport to="body">
+          <div v-if="showHistoricalBulkConfirm" class="modal-backdrop" @click.self="!hidingHistoricalExams && (showHistoricalBulkConfirm = false)">
+            <section class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="historical-bulk-confirm-title">
+              <header class="modal-card__header">
+                <div><span class="admin-eyebrow">Historical Exams</span><h3 id="historical-bulk-confirm-title">Hide selected exams?</h3></div>
+                <button class="modal-card__close" type="button" aria-label="Close" :disabled="hidingHistoricalExams" @click="showHistoricalBulkConfirm = false">&times;</button>
+              </header>
+              <p>Hide {{ selectedHistoricalExamIds.length }} selected exam{{ selectedHistoricalExamIds.length === 1 ? '' : 's' }} from the exam list? Class records, student attempts, scores, and reports will be retained.</p>
+              <footer class="modal-card__footer">
+                <AppButton variant="secondary" type="button" :disabled="hidingHistoricalExams" @click="showHistoricalBulkConfirm = false">Cancel</AppButton>
+                <AppButton variant="danger" type="button" :disabled="hidingHistoricalExams" @click="confirmHideHistoricalExams">{{ hidingHistoricalExams ? 'Hiding…' : 'Hide exams' }}</AppButton>
               </footer>
             </section>
           </div>
@@ -6135,6 +6214,9 @@ onBeforeUnmount(() => {
 
 .exam-release-table { min-width: 960px; table-layout: fixed; }
 .exam-release-table-wrap { overflow: visible; }
+.historical-bulk-select-column { width: 44px; }
+.historical-bulk-select-cell { width: 44px; text-align: center !important; }
+.historical-bulk-select-cell input { width: 16px; height: 16px; accent-color: var(--color-primary); cursor: pointer; }
 .exam-release-table__title-column { width: 30%; }
 .exam-release-table__time-column { width: 23%; }
 .exam-release-table__target-column { width: 11%; }

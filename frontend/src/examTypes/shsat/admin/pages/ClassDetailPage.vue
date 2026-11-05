@@ -4,9 +4,10 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
+import AppModal from '@/components/AppModal.vue';
 import ClassExamScoreTrend from '@/components/admin/ClassExamScoreTrend.vue';
 import DeleteClassExamDialog from '@/components/admin/DeleteClassExamDialog.vue';
-import { listClassExamScoreTrend } from '@/api/platform';
+import { deleteClassExam, listClassExamScoreTrend } from '@/api/platform';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
 const route = useRoute();
@@ -39,11 +40,17 @@ const classInfo = ref(null);
 const classes = ref([]);
 const exams = ref([]);
 const deleteExamTarget = ref(null);
+const bulkDeleteMode = ref(false);
+const selectedExamIds = ref([]);
+const showBulkDeleteDialog = ref(false);
+const bulkDeleteCountdown = ref(5);
+const deletingSelectedExams = ref(false);
 const trendVersion = ref(0);
 const students = ref([]);
 let classRequest = 0;
 const examKeyword = ref('');
 let classToastTimer = null;
+let bulkDeleteTimer = null;
 let classScoreTrendReady = false;
 let resolveClassScoreTrendReady;
 let classScoreTrendReadyPromise = new Promise(resolve => { resolveClassScoreTrendReady = resolve; });
@@ -129,6 +136,8 @@ const paginatedClassExams = computed(() => {
 
   return relatedClassExams.value.slice(start, start + pageSize);
 });
+const allVisibleExamsSelected = computed(() => paginatedClassExams.value.length > 0
+  && paginatedClassExams.value.every((exam) => selectedExamIds.value.includes(String(exam.examId))));
 
 const selectableStudents = computed(() => {
   const currentIds = new Set(students.value.map((student) => String(student.studentId || student.id)));
@@ -292,6 +301,65 @@ function resetClassScoreTrendReady() {
 
 function goClassExamPage(page) {
   examFilters.page = Math.min(Math.max(1, page), classExamTotalPages.value);
+}
+
+function toggleExamSelection(examId, checked) {
+  const id = String(examId);
+  selectedExamIds.value = checked
+    ? [...new Set([...selectedExamIds.value, id])]
+    : selectedExamIds.value.filter((selectedId) => selectedId !== id);
+}
+
+function toggleVisibleExams(checked) {
+  const visibleIds = paginatedClassExams.value.map((exam) => String(exam.examId));
+  const remaining = selectedExamIds.value.filter((id) => !visibleIds.includes(id));
+  selectedExamIds.value = checked ? [...remaining, ...visibleIds] : remaining;
+}
+
+function openBulkDeleteDialog() {
+  if (!selectedExamIds.value.length || deletingSelectedExams.value) return;
+  bulkDeleteCountdown.value = 5;
+  showBulkDeleteDialog.value = true;
+  clearInterval(bulkDeleteTimer);
+  bulkDeleteTimer = window.setInterval(() => {
+    bulkDeleteCountdown.value = Math.max(0, bulkDeleteCountdown.value - 1);
+    if (!bulkDeleteCountdown.value) {
+      clearInterval(bulkDeleteTimer);
+      bulkDeleteTimer = null;
+    }
+  }, 1000);
+}
+
+function closeBulkDeleteDialog() {
+  if (deletingSelectedExams.value) return;
+  showBulkDeleteDialog.value = false;
+  clearInterval(bulkDeleteTimer);
+  bulkDeleteTimer = null;
+}
+
+async function confirmBulkDelete() {
+  if (deletingSelectedExams.value || bulkDeleteCountdown.value || !selectedExamIds.value.length) return;
+  deletingSelectedExams.value = true;
+  const selectedIds = [...selectedExamIds.value];
+  try {
+    const results = await Promise.allSettled(selectedIds.map((examId) => deleteClassExam(classId.value, examId)));
+    const failedIds = selectedIds.filter((_, index) => results[index].status === 'rejected');
+    const deletedCount = selectedIds.length - failedIds.length;
+    selectedExamIds.value = failedIds;
+    showBulkDeleteDialog.value = false;
+    if (failedIds.length) {
+      showClassToast(`${deletedCount} exam${deletedCount === 1 ? '' : 's'} deleted. ${failedIds.length} failed; retry the selected exams.`);
+    } else {
+      bulkDeleteMode.value = false;
+      showClassToast(`${deletedCount} class exam${deletedCount === 1 ? '' : 's'} deleted.`);
+    }
+    trendVersion.value++;
+    await loadPage({ forceTrend: true });
+  } finally {
+    deletingSelectedExams.value = false;
+    clearInterval(bulkDeleteTimer);
+    bulkDeleteTimer = null;
+  }
 }
 
 function openEditClassModal() {
@@ -823,6 +891,9 @@ watch(classId, async () => {
   classInfo.value = null;
   students.value = [];
   exams.value = [];
+  selectedExamIds.value = [];
+  bulkDeleteMode.value = false;
+  closeBulkDeleteDialog();
   resetClassScoreTrendReady();
   restoreClassExamState();
   await loadPage();
@@ -831,6 +902,7 @@ watch(classId, async () => {
 onBeforeUnmount(() => {
   saveClassExamState();
   closeClassToast();
+  clearInterval(bulkDeleteTimer);
 });
 </script>
 
@@ -939,6 +1011,11 @@ onBeforeUnmount(() => {
               <input v-model="examKeyword" class="form-input class-search-input" placeholder="Search by exam name or paper" />
             </div>
             <div class="admin-toolbar__filters">
+              <AppButton v-if="!bulkDeleteMode" variant="secondary" :disabled="relatedClassExams.length === 0" @click="bulkDeleteMode = true; selectedExamIds = []">Bulk actions</AppButton>
+              <template v-else>
+                <AppButton variant="secondary" :disabled="deletingSelectedExams" @click="bulkDeleteMode = false; selectedExamIds = []">Cancel</AppButton>
+                <AppButton variant="danger" :disabled="selectedExamIds.length === 0 || deletingSelectedExams" @click="openBulkDeleteDialog">Delete selected ({{ selectedExamIds.length }})</AppButton>
+              </template>
               <select v-model="examFilters.sortBy" class="form-input form-input--compact" aria-label="Sort class exams">
                 <option value="start-desc">Start time: newest first</option>
                 <option value="start-asc">Start time: oldest first</option>
@@ -958,6 +1035,7 @@ onBeforeUnmount(() => {
           <div v-else class="table-wrap class-exam-table-wrap">
             <table class="admin-table class-exam-table">
               <colgroup>
+                <col v-if="bulkDeleteMode" class="class-exam-table__select-column" />
                 <col class="class-exam-table__exam-column" />
                 <col class="class-exam-table__time-column" />
                 <col class="class-exam-table__time-column" />
@@ -966,6 +1044,7 @@ onBeforeUnmount(() => {
               </colgroup>
               <thead>
                 <tr>
+                  <th v-if="bulkDeleteMode" class="class-exam-table__select-cell"><input type="checkbox" aria-label="Select visible class exams" :checked="allVisibleExamsSelected" @change="toggleVisibleExams($event.target.checked)" /></th>
                   <th>Exam</th>
                   <th>Opens</th>
                   <th>Closes</th>
@@ -975,6 +1054,7 @@ onBeforeUnmount(() => {
               </thead>
               <tbody>
                 <tr v-for="exam in paginatedClassExams" :key="exam.examId">
+                  <td v-if="bulkDeleteMode" class="class-exam-table__select-cell"><input type="checkbox" :aria-label="`Select ${exam.examTitle}`" :checked="selectedExamIds.includes(String(exam.examId))" @change="toggleExamSelection(exam.examId, $event.target.checked)" /></td>
                   <td class="class-exam-table__exam-cell">
                     <strong class="class-exam-table__exam-title">{{ getClassExamDisplayTitle(exam) }}</strong>
                     <div class="class-exam-meta">
@@ -1309,6 +1389,14 @@ onBeforeUnmount(() => {
         </div>
       </Teleport>
       <DeleteClassExamDialog v-if="deleteExamTarget" :class-id="classId" :exam-id="deleteExamTarget.examId" :title="deleteExamTarget.examTitle" @close="deleteExamTarget = null" @deleted="deleteExamTarget = null; trendVersion++; showClassToast('Class exam deleted.'); loadPage({ forceTrend: true })" />
+      <AppModal v-if="showBulkDeleteDialog" title="Delete selected class exams?" :busy="deletingSelectedExams" @close="closeBulkDeleteDialog">
+        <p>Delete {{ selectedExamIds.length }} selected exam{{ selectedExamIds.length === 1 ? '' : 's' }} from this class? Their class-specific student attempts, answers, scores, reports, and review assignments will be permanently deleted. Records shared with other classes are retained.</p>
+        <p v-if="bulkDeleteCountdown > 0" class="form-hint">You can confirm in {{ bulkDeleteCountdown }} seconds.</p>
+        <template #footer>
+          <AppButton variant="secondary" :disabled="deletingSelectedExams" @click="closeBulkDeleteDialog">Cancel</AppButton>
+          <AppButton variant="danger" :disabled="deletingSelectedExams || bulkDeleteCountdown > 0" @click="confirmBulkDelete">{{ deletingSelectedExams ? 'Deleting…' : bulkDeleteCountdown > 0 ? `Delete (${bulkDeleteCountdown})` : 'Delete class exams' }}</AppButton>
+        </template>
+      </AppModal>
     </section>
 
 </template>
@@ -1731,6 +1819,9 @@ onBeforeUnmount(() => {
 }
 
 .class-exam-table__exam-column { width: 40%; }
+.class-exam-table__select-column { width: 42px; }
+.class-exam-table__select-cell { width: 42px; text-align: center !important; }
+.class-exam-table__select-cell input { width: 16px; height: 16px; accent-color: var(--color-primary); cursor: pointer; }
 .class-exam-table__time-column { width: 15%; }
 .class-exam-table__status-column { width: 12%; }
 .class-exam-table__actions-column { width: 18%; }
