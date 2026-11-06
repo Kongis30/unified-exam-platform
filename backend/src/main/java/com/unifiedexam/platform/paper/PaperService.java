@@ -387,6 +387,7 @@ public class PaperService {
         String examTypeCode = typeCode(paperId);
         requireEditable(paperId, examTypeCode);
         validateSectionOrders(request.sections());
+        if (!"SHSAT".equals(examTypeCode)) validateQuestionStems(request.sections());
         List<MaterialWriteRequest> materials = "SHSAT".equals(examTypeCode)
             ? request.materials() == null ? loadShsatMaterials(paperId).stream().map(MaterialWriteRequest::from).toList()
                 : request.materials()
@@ -1080,6 +1081,16 @@ public class PaperService {
         return value == null || value.isNull() || value.asText().isBlank() ? fallback : value.asText();
     }
 
+    /** 非 SHSAT 试卷仍要求题干；旧 SHSAT 图表题可仅使用材料和题型配置。 */
+    private void validateQuestionStems(List<SectionRequest> sections) {
+        for (SectionRequest section : sections) {
+            if (section.questions().stream().anyMatch(question -> question.stem().isBlank())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a question stem.");
+            }
+            validateQuestionStems(section.children());
+        }
+    }
+
     private void requireDraft(long paperId) {
         String status = jdbcTemplate.query("SELECT status FROM papers WHERE id = ?", rs -> rs.next() ? rs.getString(1) : null, paperId);
         if (status == null) throw notFound();
@@ -1178,7 +1189,7 @@ public class PaperService {
                                 @NotNull @Valid List<QuestionRequest> questions,
                                 @NotNull @Valid List<SectionRequest> children) { }
     public record QuestionRequest(@NotBlank @Size(max = 50) String questionTypeCode,
-                                  @NotBlank String stem,
+                                  @NotNull String stem,
                                   JsonNode render,
                                   @NotNull JsonNode answerKey,
                                   JsonNode grading,
