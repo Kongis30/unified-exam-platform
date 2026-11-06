@@ -222,6 +222,12 @@ function openStudentScores(student) {
   })
 }
 
+function studentAverage(student) {
+  if (!student.examCount) return 'No data'
+  if (student.averageScore == null || !Number.isFinite(Number(student.averageScore))) return '—'
+  return Number(student.averageScore).toFixed(2).replace(/\.00$/, '')
+}
+
 async function removeStudent() {
   if (!removeStudentTarget.value || isSaving.value) return
   isSaving.value = true
@@ -321,16 +327,16 @@ watch([classId, workspaceCode], () => {
           <p v-else class="mobile-table-scroll-hint">Swipe horizontally to see all columns.</p>
           <div v-if="!isLoading && students.length" class="admin-table-scroll" tabindex="0" aria-label="Students table. Scroll horizontally to see all columns.">
             <AdminDataTable>
-              <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Joined</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Student</th><th>Average</th><th>Exam Count</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 <tr v-for="student in students" :key="student.id">
-                  <td><strong>{{ student.realName }}</strong></td>
-                  <td>{{ student.username }}</td>
-                  <td>{{ student.email || '—' }}</td>
-                  <td>{{ formatDate(student.joinedAt) }}</td>
+                  <td><strong>{{ student.realName || 'Unnamed student' }}</strong><small>{{ student.username ? `Student No. ${student.username}` : 'No student number' }}</small></td>
+                  <td><span :class="{ 'sat-student-empty': student.averageScore == null }">{{ studentAverage(student) }}</span></td>
+                  <td><span :class="{ 'sat-student-empty': !student.examCount }">{{ student.examCount || 'No exams' }}</span></td>
+                  <td><span class="sat-student-status" :class="{ 'sat-student-status--active': student.active }">{{ student.active ? 'Active' : 'Inactive' }}</span></td>
                   <td class="sat-student-actions">
-                    <button type="button" class="text-button" @click="openStudentScores(student)">View scores</button>
-                    <button type="button" class="text-button sat-student-actions__remove" @click="removeStudentTarget = student">Remove</button>
+                    <AppButton variant="secondary" @click="openStudentScores(student)">View</AppButton>
+                    <AppButton variant="secondary" class="sat-student-actions__remove" @click="removeStudentTarget = student">Remove</AppButton>
                   </td>
                 </tr>
               </tbody>
@@ -417,8 +423,12 @@ watch([classId, workspaceCode], () => {
 .sat-class-summary dd { margin: 0; color: var(--color-text); font-size: 17px; font-weight: 700; }
 .sat-class-students-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -4px 0 14px; color: var(--color-muted); font-size: 14px; }
 .sat-student-actions { white-space: nowrap; }
-.sat-student-actions .text-button { margin: 0 6px; }
-.sat-student-actions__remove { color: #a23d47; }
+.sat-student-actions .app-button { min-height: 32px; margin: 0 3px; padding: 0 13px; font-size: 12px; }
+.sat-student-actions .sat-student-actions__remove { color: #b42318; background: #fff1f0; border-color: #fecaca; box-shadow: none; }
+.sat-student-empty { color: #94a3b8; font-weight: 700; }
+.sat-student-status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 4px 9px; color: #64748b; background: #edf2f8; font-size: 12px; font-weight: 800; }
+.sat-student-status::before { width: 6px; height: 6px; border-radius: 999px; background: currentColor; content: ''; }
+.sat-student-status--active { color: #16794c; background: #e8f7f1; }
 .sat-class-form { display: grid; gap: 16px; }
 .sat-class-delete-confirm { display: grid; gap: 12px; color: var(--color-muted); line-height: 1.55; }
 .sat-class-delete-confirm p { margin: 0; }

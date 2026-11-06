@@ -4750,10 +4750,9 @@ onBeforeUnmount(() => {
 
 .notice {
   position: fixed;
-  top: auto;
+  top: 82px;
   right: 24px;
-  bottom: 24px;
-  z-index: 1200;
+  z-index: 6000;
   display: flex;
   align-items: flex-start;
   gap: 12px;
@@ -6872,8 +6871,8 @@ select.form-input {
 
 @media (max-width: 560px) {
   .notice {
+    top: 72px;
     right: 12px;
-    bottom: 12px;
     width: min(360px, calc(100vw - 24px));
   }
 
