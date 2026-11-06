@@ -247,7 +247,7 @@ const allVisibleImportQuestionsSelected = computed(() => (
   && selectedVisibleImportQuestionCount.value === visibleImportAnalytics.value.length
 ));
 const selectedImportQuestionCount = computed(() => selectedImportItemIds.value.length);
-const selectedImportPaper = computed(() => importPapers.value.find((paper) => String(paper.paperId) === String(importPaperId.value).split(':')[0]) || null);
+const selectedImportPaper = computed(() => importPapers.value.find((paper) => String(paper.paperId) === String(importPaperId.value)) || null);
 const groupedImportPapers = computed(() => {
   const groups = new Map();
   const groupDetails = new Map(importPaperGroups.value.map((group) => [String(group.paperGroupId), group]));
@@ -2191,11 +2191,10 @@ async function selectImportSourcePaper(sourcePaperId) {
 
   loadingImportAnalytics.value = true;
   try {
-    const [sourcePaperId, sourceExamId] = importPaperId.value.split(':');
-    const paper = await adminApi.getPaper(sourcePaperId);
+    const paper = await adminApi.getPaper(importPaperId.value);
     importSourcePaper.value = unwrapResponse(paper);
     const sourceExams = selectedImportPaper.value?.sourceExams || [];
-    importSourceExam.value = (sourceExamId ? sourceExams.find((exam) => String(exam.examId) === sourceExamId) : sourceExams[0]) || null;
+    importSourceExam.value = sourceExams[0] || null;
     let stats = [];
     if (importSourceExam.value) {
       try {
@@ -2291,7 +2290,7 @@ async function confirmImportQuestions() {
     }
 
     const response = await adminApi.importQuestionsFromPaper(paperId.value, {
-      sourcePaperId: Number(importPaperId.value.split(':')[0]),
+      sourcePaperId: Number(importPaperId.value),
       paperItemIds: selectedImportItemIds.value.map(Number),
     });
     const importedQuestions = unwrapResponse(response) || [];
@@ -2317,15 +2316,6 @@ async function confirmImportQuestions() {
   } finally {
     importingQuestions.value = false;
   }
-}
-
-function formatImportExamDate(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23',
-  }).format(date);
 }
 
 function formatImportAccuracy(value) {
@@ -3374,14 +3364,9 @@ onBeforeUnmount(() => {
                 <select :value="importPaperId" :disabled="loadingImportPapers || loadingImportAnalytics || importingQuestions" @change="selectImportSourcePaper($event.target.value)">
                   <option value="">Choose a paper</option>
                   <optgroup v-for="group in groupedImportPapers" :key="group.key" :label="group.name">
-                    <template v-for="sourcePaper in group.papers" :key="sourcePaper.paperId">
-                      <option :value="sourcePaper.paperId">
-                        {{ sourcePaper.paperName }}<template v-if="sourcePaper.sourceExams[0]"> · {{ sourcePaper.sourceExams[0].examTitle }} · {{ formatImportExamDate(sourcePaper.sourceExams[0].publishedAt || sourcePaper.sourceExams[0].startTime) }}</template>
-                      </option>
-                      <option v-for="exam in sourcePaper.sourceExams.slice(1)" :key="exam.examId" :value="`${sourcePaper.paperId}:${exam.examId}`">
-                        {{ sourcePaper.paperName }} · {{ exam.examTitle }} · {{ formatImportExamDate(exam.publishedAt || exam.startTime) }}
-                      </option>
-                    </template>
+                    <option v-for="sourcePaper in group.papers" :key="sourcePaper.paperId" :value="sourcePaper.paperId">
+                      {{ sourcePaper.paperName }}
+                    </option>
                   </optgroup>
                 </select>
               </label>

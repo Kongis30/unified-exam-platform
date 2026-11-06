@@ -67,9 +67,10 @@ public class SatAdminExamResultsService {
         List<Map<String, Object>> attempts = scores.scoresForExam(examId);
         Map<Long, Map<String, Object>> latestScores = attempts.stream().collect(Collectors.toMap(
             row -> ((Number) row.get("attemptId")).longValue(), row -> row, (first, ignored) -> first));
-        String classAttemptFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ?)";
+        // SAT 迁移时经确认的历史班级归属同时保存在审计映射中，兼容映射存在但关联表未回填的记录。
+        String classAttemptFilter = classId == null ? "" : " AND (EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.attempt_id = a.id AND ac.class_id = ?) OR EXISTS (SELECT 1 FROM sat_import_id_map imported WHERE imported.source_system = 'SAT_V1' AND imported.entity_type = 'inferred_attempt_class' AND imported.target_id = a.id AND SUBSTRING_INDEX(imported.source_id, ':', -1) = CAST(? AS CHAR)))";
         String classParticipantFilter = classId == null ? "" : " AND EXISTS (SELECT 1 FROM exam_participant_classes pc WHERE pc.exam_id = ep.exam_id AND pc.student_user_id = ep.student_user_id AND pc.class_id = ?)";
-        Object[] participantParameters = classId == null ? new Object[] { examId } : new Object[] { classId, examId, classId };
+        Object[] participantParameters = classId == null ? new Object[] { examId } : new Object[] { classId, classId, examId, classId };
         List<Map<String, Object>> participants = jdbc.query(("""
             SELECT u.id AS student_id, u.real_name, u.username, latest.id AS attempt_id,
                    latest.attempt_no, latest.status, latest.started_at, latest.submitted_at

@@ -202,8 +202,6 @@ public class PaperService {
         }
         List<SectionView> sourceSections = loadSections(sourcePaperId, null);
         List<QuestionView> sourceQuestions = flatten(sourceSections);
-        Map<Long, String> sourceSectionCodes = new HashMap<>();
-        collectQuestionSectionCodes(sourceSections, null, sourceSectionCodes);
         Map<Long, Long> sourceSectionIds = new HashMap<>();
         collectQuestionSectionIds(sourceSections, sourceSectionIds);
         Map<Long, Integer> sourceOrderByItemId = new HashMap<>();
@@ -234,19 +232,19 @@ public class PaperService {
         selected = selected.stream()
             .sorted(java.util.Comparator.comparingInt(question -> sourceOrderByItemId.get(question.paperItemId())))
             .toList();
-        Map<String, Long> targetSections = new HashMap<>();
-        collectSectionIds(loadSections(targetPaperId, null), null, targetSections);
-        int nextDisplayNumber = flatten(loadSections(targetPaperId, null)).stream()
+        List<SectionView> targetPaperSections = loadSections(targetPaperId, null);
+        Map<Long, Long> targetSections = PaperSectionMatcher.mapSections(sourceSections, targetPaperSections);
+        int nextDisplayNumber = flatten(targetPaperSections).stream()
             .map(QuestionView::displayNumber).filter(java.util.Objects::nonNull).mapToInt(Integer::intValue).max().orElse(0) + 1;
         List<Long> insertedIds = new ArrayList<>();
         Map<MaterialCopyKey, Long> copiedMaterials = new HashMap<>();
         for (int index = 0; index < selected.size(); index++) {
             QuestionView source = selected.get(index);
-            Long sectionId = targetSections.get(sourceSectionCodes.get(source.paperItemId()));
+            Long sourceSectionId = sourceSectionIds.get(source.paperItemId());
+            Long sectionId = targetSections.get(sourceSectionId);
             if (sectionId == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "The target paper is missing a matching section.");
             JsonNode render = source.render();
             if ("SHSAT".equals(examTypeCode)) {
-                Long sourceSectionId = sourceSectionIds.get(source.paperItemId());
                 if (sourceSectionId == null) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT, "The source question section is unavailable.");
                 }
@@ -278,24 +276,6 @@ public class PaperService {
             result.addAll(flattenSections(section.children()));
         }
         return result;
-    }
-
-    /** 递归收集目标卷标签代码，兼容迁移后由设置保存的原始 SHSAT 标签。 */
-    private void collectSectionIds(List<SectionView> sections, SectionView parent, Map<String, Long> sectionIds) {
-        for (SectionView section : sections) {
-            sectionIds.put(sectionCode(section, parent), section.id());
-            collectSectionIds(section.children(), section, sectionIds);
-        }
-    }
-
-    /** 递归建立题目到语义标签代码的映射，供试卷导入时对齐目标结构。 */
-    private void collectQuestionSectionCodes(List<SectionView> sections, SectionView parent,
-                                              Map<Long, String> sectionCodes) {
-        for (SectionView section : sections) {
-            String code = sectionCode(section, parent);
-            section.questions().forEach(question -> sectionCodes.put(question.paperItemId(), code));
-            collectQuestionSectionCodes(section.children(), section, sectionCodes);
-        }
     }
 
     private void collectQuestionSectionIds(List<SectionView> sections, Map<Long, Long> sectionIds) {
@@ -373,29 +353,6 @@ public class PaperService {
             """, rs -> rs.next() ? new ShsatMaterialRow(rs.getString("material_type"), rs.getString("category"),
             rs.getString("title"), rs.getString("content"), rs.getString("asset_key")) : null,
             paperId, materialId);
-    }
-
-    private String sectionCode(SectionView section, SectionView parent) {
-        JsonNode settings = section.settings();
-        if ("PART".equals(section.sectionKind())) {
-            return settingText(settings, "partCode", section.sectionCode());
-        }
-        if ("SUBTYPE".equals(section.sectionKind()) && parent != null) {
-            String partCode = settingText(parent.settings(), "partCode", parent.sectionCode());
-            String subtypeCode = settingText(settings, "subTypeCode", null);
-            if (subtypeCode == null || subtypeCode.isBlank()) {
-                String prefix = partCode + "_";
-                subtypeCode = section.sectionCode().startsWith(prefix)
-                    ? section.sectionCode().substring(prefix.length()) : section.sectionCode();
-            }
-            return partCode + "_" + subtypeCode;
-        }
-        return section.sectionCode();
-    }
-
-    private String settingText(JsonNode settings, String key, String fallback) {
-        JsonNode value = settings == null ? null : settings.get(key);
-        return value == null || value.isNull() || value.asText().isBlank() ? fallback : value.asText();
     }
 
     @Transactional
@@ -1105,6 +1062,11 @@ public class PaperService {
         if (!Boolean.TRUE.equals(matches)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The question category does not belong to this exam type.");
         }
+    }
+
+    private String settingText(JsonNode settings, String key, String fallback) {
+        JsonNode value = settings == null ? null : settings.get(key);
+        return value == null || value.isNull() || value.asText().isBlank() ? fallback : value.asText();
     }
 
     private void requireDraft(long paperId) {
