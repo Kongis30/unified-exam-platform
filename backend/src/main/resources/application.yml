@@ -35,6 +35,9 @@ logging:
     com.unifiedexam.platform: INFO
 
 platform:
+  performance:
+    # 只记录达到阈值的 API 请求；设为负数可关闭慢请求日志。
+    slow-api-threshold-ms: ${SLOW_API_THRESHOLD_MS:1000}
   uploads:
     sat-import-materials-directory: ${SAT_IMPORT_MATERIALS_DIRECTORY:uploads/sat-import/materials}
   session:

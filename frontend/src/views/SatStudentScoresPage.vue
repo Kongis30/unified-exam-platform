@@ -156,9 +156,6 @@ async function loadScores({ force = false } = {}) {
   const requestedWorkspace = workspaceCode.value
   loading.value = true
   error.value = ''
-  student.value = null
-  scores.value = []
-  statistics.value = null
   try {
     const result = await getSatStudentScores(route.params.studentId, route.params.classId, requestedWorkspace, { force })
     if (request !== scoreRequest) return
@@ -178,7 +175,12 @@ async function loadScores({ force = false } = {}) {
 }
 
 watch(() => [route.params.classId, route.params.studentId, workspaceCode.value], () => {
-  if (route.params.classId && route.params.studentId && ['sat-student-scores', 'psat-student-scores'].includes(route.name)) loadScores()
+  if (route.params.classId && route.params.studentId && ['sat-student-scores', 'psat-student-scores'].includes(route.name)) {
+    student.value = null
+    scores.value = []
+    statistics.value = null
+    loadScores()
+  }
 }, { immediate: true })
 onBeforeUnmount(dismissNotification)
 </script>
@@ -208,8 +210,8 @@ onBeforeUnmount(dismissNotification)
       <div v-if="error" class="sat-student-scores-error" role="alert">
         {{ error }} <AppButton variant="secondary" @click="loadScores({ force: true })">Retry</AppButton>
       </div>
-      <div v-if="loading" class="sat-student-scores-loading">Loading score history…</div>
-      <template v-else-if="statistics">
+      <div v-if="loading" class="sat-student-scores-loading">{{ statistics ? 'Refreshing score history…' : 'Loading score history…' }}</div>
+      <template v-if="statistics">
         <AppCard title="Score Statistics" subtitle="Completed attempts for this exam system.">
           <p class="sat-score-total">Completed attempts <strong>{{ statistics[workspaceCode.toLowerCase()]?.attempts || 0 }}</strong></p>
           <div class="sat-score-stat-types">

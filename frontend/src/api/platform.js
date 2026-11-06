@@ -35,7 +35,7 @@ function invalidateResources(...tags) {
 // 只复用明确列出的列表请求；过期和手动刷新会重新请求服务端。
 export function cachedResource(path, tags, maxAge = 30_000, { force = false } = {}) {
   const previous = resourceCache.get(path)
-  if (!force && previous && (previous.pending || previous.expiresAt > Date.now())) {
+  if (previous && (previous.pending || (!force && previous.expiresAt > Date.now()))) {
     return previous.promise.then((data) => structuredClone(data))
   }
   const session = cacheSession
@@ -214,11 +214,12 @@ export function reorderClasses(classIds, examTypeCodes = []) {
   })
 }
 
-export function getClass(classId, examTypeCodes = []) {
+export function getClass(classId, examTypeCodes = [], options = {}) {
   const params = new URLSearchParams()
   examTypeCodes.forEach((code) => params.append('examTypeCodes', code))
   const query = params.size ? `?${params.toString()}` : ''
-  return apiRequest(`/api/admin/classes/${classId}${query}`)
+  const tags = (examTypeCodes.length ? examTypeCodes : ['SAT', 'PSAT', 'SHSAT']).map((code) => `class:${code}`)
+  return cachedResource(`/api/admin/classes/${classId}${query}`, tags, 30_000, options)
 }
 
 export function createClass(classroom, examTypeCodes = []) {
@@ -251,11 +252,12 @@ export function listClassStudents(classId, examTypeCodes = [], { force = false }
   return cachedResource(`/api/admin/classes/${classId}/students${query}`, tags, 30_000, { force })
 }
 
-export function listClassExams(classId, examTypeCodes = []) {
+export function listClassExams(classId, examTypeCodes = [], options = {}) {
   const params = new URLSearchParams()
   examTypeCodes.forEach((code) => params.append('examTypeCodes', code))
   const query = params.size ? `?${params.toString()}` : ''
-  return apiRequest(`/api/admin/classes/${classId}/exams${query}`)
+  const tags = (examTypeCodes.length ? examTypeCodes : ['SAT', 'PSAT', 'SHSAT']).map((code) => `class:${code}`)
+  return cachedResource(`/api/admin/classes/${classId}/exams${query}`, tags, 30_000, options)
 }
 
 export function listClassExamScoreTrend(classId, examTypeCodes = [], options = {}) {

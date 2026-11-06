@@ -2,7 +2,7 @@ import { http } from './http';
 import {
   addClassStudent, addClassStudents, apiRequest, cachedResource, createClass as createPlatformClass,
   createExam as createPlatformExam, createUser as createPlatformUser,
-  deleteClass as deletePlatformClass, listAvailableStudents, listClassStudents, listClasses, listExams, listPapers, listPaperGroups,
+  deleteClass as deletePlatformClass, getClass as getPlatformClass, listAvailableStudents, listClassExams, listClassStudents, listClasses, listExams, listPapers, listPaperGroups,
   publishExam as publishPlatformExam, removeClassStudent, reorderClasses as reorderPlatformClasses, saveExamTargets,
   updateClass as updatePlatformClass, updateExam as updatePlatformExam,
 } from '@/api/platform';
@@ -570,8 +570,8 @@ export const adminApi = {
     return (await listClasses(['SHSAT'], { force })).map(classSummary);
   },
 
-  async getClass(classId) {
-    const classroom = await apiRequest(`/api/admin/classes/${classId}?examTypeCodes=SHSAT`);
+  async getClass(classId, options = {}) {
+    const classroom = await getPlatformClass(classId, ['SHSAT'], options);
     return classSummary(classroom);
   },
 
@@ -601,8 +601,8 @@ export const adminApi = {
     }));
   },
 
-  getClassExams(classId) {
-    return http.get(`/admin/classes/${classId}/exams`);
+  getClassExams(classId, options = {}) {
+    return listClassExams(classId, ['SHSAT'], options);
   },
 
   updateStudent(classId, studentId, payload) {

@@ -10,6 +10,7 @@ const route = useRoute();
 const router = useRouter();
 
 const loading = ref(false);
+const historyLoaded = ref(false);
 const errorMessage = ref('');
 const attempts = ref([]);
 const hoveredTrendPoint = ref(null);
@@ -50,7 +51,6 @@ async function loadHistory({ force = false } = {}) {
   loading.value = true;
   errorMessage.value = '';
   hoveredTrendPoint.value = null;
-  attempts.value = [];
 
   try {
     const records = unwrapResponse(
@@ -61,6 +61,7 @@ async function loadHistory({ force = false } = {}) {
     attempts.value = [...records].sort((left, right) => {
       return getTimeValue(right.submittedAt) - getTimeValue(left.submittedAt);
     });
+    historyLoaded.value = true;
   } catch (error) {
     if (request !== historyRequest) return;
     errorMessage.value = error.message || 'Failed to load student exam history. Please try again later.';
@@ -396,7 +397,11 @@ function formatStatus(status) {
 }
 
 watch([classId, studentId], () => {
-  if (classId.value && studentId.value && route.name === 'admin-student-detail') loadHistory();
+  if (classId.value && studentId.value && route.name === 'admin-student-detail') {
+    historyLoaded.value = false;
+    attempts.value = [];
+    loadHistory();
+  }
 }, { immediate: true });
 </script>
 
@@ -430,14 +435,16 @@ watch([classId, studentId], () => {
         </div>
       </div>
 
-      <AppCard v-if="loading" title="Loading History">
+      <p v-if="loading && historyLoaded" class="status-note" role="status">Refreshing history...</p>
+      <p v-if="errorMessage && historyLoaded" class="error-text" role="alert">{{ errorMessage }} <AppButton variant="secondary" @click="loadHistory({ force: true })">Retry</AppButton></p>
+      <AppCard v-if="loading && !historyLoaded" title="Loading History">
         <div class="student-detail__state">
           <span class="student-detail__spinner" aria-hidden="true"></span>
           <p class="status-note">Loading the student's exam history...</p>
         </div>
       </AppCard>
 
-      <AppCard v-else-if="errorMessage" title="Unable to Load History">
+      <AppCard v-else-if="errorMessage && !historyLoaded" title="Unable to Load History">
         <div class="student-detail__state student-detail__state--error">
           <p class="error-text">{{ errorMessage }}</p>
           <AppButton variant="secondary" @click="loadHistory({ force: true })">Retry</AppButton>

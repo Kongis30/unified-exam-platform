@@ -15,6 +15,10 @@ const router = useRouter();
 
 const loading = ref(false);
 const errorMessage = ref('');
+const examsLoading = ref(false);
+const studentsLoading = ref(false);
+const examsError = ref('');
+const studentsError = ref('');
 const formError = ref('');
 const classToast = ref('');
 const showClassModal = ref(false);
@@ -212,26 +216,30 @@ async function loadPage({ forceTrend = false } = {}) {
   const requestedClassId = classId.value;
   loading.value = true;
   errorMessage.value = '';
+  examsLoading.value = true;
+  studentsLoading.value = true;
+  examsError.value = '';
+  studentsError.value = '';
   // 首屏班级资料加载时预取图表，失败由图表自身提示并支持重试。
   listClassExamScoreTrend(requestedClassId, ['SHSAT'], { force: forceTrend }).catch(() => {});
 
-  try {
-    const [classResponse, examResponse, studentResponse] = await Promise.all([
-      adminApi.getClass(requestedClassId),
-      adminApi.getClassExams(requestedClassId),
-      adminApi.getClassStudents(requestedClassId, { force: true }),
-    ]);
-
-    if (request !== classRequest) return;
-    classInfo.value = unwrapResponse(classResponse, 'Failed to load class details');
-    exams.value = unwrapListResponse(examResponse, 'Failed to load exams');
-    students.value = unwrapListResponse(studentResponse, 'Failed to load students');
-  } catch (error) {
-    if (request !== classRequest) return;
-    errorMessage.value = error.message || 'Failed to load class details. Please try again later.';
-  } finally {
-    if (request === classRequest) loading.value = false;
-  }
+  await Promise.all([
+    adminApi.getClass(requestedClassId, { force: forceTrend }).then((response) => {
+      if (request === classRequest) classInfo.value = unwrapResponse(response, 'Failed to load class details');
+    }).catch((error) => {
+      if (request === classRequest) errorMessage.value = error.message || 'Failed to load class details.';
+    }).finally(() => { if (request === classRequest) loading.value = false; }),
+    adminApi.getClassExams(requestedClassId, { force: forceTrend }).then((response) => {
+      if (request === classRequest) exams.value = unwrapListResponse(response, 'Failed to load exams');
+    }).catch((error) => {
+      if (request === classRequest) examsError.value = error.message || 'Failed to load exams.';
+    }).finally(() => { if (request === classRequest) examsLoading.value = false; }),
+    adminApi.getClassStudents(requestedClassId, { force: forceTrend }).then((response) => {
+      if (request === classRequest) students.value = unwrapListResponse(response, 'Failed to load students');
+    }).catch((error) => {
+      if (request === classRequest) studentsError.value = error.message || 'Failed to load students.';
+    }).finally(() => { if (request === classRequest) studentsLoading.value = false; }),
+  ]);
 }
 
 function goBack() {
@@ -1028,7 +1036,9 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div v-if="relatedClassExams.length === 0" class="admin-state class-exam-empty-state">
+          <div v-if="examsLoading" class="admin-state">Loading exams...</div>
+          <div v-else-if="examsError" class="admin-state admin-state--error">{{ examsError }} <AppButton variant="secondary" @click="loadPage({ forceTrend: true })">Retry</AppButton></div>
+          <div v-else-if="relatedClassExams.length === 0" class="admin-state class-exam-empty-state">
             <strong>No class exams yet</strong>
             <span>No students in this class have started an exam yet. Once they participate, the exam will appear here.</span>
           </div>
@@ -1114,7 +1124,9 @@ onBeforeUnmount(() => {
             <AppButton @click="openAddStudentsModal">Add Students</AppButton>
           </template>
           <p v-if="studentRosterNotice" class="success-text student-removal-notice" role="status">{{ studentRosterNotice }}</p>
-          <div v-if="students.length === 0" class="admin-state">
+          <div v-if="studentsLoading" class="admin-state">Loading students...</div>
+          <div v-else-if="studentsError" class="admin-state admin-state--error">{{ studentsError }} <AppButton variant="secondary" @click="loadPage({ forceTrend: true })">Retry</AppButton></div>
+          <div v-else-if="students.length === 0" class="admin-state">
             No students assigned yet. Add an existing student account to this class.
           </div>
           <div v-else class="table-wrap student-table-wrap">
@@ -1138,7 +1150,6 @@ onBeforeUnmount(() => {
                 >
                   <td>
                     <strong>{{ getStudentName(student) }}</strong>
-                    <small>{{ student.studentNumber ? `Student No. ${student.studentNumber}` : 'No student number' }}</small>
                   </td>
                   <td>
                     <span :class="{ 'student-table__empty-value': getStudentExamCount(student) === 0 }">
@@ -2019,10 +2030,6 @@ onBeforeUnmount(() => {
 .student-table td strong {
   color: var(--color-text);
   font-size: 14px;
-}
-
-.student-table td small {
-  color: #75829a;
 }
 
 .student-table tbody tr {

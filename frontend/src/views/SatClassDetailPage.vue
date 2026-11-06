@@ -24,6 +24,10 @@ const exams = ref([])
 const deleteExamTarget = ref(null)
 const trendVersion = ref(0)
 const isLoading = ref(false)
+const examsLoading = ref(false)
+const studentsLoading = ref(false)
+const examsError = ref('')
+const studentsError = ref('')
 const isSaving = ref(false)
 const error = ref('')
 const editOpen = ref(false)
@@ -66,22 +70,29 @@ async function loadPage() {
   const requestedWorkspace = workspaceCode.value
   isLoading.value = true
   error.value = ''
+  examsLoading.value = true
+  studentsLoading.value = true
+  examsError.value = ''
+  studentsError.value = ''
   // 图表与班级资料并发请求，图表组件复用同一个会话内请求。
   listClassExamScoreTrend(requestedClassId, [requestedWorkspace]).catch(() => {})
-  try {
-    const [classRow, studentRows, examRows] = await Promise.all([
-      getClass(requestedClassId, [requestedWorkspace]), listClassStudents(requestedClassId, [requestedWorkspace], { force: true }), listClassExams(requestedClassId, [requestedWorkspace]),
-    ])
-    if (request !== classRequest) return
-    classroom.value = classRow
-    students.value = studentRows
-    exams.value = examRows
-  } catch (requestError) {
-    if (request !== classRequest) return
-    error.value = requestError.message || 'Unable to load class details.'
-  } finally {
-    if (request === classRequest) isLoading.value = false
-  }
+  await Promise.all([
+    getClass(requestedClassId, [requestedWorkspace]).then((row) => {
+      if (request === classRequest) classroom.value = row
+    }).catch((requestError) => {
+      if (request === classRequest) error.value = requestError.message || 'Unable to load class details.'
+    }).finally(() => { if (request === classRequest) isLoading.value = false }),
+    listClassStudents(requestedClassId, [requestedWorkspace]).then((rows) => {
+      if (request === classRequest) students.value = rows
+    }).catch((requestError) => {
+      if (request === classRequest) studentsError.value = requestError.message || 'Unable to load students.'
+    }).finally(() => { if (request === classRequest) studentsLoading.value = false }),
+    listClassExams(requestedClassId, [requestedWorkspace]).then((rows) => {
+      if (request === classRequest) exams.value = rows
+    }).catch((requestError) => {
+      if (request === classRequest) examsError.value = requestError.message || 'Unable to load exams.'
+    }).finally(() => { if (request === classRequest) examsLoading.value = false }),
+  ])
 }
 
 function goBack() {
@@ -286,10 +297,11 @@ watch([classId, workspaceCode], () => {
       <ClassExamScoreTrend :key="trendVersion" :class-id="classId" :exam-type-codes="[workspaceCode]" />
 
       <AppCard class="sat-class-detail-section" title="Exam Releases" subtitle="Review releases targeted to this class, including drafts and published exams.">
-        <div v-if="isLoading" class="admin-state">Loading exam records...</div>
+        <div v-if="examsLoading" class="admin-state">Loading exam records...</div>
+        <p v-else-if="examsError" class="error-text" role="alert">{{ examsError }} <AppButton variant="secondary" @click="loadPage">Retry</AppButton></p>
         <p v-else-if="!exams.length" class="table-empty">No exam records for this class yet.</p>
         <p v-else class="mobile-table-scroll-hint">Swipe horizontally to see all columns.</p>
-        <div v-if="!isLoading && exams.length" class="admin-table-scroll" tabindex="0" aria-label="Exam releases table. Scroll horizontally to see all columns.">
+        <div v-if="!examsLoading && !examsError && exams.length" class="admin-table-scroll" tabindex="0" aria-label="Exam releases table. Scroll horizontally to see all columns.">
           <AdminDataTable>
             <thead><tr><th>Exam</th><th>Paper</th><th>Exam Window</th><th>Status</th><th>Duration</th><th>Actions</th></tr></thead>
             <tbody>
@@ -322,15 +334,16 @@ watch([classId, workspaceCode], () => {
             <span>{{ students.length }} {{ students.length === 1 ? 'student' : 'students' }}</span>
             <AppButton @click="openAddStudents">Add student</AppButton>
           </div>
-          <p v-if="isLoading" class="admin-state">Loading students...</p>
+          <p v-if="studentsLoading" class="admin-state">Loading students...</p>
+          <p v-else-if="studentsError" class="error-text" role="alert">{{ studentsError }} <AppButton variant="secondary" @click="loadPage">Retry</AppButton></p>
           <p v-else-if="!students.length" class="table-empty">No students in this class yet.</p>
           <p v-else class="mobile-table-scroll-hint">Swipe horizontally to see all columns.</p>
-          <div v-if="!isLoading && students.length" class="admin-table-scroll" tabindex="0" aria-label="Students table. Scroll horizontally to see all columns.">
+          <div v-if="!studentsLoading && !studentsError && students.length" class="admin-table-scroll" tabindex="0" aria-label="Students table. Scroll horizontally to see all columns.">
             <AdminDataTable>
               <thead><tr><th>Student</th><th>Average</th><th>Exam Count</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 <tr v-for="student in students" :key="student.id">
-                  <td><strong>{{ student.realName || 'Unnamed student' }}</strong><small>{{ student.username ? `Student No. ${student.username}` : 'No student number' }}</small></td>
+                  <td><strong>{{ student.realName || 'Unnamed student' }}</strong></td>
                   <td><span :class="{ 'sat-student-empty': student.averageScore == null }">{{ studentAverage(student) }}</span></td>
                   <td><span :class="{ 'sat-student-empty': !student.examCount }">{{ student.examCount || 'No exams' }}</span></td>
                   <td><span class="sat-student-status" :class="{ 'sat-student-status--active': student.active }">{{ student.active ? 'Active' : 'Inactive' }}</span></td>
