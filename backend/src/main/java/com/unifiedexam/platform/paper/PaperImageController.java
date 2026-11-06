@@ -37,7 +37,7 @@ public class PaperImageController {
                                                               @RequestPart("file") MultipartFile file,
                                                               Authentication authentication) {
         paperAccess.requireAdministrator(authentication);
-        requireDraftPaper(paperId);
+        requireEditablePaper(paperId);
         return imageStorage.store(paperId, file);
     }
 
@@ -52,18 +52,18 @@ public class PaperImageController {
             @RequestParam(required = false, defaultValue = "0") Integer displayOrder,
             Authentication authentication) {
         paperAccess.requireAdministrator(authentication);
-        requireDraftPaper(paperId);
+        requireEditablePaper(paperId);
         PaperImageStorage.StoredImage image = imageStorage.store(paperId, file);
         return new MaterialImageView(materialId, paperId, partId, subTypeId, "image",
             StringUtils.hasText(materialTitle) ? materialTitle : image.originalFileName(), materialCategory,
             null, image.assetUrl(), displayOrder, image.originalFileName(), image.fileSize(), image.fileType());
     }
 
-    private void requireDraftPaper(long paperId) {
-        String status = jdbcTemplate.query("SELECT status FROM papers WHERE id = ?",
-            rs -> rs.next() ? rs.getString(1) : null, paperId);
-        if (status == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Paper not found.");
-        if (!"DRAFT".equals(status)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an editable paper version before uploading images.");
+    private void requireEditablePaper(long paperId) {
+        var paper = jdbcTemplate.query("SELECT status, exam_type_code FROM papers WHERE id = ?",
+            rs -> rs.next() ? new String[] {rs.getString(1), rs.getString(2)} : null, paperId);
+        if (paper == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Paper not found.");
+        if (!"SHSAT".equals(paper[1]) && !"DRAFT".equals(paper[0])) throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an editable paper version before uploading images.");
     }
 
     public record MaterialImageView(Long materialId, long paperId, Long partId, Long subTypeId,

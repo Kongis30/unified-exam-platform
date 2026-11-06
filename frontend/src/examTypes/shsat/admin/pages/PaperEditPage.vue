@@ -74,6 +74,7 @@ const importAnalyticsFilter = ref('all');
 const importQuestionTypeFilter = ref('all');
 const collapsedImportGroupCodes = ref(new Set());
 const selectedImportItemIds = ref([]);
+const importSectionMappings = ref({});
 const previewImportQuestionNumber = ref(null);
 const previewImportItemId = ref(null);
 const previewImportQuestion = ref(null);
@@ -247,6 +248,19 @@ const allVisibleImportQuestionsSelected = computed(() => (
   && selectedVisibleImportQuestionCount.value === visibleImportAnalytics.value.length
 ));
 const selectedImportQuestionCount = computed(() => selectedImportItemIds.value.length);
+// 同一来源分组的题目共用目标位置，默认由服务器自动匹配。
+const selectedImportSections = computed(() => {
+  const groups = new Map();
+  for (const question of importSourcePaper.value?.questions || []) {
+    if (!selectedImportItemIds.value.includes(String(question.paperItemId))) continue;
+    const id = question.subTypeId || question.partId;
+    if (!id || groups.has(String(id))) continue;
+    const part = importSourcePaper.value.parts.find((item) => sameId(item.partId, question.partId));
+    const subType = importSourcePaper.value.subTypes.find((item) => sameId(item.subTypeId, question.subTypeId));
+    groups.set(String(id), { id: String(id), name: [part?.partName, subType?.subTypeName].filter(Boolean).join(' / ') });
+  }
+  return [...groups.values()];
+});
 const selectedImportPaper = computed(() => importPapers.value.find((paper) => String(paper.paperId) === String(importPaperId.value)) || null);
 const groupedImportPapers = computed(() => {
   const groups = new Map();
@@ -2151,6 +2165,7 @@ async function openImportQuestions() {
   importAnalytics.value = [];
   collapsedImportGroupCodes.value = new Set();
   selectedImportItemIds.value = [];
+  importSectionMappings.value = {};
   previewImportQuestionNumber.value = null;
   previewImportItemId.value = null;
   previewImportQuestion.value = null;
@@ -2183,6 +2198,7 @@ async function selectImportSourcePaper(sourcePaperId) {
   importQuestionTypeFilter.value = 'all';
   collapsedImportGroupCodes.value = new Set();
   selectedImportItemIds.value = [];
+  importSectionMappings.value = {};
   previewImportQuestionNumber.value = null;
   previewImportItemId.value = null;
   previewImportQuestion.value = null;
@@ -2287,11 +2303,19 @@ async function confirmImportQuestions() {
         importQuestionsError.value = 'Save the current edits first. Close this window, fix any highlighted fields, then import again.';
         return;
       }
+      if (Object.values(importSectionMappings.value).some(Boolean)) {
+        importSectionMappings.value = {};
+        importQuestionsError.value = 'Your changes were saved. Please select the destination sections again.';
+        return;
+      }
     }
 
     const response = await adminApi.importQuestionsFromPaper(paperId.value, {
       sourcePaperId: Number(importPaperId.value),
       paperItemIds: selectedImportItemIds.value.map(Number),
+      sectionMappings: Object.fromEntries(selectedImportSections.value
+        .filter((section) => importSectionMappings.value[section.id])
+        .map((section) => [section.id, Number(importSectionMappings.value[section.id])])),
     });
     const importedQuestions = unwrapResponse(response) || [];
     const firstImportedQuestionId = importedQuestions[0]?.questionId;
@@ -3392,6 +3416,18 @@ onBeforeUnmount(() => {
                 </button>
               </div>
               <p v-if="importQuestionsError" class="import-questions-error" role="alert">{{ importQuestionsError }}</p>
+              <div v-if="selectedImportSections.length" class="import-questions-filters">
+                <label v-for="section in selectedImportSections" :key="section.id">
+                  <span>{{ section.name }} → </span>
+                  <select v-model="importSectionMappings[section.id]" :disabled="importingQuestions" :aria-label="`Destination for ${section.name}`">
+                    <option value="">Automatically match section</option>
+                    <optgroup v-for="part in parts" :key="part.partId" :label="part.partName">
+                      <option :value="part.partId">{{ part.partName }}</option>
+                      <option v-for="type in subTypes.filter((item) => sameId(item.partId, part.partId))" :key="type.subTypeId" :value="type.subTypeId">{{ type.subTypeName }}</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </div>
             </div>
 
             <div v-if="loadingImportPapers || loadingImportAnalytics" class="import-questions-loading">Loading paper questions...</div>

@@ -234,6 +234,18 @@ public class PaperService {
             .toList();
         List<SectionView> targetPaperSections = loadSections(targetPaperId, null);
         Map<Long, Long> targetSections = PaperSectionMatcher.mapSections(sourceSections, targetPaperSections);
+        if (request.sectionMappings() != null && !request.sectionMappings().isEmpty()) {
+            if (!"SHSAT".equals(examTypeCode)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Section selection is only available for SHSAT papers.");
+            var sourceIds = flattenSections(sourceSections).stream().map(SectionView::id).collect(java.util.stream.Collectors.toSet());
+            var targetIds = flattenSections(targetPaperSections).stream()
+                .filter(section -> "PART".equals(section.sectionKind()) || "SUBTYPE".equals(section.sectionKind()))
+                .map(SectionView::id).collect(java.util.stream.Collectors.toSet());
+            for (var mapping : request.sectionMappings().entrySet()) {
+                if (!sourceIds.contains(mapping.getKey()) || !targetIds.contains(mapping.getValue()))
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select a valid section in the target paper.");
+                targetSections.put(mapping.getKey(), mapping.getValue());
+            }
+        }
         int nextDisplayNumber = flatten(targetPaperSections).stream()
             .map(QuestionView::displayNumber).filter(java.util.Objects::nonNull).mapToInt(Integer::intValue).max().orElse(0) + 1;
         List<Long> insertedIds = new ArrayList<>();
@@ -357,7 +369,6 @@ public class PaperService {
 
     @Transactional
     public PaperDetail updateScoringProfile(long paperId, String profileCode) {
-        requireDraft(paperId);
         if (!"SHSAT".equals(typeCode(paperId))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Scoring profiles can only be changed for SHSAT papers.");
         }
@@ -370,7 +381,7 @@ public class PaperService {
         return get(paperId);
     }
 
-    /** 用新结构覆盖草稿结构；问题答案键只通过管理员接口返回。 */
+    /** 保存试卷结构；问题答案键只通过管理员接口返回。 */
     @Transactional
     public PaperDetail saveStructure(long paperId, SaveStructureRequest request) {
         String examTypeCode = typeCode(paperId);
@@ -1075,8 +1086,9 @@ public class PaperService {
         if (!"DRAFT".equals(status)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft papers can be changed.");
     }
 
-    /** SAT/PSAT 已就绪版本在尚未被考试引用时可编辑；SHSAT 继续遵守草稿封存规则。 */
+    /** SHSAT 允许编辑已有试卷；SAT/PSAT 保持现有版本限制。 */
     private void requireEditable(long paperId, String examTypeCode) {
+        if ("SHSAT".equals(examTypeCode)) return;
         if (!isSatWorkspaceType(examTypeCode)) {
             requireDraft(paperId);
             return;
@@ -1155,7 +1167,8 @@ public class PaperService {
     }
     public record ImportQuestionsRequest(Long sourceExamId, Long sourcePaperId,
             @Size(max = 100) List<@NotNull @Positive Integer> questionNumbers,
-            @Size(max = 100) List<@NotNull @Positive Long> paperItemIds) { }
+            @Size(max = 100) List<@NotNull @Positive Long> paperItemIds,
+            @Size(max = 100) Map<@NotNull @Positive Long, @NotNull @Positive Long> sectionMappings) { }
     public record SectionRequest(@NotBlank @Size(max = 60) String sectionCode,
                                 @NotBlank @Size(max = 30) String sectionKind,
                                 @NotBlank @Size(max = 200) String title,
