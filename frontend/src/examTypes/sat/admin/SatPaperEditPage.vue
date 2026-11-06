@@ -118,12 +118,17 @@
                                  'active': selectedQuestion?.id === question.id,
                                  'sortable': sortMode 
                                }"
+                               role="button"
+                               tabindex="0"
+                               :aria-pressed="selectedQuestion?.id === question.id"
                                @click="!sortMode && selectQuestion(question, option)"
+                               @keydown.enter.prevent="!sortMode && selectQuestion(question, option)"
+                               @keydown.space.prevent="!sortMode && selectQuestion(question, option)"
                              >
-                               <span v-if="sortMode" class="drag-handle">⋮⋮</span>
+                               <span class="drag-handle" aria-hidden="true">{{ sortMode ? '⋮⋮' : '' }}</span>
                                <span class="question-number">Q{{ index + 1 }}</span>
-                               <span class="question-list-preview">{{ getQuestionPreview(question.content) }}</span>
-                               <!-- <span class="question-type">{{ question.type }}</span> -->
+                               <span class="question-list-preview">{{ getQuestionPreview(question.content) || 'No question text' }}</span>
+                               <span class="question-meta"><span v-for="tag in questionListTags(question)" :key="tag" class="question-meta-tag">{{ tag }}</span></span>
                              </div>
                            </template>
                         </draggable>
@@ -151,13 +156,17 @@
                              'active': selectedQuestion?.questionId === question.questionId,
                              'sortable': sortMode 
                            }"
+                           role="button"
+                           tabindex="0"
+                           :aria-pressed="selectedQuestion?.questionId === question.questionId"
                            @click="!sortMode && selectQuestion(question, module)"
+                           @keydown.enter.prevent="!sortMode && selectQuestion(question, module)"
+                           @keydown.space.prevent="!sortMode && selectQuestion(question, module)"
                          >
-                           <span v-if="sortMode" class="drag-handle">⋮⋮</span>
+                           <span class="drag-handle" aria-hidden="true">{{ sortMode ? '⋮⋮' : '' }}</span>
                            <span class="question-number">Q{{ index + 1 }}</span>
-                           <span class="question-list-preview">{{ getQuestionPreview(question.content) }}</span>
-                           <!-- <span class="question-type">{{ question.typeName || 'Unknown' }}</span> -->
-                           <!-- <span class="question-score">{{ question.score }}分</span> -->
+                           <span class="question-list-preview">{{ getQuestionPreview(question.content) || 'No question text' }}</span>
+                           <span class="question-meta"><span v-for="tag in questionListTags(question)" :key="tag" class="question-meta-tag">{{ tag }}</span></span>
                          </div>
                        </template>
                     </draggable>
@@ -1945,6 +1954,10 @@ const getQuestionPreview = (content) => {
   return content.replace(/<[^>]*>/g, '').replace(/[#*_`]/g, '').replace(/\s+/g, ' ').trim()
 }
 
+// 只展示题目已有的类型和难度，列表与编辑区使用相同数据来源。
+const questionListTags = (question) => [question.typeName || question.type, question.difficulty]
+  .filter(value => typeof value === 'string' && value.trim())
+
 // 初始化
 onMounted(async () => {
   await loadPaperStructure()
@@ -2173,68 +2186,88 @@ onMounted(async () => {
 }
 
 .questions-list {
-  padding-left: 12px;
+  padding: 0 8px 8px;
   margin-top: 4px;
 }
 
 .question-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 5px 8px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
   cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.2s;
-  margin-bottom: 2px;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+  margin-bottom: 8px;
 }
 
 .question-item:hover {
-  background: #f5f7fa;
+  border-color: var(--color-primary);
+  background: #f7faff;
 }
 
 .question-item.active {
-  background: #409eff;
-  color: white;
+  border-color: var(--color-primary);
+  background: #f7faff;
+  box-shadow: inset 3px 0 0 var(--color-primary), 0 8px 18px rgba(47, 111, 237, 0.1);
 }
 
 .question-number {
+  grid-column: 2;
+  justify-self: start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #1f3f73;
   font-size: 15px;
-  font-weight: 600;
-  color: #606266;
-  flex-shrink: 0;
-  min-width: 24px;
-}
-
-.question-item.active .question-number {
-  color: white;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .question-list-preview {
-  flex: 1;
+  grid-column: 3;
   min-width: 0;
-  color: #666;
+  color: #172033;
   font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
   overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.question-meta {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.question-meta-tag {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #e0e7f3;
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: #64748b;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.question-item.active .question-list-preview { color: white; }
-
-.question-type {
-  font-size: 10px;
-  color: #909399;
-}
-
-.question-item.active .question-type {
-  color: rgba(255, 255, 255, 0.8);
 }
 
 /* 拖拽排序相关样式 */
 .question-item.sortable {
   cursor: move;
-  border: 1px dashed #d9d9d9;
-  background: #fafafa;
+  border-style: dashed;
 }
 
 .question-item.sortable:hover {
@@ -2243,8 +2276,15 @@ onMounted(async () => {
 }
 
 .drag-handle {
-  color: #909399;
-  font-size: 12px;
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #9aa7ba;
+  font-size: 13px;
+  letter-spacing: -3px;
   cursor: grab;
   user-select: none;
 }
