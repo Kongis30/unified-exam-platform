@@ -1476,15 +1476,6 @@ async function openStudentExam(exam) {
   }
 }
 
-function viewAttempt(exam) {
-  if (['SAT', 'PSAT'].includes(exam.examTypeCode)) {
-    sessionStorage.setItem('sat:workspace', exam.examTypeCode)
-    router.push({ name: 'sat-report', query: { examId: exam.id, recordId: exam.latestAttemptId } })
-    return
-  }
-  router.push({ name: 'student-attempt', params: { attemptId: exam.latestAttemptId } })
-}
-
 watch([error, notice], ([errorMessage, successMessage]) => {
   if (!isSatWorkspace.value && (editorOpen.value || releaseOpen.value || paperActionDialog.value)) return
   if (errorMessage) {
@@ -2134,7 +2125,7 @@ watch(() => props.code, (code) => {
               <article v-for="exam in studentExams" :key="exam.id" class="student-home-exam-card">
                 <header class="student-home-exam-card__header">
                   <div><span class="student-home-eyebrow">Exam #{{ exam.id }}</span><h3>{{ exam.title }}</h3></div>
-                  <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).label }}</span>
+                  <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).canViewAttempt && !getStudentExamState(exam).canStart ? 'Completed' : getStudentExamState(exam).label }}</span>
                 </header>
                 <p class="student-home-exam-card__description">{{ exam.paperTitle || 'Assigned exam' }}</p>
                 <dl class="student-home-meta">
@@ -2145,8 +2136,7 @@ watch(() => props.code, (code) => {
                 <AppButton v-if="getStudentExamState(exam).canStart" class="student-home-card-action" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
                   {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
                 </AppButton>
-                <AppButton v-else-if="getStudentExamState(exam).canViewAttempt" class="student-home-card-action" variant="secondary" @click="viewAttempt(exam)">View attempt</AppButton>
-                <AppButton v-else class="student-home-card-action" disabled>{{ getStudentExamState(exam).label }}</AppButton>
+                <AppButton v-else class="student-home-card-action" disabled>{{ getStudentExamState(exam).canViewAttempt ? 'Completed' : getStudentExamState(exam).label }}</AppButton>
               </article>
             </div>
           </AppCard>
