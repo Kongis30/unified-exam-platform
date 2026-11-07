@@ -144,7 +144,6 @@ const accuracyTiles = computed(() => Array.from({ length: questionCount.value },
   return {
     questionNumber,
     accuracy: accuracy === null || accuracy === undefined ? null : Number(accuracy),
-    pendingCount: Number(row?.pendingCount) || 0,
   };
 }));
 
@@ -307,15 +306,11 @@ function formatExamDuration(value) {
   return parts.join(' ');
 }
 
-function formatAccuracy(value, pendingCount = 0) {
-  if (value !== null) return `${Math.round(value)}%`;
-  return pendingCount > 0 ? 'Pending' : '—';
+function formatAccuracy(value) {
+  return value === null ? '—' : `${Math.round(value)}%`;
 }
 
 function accuracyAriaLabel(tile) {
-  if (tile.pendingCount > 0) {
-    return `Open question ${tile.questionNumber} details; ${tile.pendingCount} response${tile.pendingCount === 1 ? '' : 's'} awaiting score`;
-  }
   return `Open question ${tile.questionNumber} details`;
 }
 
@@ -378,8 +373,8 @@ function markSatOptionImageUnavailable(src) {
   unavailableSatOptionImages.value = new Set([...unavailableSatOptionImages.value, src]);
 }
 
-function accuracyClass(value, pendingCount = 0) {
-  if (value === null) return pendingCount > 0 ? 'accuracy-tile--pending' : 'accuracy-tile--empty';
+function accuracyClass(value) {
+  if (value === null) return 'accuracy-tile--empty';
   if (value >= 75) return 'accuracy-tile--high';
   if (value > 50) return 'accuracy-tile--medium';
   return 'accuracy-tile--low';
@@ -532,15 +527,6 @@ onBeforeUnmount(() => {
             <span
               class="accuracy-legend__item"
               tabindex="0"
-              aria-label="Awaiting score"
-              data-tooltip="Responses are saved; scores appear after the exam is submitted."
-            >
-              <i class="legend-swatch legend-swatch--pending"></i>
-              Awaiting score
-            </span>
-            <span
-              class="accuracy-legend__item"
-              tabindex="0"
               aria-label="High accuracy: 75% or above"
               data-tooltip="75% or above"
             >
@@ -573,12 +559,12 @@ onBeforeUnmount(() => {
                 :key="`accuracy-${tile.questionNumber}`"
                 type="button"
                 class="accuracy-tile"
-                :class="accuracyClass(tile.accuracy, tile.pendingCount)"
+                :class="accuracyClass(tile.accuracy)"
                 :aria-label="accuracyAriaLabel(tile)"
                 @click="openQuestionDetail(tile.questionNumber)"
               >
                 <strong>Q{{ tile.questionNumber }}</strong>
-                <span>{{ formatAccuracy(tile.accuracy, tile.pendingCount) }}</span>
+                <span>{{ formatAccuracy(tile.accuracy) }}</span>
               </button>
             </div>
           </div>
@@ -681,7 +667,6 @@ onBeforeUnmount(() => {
 .accuracy-legend__item:hover::after, .accuracy-legend__item:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
 .legend-swatch { width: 18px; height: 18px; border-radius: 3px; }
 .legend-swatch--empty, .accuracy-tile--empty { background: #cbd5e3; }
-.legend-swatch--pending, .accuracy-tile--pending { background: #92a5c3; }
 .legend-swatch--high, .accuracy-tile--high { background: #2ecb9f; }
 .legend-swatch--medium, .accuracy-tile--medium { background: #f6bd1d; }
 .legend-swatch--low, .accuracy-tile--low { background: #f36f73; }

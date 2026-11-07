@@ -2,6 +2,8 @@ package com.unifiedexam.platform.examtype.sat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.unifiedexam.platform.examtype.MonitorAnswerGradingService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -24,10 +26,17 @@ public class SatAdminMonitorService {
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    private final MonitorAnswerGradingService answerGrading;
 
-    public SatAdminMonitorService(JdbcTemplate jdbc, ObjectMapper mapper) {
+    @Autowired
+    public SatAdminMonitorService(JdbcTemplate jdbc, ObjectMapper mapper, MonitorAnswerGradingService answerGrading) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.answerGrading = answerGrading;
+    }
+
+    public SatAdminMonitorService(JdbcTemplate jdbc, ObjectMapper mapper) {
+        this(jdbc, mapper, null);
     }
 
     public Map<String, Object> live(long examId) {
@@ -90,6 +99,7 @@ public class SatAdminMonitorService {
 
     public Map<String, Object> analytics(long examId) {
         Exam exam = requireSatExam(examId);
+        if (answerGrading != null) answerGrading.gradePendingAnswers(examId, exam.type());
         long started = jdbc.queryForObject("SELECT COUNT(*) FROM attempts WHERE exam_id = ? AND is_practice = FALSE", Long.class, examId);
         List<Map<String, Object>> questions = jdbc.query("""
             SELECT ROW_NUMBER() OVER (ORDER BY ps.sort_order, ps.id, pi.sort_order, pi.id) AS question_number,
@@ -122,7 +132,6 @@ public class SatAdminMonitorService {
             row.put("attempted", attempted);
             row.put("correctCount", correct);
             row.put("wrongCount", wrong);
-            row.put("pendingCount", Math.max(0, attempted - correct - wrong));
             row.put("unansweredCount", Math.max(0, started - attempted));
             row.put("accuracy", percent(correct, correct + wrong));
             row.put("averageTimeSpent", rs.getBigDecimal("average_time_spent"));

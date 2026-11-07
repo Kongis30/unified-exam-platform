@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.unifiedexam.platform.examtype.shsat.ShsatQuestionGrader;
+import com.unifiedexam.platform.examtype.MonitorAnswerGradingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -27,18 +28,20 @@ public class ShsatAdminReportService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final ShsatQuestionGrader questionGrader;
+    private final MonitorAnswerGradingService answerGrading;
 
     @Autowired
     public ShsatAdminReportService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
-                                   ShsatQuestionGrader questionGrader) {
+                                   ShsatQuestionGrader questionGrader, MonitorAnswerGradingService answerGrading) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.questionGrader = questionGrader;
+        this.answerGrading = answerGrading;
     }
 
     /** 简化服务层单测构造；运行时由 Spring 注入评分器实例。 */
     public ShsatAdminReportService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
-        this(jdbcTemplate, objectMapper, new ShsatQuestionGrader());
+        this(jdbcTemplate, objectMapper, new ShsatQuestionGrader(), null);
     }
 
     /** 汇总班级成绩；迁移空题以 legacyAnswer:null 占位，不能把 ungraded_count 当作已作答数。 */
@@ -411,32 +414,41 @@ public class ShsatAdminReportService {
 
     public Map<String, Object> monitorAnalytics(long examId) {
         ExamMonitor exam = requireShsatExam(examId);
-        long started = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM attempts WHERE exam_id = ? AND is_practice = FALSE", Long.class, examId);
-        // 监考统计按已保存答案计算；导入的未答记录用 legacyAnswer:null 占位，需排除该占位值。
+        if (answerGrading != null) answerGrading.gradePendingAnswers(examId, "SHSAT");
+        // 按实际派发版本统计每题人数，新增题不把历史作答计入未答人数。
+        // 迁移的未答记录用 legacyAnswer:null 占位，需排除该占位值。
         List<Map<String, Object>> questions = jdbcTemplate.query("""
             SELECT pi.display_number, q.id AS question_id, q.question_type_code,
                    COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(part.settings_json, '$.partCode')), ''),
                             part.section_code) AS subject_code,
                    qm.skill_tag_code,
+                   (SELECT COUNT(*) FROM attempt_items ai JOIN attempts a ON a.id = ai.attempt_id
+                    JOIN paper_items version ON version.id = ai.paper_item_id
+                    WHERE a.exam_id = ? AND a.is_practice = FALSE
+                      AND COALESCE(version.lineage_id, version.id) = COALESCE(pi.lineage_id, pi.id)) AS served,
                    (SELECT COUNT(*) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
-                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id
+                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id IN (SELECT version.id FROM paper_items version
+                        WHERE version.lineage_id = COALESCE(pi.lineage_id, pi.id) OR version.id = COALESCE(pi.lineage_id, pi.id))
                       AND NOT (JSON_CONTAINS_PATH(aa.answer_json, 'one', '$.legacyAnswer')
                         AND (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'NULL'
                           OR (JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'STRING'
                             AND JSON_UNQUOTE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = '')))) AS attempted,
                    (SELECT COUNT(*) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
-                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id AND aa.is_correct = TRUE) AS correct,
+                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id IN (SELECT version.id FROM paper_items version
+                        WHERE version.lineage_id = COALESCE(pi.lineage_id, pi.id) OR version.id = COALESCE(pi.lineage_id, pi.id)) AND aa.is_correct = TRUE) AS correct,
                    (SELECT COUNT(*) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
-                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id AND aa.is_correct = FALSE) AS wrong,
+                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id IN (SELECT version.id FROM paper_items version
+                        WHERE version.lineage_id = COALESCE(pi.lineage_id, pi.id) OR version.id = COALESCE(pi.lineage_id, pi.id)) AND aa.is_correct = FALSE) AS wrong,
                    (SELECT AVG(NULLIF(aa.time_spent_seconds, 0)) FROM attempt_answers aa JOIN attempts a ON a.id = aa.attempt_id
-                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id = pi.id) AS average_time_spent
+                    WHERE a.exam_id = ? AND a.is_practice = FALSE AND aa.paper_item_id IN (SELECT version.id FROM paper_items version
+                        WHERE version.lineage_id = COALESCE(pi.lineage_id, pi.id) OR version.id = COALESCE(pi.lineage_id, pi.id))) AS average_time_spent
             FROM paper_sections ps JOIN paper_items pi ON pi.section_id = ps.id
             JOIN questions q ON q.id = pi.question_id
             LEFT JOIN paper_sections parent ON parent.id = ps.parent_section_id
             LEFT JOIN paper_sections part ON part.id = CASE
                 WHEN ps.section_kind = 'PART' THEN ps.id ELSE parent.id END
             LEFT JOIN shsat_question_metadata qm ON qm.question_id = q.id
-            WHERE ps.paper_id = ? AND pi.display_number IS NOT NULL
+            WHERE ps.paper_id = ? AND ps.archived_key = 0 AND pi.display_number IS NOT NULL
             ORDER BY pi.display_number, pi.id
             """, (rs, rowNum) -> {
                 long attempted = rs.getLong("attempted");
@@ -450,8 +462,7 @@ public class ShsatAdminReportService {
                 row.put("correctCount", correct);
                 long wrong = rs.getLong("wrong");
                 row.put("wrongCount", wrong);
-                row.put("pendingCount", Math.max(0, attempted - correct - wrong));
-                row.put("unansweredCount", Math.max(0, started - attempted));
+                row.put("unansweredCount", Math.max(0, rs.getLong("served") - attempted));
                 row.put("accuracy", percent(correct, correct + wrong));
                 row.put("averageTimeSpent", rs.getBigDecimal("average_time_spent"));
                 row.put("shsatSubjectCode", rs.getString("subject_code"));
@@ -459,7 +470,7 @@ public class ShsatAdminReportService {
                 row.put("materialId", null);
                 row.put("materialTitle", null);
                 return row;
-            }, examId, examId, examId, examId, exam.paperId());
+            }, examId, examId, examId, examId, examId, exam.paperId());
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("questionAnalytics", questions);
         result.put("generatedAt", LocalDateTime.now());

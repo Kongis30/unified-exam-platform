@@ -303,26 +303,26 @@ class ShsatAdminReportServiceTest {
 
         assertEquals(0L, question.get("attemptedCount"));
         assertEquals(1L, question.get("unansweredCount"));
-        assertEquals(0L, question.get("pendingCount"));
+        org.junit.jupiter.api.Assertions.assertFalse(question.containsKey("pendingCount"));
         assertNull(question.get("accuracy"));
         assertEquals("ELA", question.get("shsatSubjectCode"));
         verify(jdbc).query(
             org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("FROM attempt_answers aa JOIN attempts a")
                 && sql.contains("JSON_TYPE(JSON_EXTRACT(aa.answer_json, '$.legacyAnswer')) = 'NULL'")
                 && sql.contains("subject_code") && sql.contains("part.settings_json")
-                && !sql.contains("FROM attempt_items ai JOIN attempts a")),
-            any(RowMapper.class), eq(27L), eq(27L), eq(27L), eq(27L), eq(88L));
+                && sql.contains("FROM attempt_items ai JOIN attempts a")),
+            any(RowMapper.class), eq(27L), eq(27L), eq(27L), eq(27L), eq(27L), eq(88L));
     }
 
     @Test
-    void monitorSeparatesPendingAnswersFromScoredAccuracy() throws Exception {
+    void monitorReturnsOnlyScoredAccuracyWithoutPendingState() throws Exception {
         JdbcTemplate jdbc = monitorJdbc(2, 1, 0, "MATH");
 
         Map<String, Object> result = new ShsatAdminReportService(jdbc, new ObjectMapper()).monitorAnalytics(27L);
         Map<?, ?> question = firstQuestion(result);
 
         assertEquals(2L, question.get("attemptedCount"));
-        assertEquals(1L, question.get("pendingCount"));
+        org.junit.jupiter.api.Assertions.assertFalse(question.containsKey("pendingCount"));
         assertEquals(0L, question.get("unansweredCount"));
         assertEquals(new BigDecimal("100.00"), question.get("accuracy"));
         assertEquals("MATH", question.get("shsatSubjectCode"));
@@ -354,6 +354,7 @@ class ShsatAdminReportServiceTest {
             when(row.getString("question_type_code")).thenReturn("MULTIPLE_CHOICE");
             when(row.getString("subject_code")).thenReturn(subjectCode);
             when(row.getString("skill_tag_code")).thenReturn(null);
+            when(row.getLong("served")).thenReturn(Math.max(1L, attempted));
             when(row.getLong("attempted")).thenReturn(attempted);
             when(row.getLong("correct")).thenReturn(correct);
             when(row.getLong("wrong")).thenReturn(wrong);

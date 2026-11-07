@@ -64,7 +64,7 @@ class SatAdminMonitorServiceTest {
         assertEquals(2L, question.get("attemptedCount"));
         assertEquals(1L, question.get("correctCount"));
         assertEquals(0L, question.get("wrongCount"));
-        assertEquals(1L, question.get("pendingCount"));
+        org.junit.jupiter.api.Assertions.assertFalse(question.containsKey("pendingCount"));
         assertEquals(new BigDecimal("100.00"), question.get("accuracy"));
         assertEquals(0L, question.get("unansweredCount"));
         assertEquals(new BigDecimal("42.5"), question.get("averageTimeSpent"));
