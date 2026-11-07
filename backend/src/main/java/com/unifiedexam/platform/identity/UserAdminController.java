@@ -148,6 +148,7 @@ public class UserAdminController {
 
         long actorId = jdbcTemplate.queryForObject("SELECT id FROM users WHERE username = ?", Long.class, actor);
         jdbcTemplate.update("DELETE FROM shsat_wrong_answer_assignments WHERE student_user_id = ?", userId);
+        jdbcTemplate.update("DELETE FROM review_assignments WHERE student_user_id = ?", userId);
         jdbcTemplate.update("DELETE FROM attempts WHERE student_user_id = ?", userId);
         jdbcTemplate.update("DELETE FROM exam_target_students WHERE student_user_id = ?", userId);
         jdbcTemplate.update("DELETE FROM exam_participants WHERE student_user_id = ?", userId);

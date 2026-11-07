@@ -43,7 +43,7 @@ public class SatPaperSettingsController {
         String status = paperStatus(paperId);
         Boolean usedByExam = jdbcTemplate.queryForObject(
             "SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ?)", Boolean.class, paperId);
-        if (!"DRAFT".equals(status) && (!"READY".equals(status) || Boolean.TRUE.equals(usedByExam))) {
+        if ("ARCHIVED".equals(status) || Boolean.TRUE.equals(usedByExam)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "This paper version is locked. Create a new version before changing SAT settings.");
         }

@@ -38,8 +38,8 @@ public interface ExamTypeModule {
         return false;
     }
 
-    /** 在试卷封存或发布前执行类型专属的内容校验。 */
+    /** 考试发布前执行类型专属的试卷内容校验。 */
     default void validatePaperForPublication(long paperId) {
-        // Most exam types only require the shared READY-state checks.
+        // 默认使用公共试卷内容校验。
     }
 }

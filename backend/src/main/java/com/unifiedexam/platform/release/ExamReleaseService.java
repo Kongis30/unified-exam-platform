@@ -226,8 +226,15 @@ public class ExamReleaseService {
         Long paperId = jdbcTemplate.query("SELECT paper_id FROM exams WHERE id = ?", rs -> rs.next() ? rs.getLong(1) : null, examId);
         requireActiveType(typeCode(paperId));
         String paperStatus = jdbcTemplate.query("SELECT status FROM papers WHERE id = ?", rs -> rs.next() ? rs.getString(1) : null, paperId);
-        if (!"READY".equals(paperStatus)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Seal the paper before publishing this exam.");
+        if ("ARCHIVED".equals(paperStatus)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Restore the archived paper before publishing this exam.");
+        }
+        Boolean hasQuestions = jdbcTemplate.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM paper_items item JOIN paper_sections section ON section.id = item.section_id
+                WHERE section.paper_id = ? AND section.archived_key = 0)
+            """, Boolean.class, paperId);
+        if (!Boolean.TRUE.equals(hasQuestions)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Add at least one question before publishing this exam.");
         }
         examTypeRegistry.validatePaperForPublication(typeCode(paperId), paperId);
         String targetScope = examTargetScope(examId);
@@ -382,6 +389,14 @@ public class ExamReleaseService {
                   WHERE ep.exam_id = ? AND cm.class_id = ?
             """, (rs, rowNum) -> rs.getLong(1), examId, classId, examId, classId, examId, classId, examId, classId);
         jdbcTemplate.update("DELETE FROM shsat_wrong_answer_tasks WHERE exam_id = ? AND class_id = ?", examId, classId);
+        // 先清理该班的复习练习，再删除任务，其他班引用的作答不受影响。
+        jdbcTemplate.update("""
+            DELETE practice FROM attempts practice JOIN review_practice_rounds round_row ON round_row.attempt_id = practice.id
+            JOIN review_assignments assignment ON assignment.id = round_row.assignment_id
+            JOIN review_tasks task ON task.id = assignment.task_id
+            WHERE task.exam_id = ? AND task.class_id = ?
+            """, examId, classId);
+        jdbcTemplate.update("DELETE FROM review_tasks WHERE exam_id = ? AND class_id = ?", examId, classId);
         // 旧数据没有作答归属时，仅清理能够确定只属于本班的学生记录。
         jdbcTemplate.update("""
             DELETE a FROM attempts a

@@ -3,6 +3,7 @@ package com.unifiedexam.platform.examtype.shsat.admin;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.unifiedexam.platform.attempt.StudentAttemptService;
+import com.unifiedexam.platform.review.ReviewSourceRepository;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -11,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -18,6 +20,8 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.Map;
+import java.util.Objects;
 
 /** SHSAT 错题任务只引用平台统一考试、班级、学生与作答数据。 */
 @Service
@@ -26,12 +30,14 @@ public class ShsatWrongAnswerTaskService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final StudentAttemptService attemptService;
+    private final ReviewSourceRepository reviewSources;
 
     public ShsatWrongAnswerTaskService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
-                                       StudentAttemptService attemptService) {
+                                       StudentAttemptService attemptService, ReviewSourceRepository reviewSources) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.attemptService = attemptService;
+        this.reviewSources = reviewSources;
     }
 
     public List<TaskView> list(Long examId, Long classId) {
@@ -84,10 +90,14 @@ public class ShsatWrongAnswerTaskService {
         Long examType = jdbcTemplate.query("""
             SELECT COUNT(*) FROM exams e JOIN papers p ON p.id = e.paper_id
             JOIN classes c ON c.id = ? AND c.status = 'ACTIVE'
-            WHERE e.id = ? AND p.exam_type_code = 'SHSAT' AND e.status = 'PUBLISHED'
+            JOIN class_exam_workspaces cw ON cw.class_id = c.id AND cw.exam_type_code = 'SHSAT'
+            WHERE e.id = ? AND p.exam_type_code = 'SHSAT' AND e.status IN ('PUBLISHED', 'CLOSED')
+              AND NOT EXISTS (SELECT 1 FROM exam_excluded_classes x WHERE x.exam_id = e.id AND x.class_id = c.id)
               AND (e.target_scope = 'ALL_STUDENTS' OR EXISTS (
                   SELECT 1 FROM exam_target_classes tc WHERE tc.exam_id = e.id AND tc.class_id = c.id
-              ))
+              ) OR EXISTS (SELECT 1 FROM exam_target_student_classes st WHERE st.exam_id = e.id AND st.class_id = c.id)
+                OR EXISTS (SELECT 1 FROM attempts a JOIN attempt_classes ac ON ac.attempt_id = a.id
+                           WHERE a.exam_id = e.id AND ac.class_id = c.id))
             """, rs -> rs.next() ? rs.getLong(1) : 0L, request.classId(), request.examId());
         if (examType == null || examType == 0) throw notFound();
         if (!request.endAt().isAfter(request.startAt())) {
@@ -106,22 +116,17 @@ public class ShsatWrongAnswerTaskService {
         List<Long> classStudents = jdbcTemplate.query("""
             SELECT cm.student_user_id FROM class_memberships cm
             JOIN users u ON u.id = cm.student_user_id AND u.role_code = 'STUDENT' AND u.status = 'ACTIVE'
+            JOIN user_workspace_access access ON access.user_id = u.id AND access.workspace_code = 'SHSAT'
             WHERE cm.class_id = ? AND cm.left_at IS NULL ORDER BY cm.student_user_id
             """, (rs, rowNum) -> rs.getLong(1), request.classId());
+        Map<Long, Long> attemptsByStudent = reviewSources.findLatestAttempts(request.examId(), request.classId());
+        Map<Long, List<ReviewSourceRepository.SourceItem>> itemsByAttempt = reviewSources.findReviewItemsByAttempt(
+            classStudents.stream().map(attemptsByStudent::get).filter(Objects::nonNull).toList());
         for (Long studentId : classStudents) {
-            Long sourceAttemptId = jdbcTemplate.query("""
-                SELECT id FROM attempts WHERE exam_id = ? AND student_user_id = ? AND is_practice = FALSE
-                    AND status IN ('SUBMITTED', 'COMPLETED', 'EXPIRED')
-                ORDER BY attempt_no DESC LIMIT 1
-                """, rs -> rs.next() ? rs.getLong(1) : null, request.examId(), studentId);
-            List<Integer> questionNumbers = sourceAttemptId == null ? List.of() : jdbcTemplate.query("""
-                SELECT DISTINCT pi.display_number
-                FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
-                LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
-                WHERE ai.attempt_id = ? AND pi.display_number IS NOT NULL
-                  AND (aa.paper_item_id IS NULL OR aa.is_correct IS NULL OR aa.is_correct = FALSE)
-                ORDER BY pi.display_number
-                """, (rs, rowNum) -> rs.getInt(1), sourceAttemptId);
+            Long sourceAttemptId = attemptsByStudent.get(studentId);
+            List<Integer> questionNumbers = sourceAttemptId == null ? List.of() : itemsByAttempt
+                .getOrDefault(sourceAttemptId, List.of()).stream().map(ReviewSourceRepository.SourceItem::displayNumber)
+                .filter(Objects::nonNull).distinct().sorted().toList();
             String assignmentStatus = sourceAttemptId == null ? "NO_SOURCE_ATTEMPT"
                 : questionNumbers.isEmpty() ? "NO_WRONG_ANSWERS" : "NOT_STARTED";
             try {
@@ -218,7 +223,7 @@ public class ShsatWrongAnswerTaskService {
             }, now, studentId);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public StudentAttemptService.AttemptView startForStudent(long assignmentId, String username) {
         Long studentId = jdbcTemplate.query("SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT'",
             rs -> rs.next() ? rs.getLong(1) : null, username);

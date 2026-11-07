@@ -9,6 +9,8 @@ spring:
       connection-init-sql: "SET time_zone = '+00:00'"
   flyway:
     enabled: true
+    # 允许隔离发布后的较低编号迁移在后续合并时补运行。
+    out-of-order: true
     locations: classpath:db/migration
   sql:
     init:

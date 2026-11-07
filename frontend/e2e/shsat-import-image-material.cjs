@@ -161,15 +161,31 @@ async function main() {
     await page.getByRole('heading', { name: 'Import questions', exact: true }).waitFor();
     const examSelect = page.locator('.import-source-select select');
     await examSelect.selectOption(String(sourcePaperId));
+    const accuracyExamSelect = page.locator('.import-exam-select select');
+    const accuracyOptions = await accuracyExamSelect.locator('option').allTextContents();
+    assert.ok(accuracyOptions.findIndex(text => text.includes('Image Import Source')) < accuracyOptions.findIndex(text => text.includes('Second Image Import')),
+      'associated exams are sorted by name');
+    await accuracyExamSelect.selectOption(String(secondExamId));
     await page.locator('.import-question-row').first().waitFor();
     assert.match(await page.locator('.import-question-row').first().innerText(), /No answers/,
-      'the latest exam displays its own empty performance data');
+      'the selected exam displays its own empty performance data');
     await page.getByRole('button', { name: 'No answers', exact: true }).click();
     assert.equal(await page.locator('.import-question-row').count(), 2, 'no-answer filtering keeps both unanswered questions');
-    await examSelect.selectOption(`${sourcePaperId}:${examId}`);
+    await page.locator('.import-question-row').first().getByRole('checkbox').check();
+    await accuracyExamSelect.selectOption(String(examId));
+    await page.getByRole('button', { name: 'All questions', exact: true }).click();
     const row = page.locator('.import-question-row').first();
     await row.waitFor();
+    assert.equal(await row.getByRole('checkbox').isChecked(), true, 'switching exams preserves selected questions');
     assert.match(await row.innerText(), /1 \/ 1 answered/, 'selecting the closed exam displays its own student performance');
+    await page.route(`**/api/admin/reports/exams/${secondExamId}/monitor/analytics`, route => route.fulfill({
+      status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'Temporary error' }),
+    }), { times: 1 });
+    await accuracyExamSelect.selectOption(String(secondExamId));
+    await page.getByText('Could not load exam performance data. You can still preview and import questions.').waitFor();
+    await accuracyExamSelect.selectOption(String(examId));
+    await page.getByText('Could not load exam performance data. You can still preview and import questions.').waitFor({ state: 'hidden' });
+    assert.match(await row.innerText(), /1 \/ 1 answered/, 'accuracy recovers after an analytics request fails');
     await page.getByRole('button', { name: 'Below 50%', exact: true }).click();
     await page.getByText('No questions match this filter.', { exact: true }).waitFor();
     await page.getByRole('button', { name: '75%+', exact: true }).click();

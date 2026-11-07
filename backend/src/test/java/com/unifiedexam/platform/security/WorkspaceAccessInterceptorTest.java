@@ -28,6 +28,16 @@ class WorkspaceAccessInterceptorTest {
     void clearContext() { SecurityContextHolder.clearContext(); }
 
     @Test
+    void reviewManagementUsesTheRequestedWorkspacePermission() {
+        var user = new UsernamePasswordAuthenticationToken("teacher", "", List.of(new SimpleGrantedAuthority("ROLE_TEACHER")));
+        SecurityContextHolder.getContext().setAuthentication(user);
+        var request = new MockHttpServletRequest("GET", "/api/admin/review-assignments/PSAT");
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("examTypeCode", "PSAT"));
+        interceptor.preHandle(request, new MockHttpServletResponse(), new Object());
+        verify(access).requireExamType(user, "PSAT");
+    }
+
+    @Test
     void resolvesExamOwnershipBeforeCheckingTheStudentWorkspace() {
         var user = new UsernamePasswordAuthenticationToken("student", "", List.of(new SimpleGrantedAuthority("ROLE_STUDENT")));
         SecurityContextHolder.getContext().setAuthentication(user);

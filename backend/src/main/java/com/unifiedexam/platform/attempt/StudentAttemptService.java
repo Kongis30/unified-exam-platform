@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -44,25 +45,25 @@ public class StudentAttemptService {
     }
 
     /** 锁定考试行，串行化同一场考试的并发开考请求并创建固定题目顺序。 */
-    @Transactional(noRollbackFor = ExpiredAttemptStartConflictException.class)
+    @Transactional(isolation = Isolation.READ_COMMITTED, noRollbackFor = ExpiredAttemptStartConflictException.class)
     public AttemptView start(long examId, String firstSection, String username) {
         return start(examId, firstSection, username, false, false);
     }
 
     /** 超时尝试已由 SAT 服务先评分交卷；保留其结果并继续执行相同的开考资格校验。 */
-    @Transactional(noRollbackFor = ExpiredAttemptStartConflictException.class)
+    @Transactional(isolation = Isolation.READ_COMMITTED, noRollbackFor = ExpiredAttemptStartConflictException.class)
     public AttemptView startAfterExpiredSubmission(long examId, String username) {
         return start(examId, null, username, false, true);
     }
 
     /** 为 SAT/PSAT 学生开放已封存试卷的自助练习；只接受平台内部创建的练习场次。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AttemptView startPractice(long examId, String username) {
         return start(examId, null, username, true, false);
     }
 
     /** 仅为本人可查看答案的 SHSAT 正式尝试建立个人错题练习，不复用教师任务记录。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AttemptView startWrongAnswerPractice(long sourceAttemptId, String username) {
         Account student = account(username);
         if (!"STUDENT".equals(student.roleCode())) throw notFound("Attempt not found.");
@@ -102,6 +103,7 @@ public class StudentAttemptService {
             INSERT INTO attempt_items (attempt_id, paper_item_id, served_order)
             SELECT ?, pi.id, ROW_NUMBER() OVER (ORDER BY pi.display_number, pi.id)
             FROM paper_items pi WHERE pi.id IN (""" + placeholders + ")", parameters.toArray());
+        captureShsatQuestionState(practiceId);
         initializeShsatAttemptState(practiceId, null);
         return getOwnedAttempt(practiceId, student.id());
     }
@@ -236,7 +238,7 @@ public class StudentAttemptService {
 
         Integer questionCount = jdbcTemplate.queryForObject("""
             SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ?
+            WHERE ps.paper_id = ? AND ps.archived_key = 0
             """, Integer.class, exam.paperId());
         if (questionCount == null || questionCount == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam does not contain any questions.");
@@ -259,7 +261,7 @@ public class StudentAttemptService {
             INSERT INTO attempt_items (attempt_id, paper_item_id, served_order)
             WITH RECURSIVE section_tree AS (
                 SELECT id, CAST(LPAD(sort_order, 10, '0') AS CHAR(2000)) AS sort_path
-                FROM paper_sections WHERE paper_id = ? AND parent_section_id IS NULL
+                FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND parent_section_id IS NULL
                 UNION ALL
                 SELECT child.id, CONCAT(parent.sort_path, '.', LPAD(child.sort_order, 10, '0'))
                 FROM paper_sections child JOIN section_tree parent ON child.parent_section_id = parent.id
@@ -267,8 +269,42 @@ public class StudentAttemptService {
             SELECT ?, pi.id, ROW_NUMBER() OVER (ORDER BY st.sort_path, pi.sort_order, pi.id)
             FROM section_tree st JOIN paper_items pi ON pi.section_id = st.id
             """, exam.paperId(), attemptId);
-        if ("SHSAT".equals(exam.examTypeCode())) initializeShsatAttemptState(attemptId, firstSection);
+        if ("SHSAT".equals(exam.examTypeCode())) {
+            captureShsatQuestionState(attemptId);
+            initializeShsatAttemptState(attemptId, firstSection);
+        }
         return getOwnedAttempt(attemptId, studentId);
+    }
+
+    /** 在作答事务中固定题目、评分数据和材料，后续编辑试卷不能改写快照。 */
+    private void captureShsatQuestionState(long attemptId) {
+        jdbcTemplate.update("""
+            INSERT INTO shsat_attempt_question_state (attempt_id, paper_item_id, question_json)
+            SELECT ai.attempt_id, ai.paper_item_id, JSON_OBJECT(
+                'questionTypeCode', q.question_type_code, 'payloadSchemaVersion', q.payload_schema_version,
+                'stem', q.stem, 'render', q.render_json, 'answerKey', q.answer_key_json,
+                'grading', q.grading_json, 'explanation', q.explanation,
+                'displayNumber', pi.display_number, 'maxPoints', pi.max_points,
+                'scoringSectionCode', pi.scoring_section_code,
+                'sectionCode', section.section_code, 'sectionTitle', section.title,
+                'parentSectionCode', parent.section_code, 'parentSectionTitle', parent.title,
+                'skillTagCode', qm.skill_tag_code,
+                'material', JSON_OBJECT('title', COALESCE(sm.title, pm.title),
+                    'type', COALESCE(sm.material_type, pm.material_type),
+                    'category', COALESCE(sm.category, pm.category),
+                    'content', COALESCE(sm.content, pm.content),
+                    'assetKey', COALESCE(sm.asset_key, pm.asset_key)))
+            FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+            JOIN questions q ON q.id = pi.question_id
+            JOIN paper_sections section ON section.id = pi.section_id
+            LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
+            LEFT JOIN shsat_question_metadata qm ON qm.question_id = q.id
+            LEFT JOIN shsat_section_materials sm ON sm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+                AND (sm.section_id = section.id OR sm.section_id = parent.id)
+            LEFT JOIN shsat_paper_materials pm ON sm.id IS NULL AND pm.paper_id = section.paper_id
+                AND pm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
+            WHERE ai.attempt_id = ?
+            """, attemptId);
     }
 
     /** 开考重试时先封存超时尝试，避免把已不能作答的记录当作可续考场次。 */
@@ -297,7 +333,7 @@ public class StudentAttemptService {
     }
 
     /** 为已验证的 SHSAT 错题任务创建只含本轮未清除题目的独立练习。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AttemptView startWrongAnswerPractice(long assignmentId, Collection<Integer> questionNumbers, String username) {
         Account account = account(username);
         long studentId = account.id();
@@ -336,14 +372,20 @@ public class StudentAttemptService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This review has no valid time limit. Contact your administrator.");
         }
 
+        // 错题题号属于来源作答，而非可编辑试卷的当前版本。
         String placeholders = String.join(",", java.util.Collections.nCopies(numbers.size(), "?"));
         List<Object> itemParameters = new ArrayList<>();
-        itemParameters.add(exam.paperId());
+        itemParameters.add(assignmentId);
+        itemParameters.add(studentId);
         itemParameters.addAll(numbers);
-        Integer questionCount = jdbcTemplate.queryForObject("""
-            SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ? AND pi.display_number IN (""" + placeholders + ")", Integer.class, itemParameters.toArray());
-        if (questionCount == null || questionCount != numbers.size()) {
+        List<Long> itemIds = jdbcTemplate.query("""
+            SELECT pi.id FROM shsat_wrong_answer_assignments assignment
+            JOIN attempt_items ai ON ai.attempt_id = assignment.source_attempt_id
+            JOIN paper_items pi ON pi.id = ai.paper_item_id
+            WHERE assignment.id = ? AND assignment.student_user_id = ? AND pi.display_number IN ("""
+                + placeholders + ") ORDER BY pi.display_number, ai.served_order",
+            (rs, row) -> rs.getLong(1), itemParameters.toArray());
+        if (itemIds.size() != numbers.size()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Some assigned review questions are no longer available.");
         }
         jdbcTemplate.update("INSERT IGNORE INTO exam_participants (exam_id, student_user_id) VALUES (?, ?)", examId, studentId);
@@ -357,17 +399,13 @@ public class StudentAttemptService {
             VALUES (?, ?, ?, TRUE, ?, CAST(? AS JSON), CURRENT_TIMESTAMP(6), DATE_ADD(CURRENT_TIMESTAMP(6), INTERVAL ? SECOND))
             """, examId, studentId, attemptNo, assignmentId, json(objectMapper.valueToTree(numbers)), durationSeconds);
         Long attemptId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-        List<Object> insertParameters = new ArrayList<>();
-        insertParameters.add(attemptId);
-        insertParameters.add(exam.paperId());
-        insertParameters.addAll(numbers);
-        jdbcTemplate.update("""
-            INSERT INTO attempt_items (attempt_id, paper_item_id, served_order)
-            SELECT ?, pi.id, ROW_NUMBER() OVER (ORDER BY pi.display_number, pi.id)
-            FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ? AND pi.display_number IN (""" + placeholders + ")", insertParameters.toArray());
+        for (int i = 0; i < itemIds.size(); i++) {
+            jdbcTemplate.update("INSERT INTO attempt_items (attempt_id, paper_item_id, served_order) VALUES (?, ?, ?)",
+                attemptId, itemIds.get(i), i + 1);
+        }
         jdbcTemplate.update("UPDATE shsat_wrong_answer_assignments SET practice_attempt_id = ?, status = 'IN_PROGRESS' WHERE id = ?",
             attemptId, assignmentId);
+        captureShsatQuestionState(attemptId);
         initializeShsatAttemptState(attemptId, null);
         return getOwnedAttempt(attemptId, studentId);
     }
@@ -586,7 +624,8 @@ public class StudentAttemptService {
                 parseNullable(rs.getString("render_json")), parseNullable(rs.getString("grading_json")),
                 rs.getBigDecimal("max_points"), parseNullable(rs.getString("answer_json")),
                 rs.getString("skill_tag_code")), attemptId);
-        Map<Long, PaperSection> sections = loadPaperSections(attempt.paperId());
+        Map<Long, PaperSection> sections = "SHSAT".equals(attempt.examTypeCode())
+            ? loadAttemptSections(attemptId) : loadPaperSections(attempt.paperId());
         Map<String, BreakdownAccumulator> resultBreakdowns = new LinkedHashMap<>();
 
         BigDecimal total = BigDecimal.ZERO;
@@ -639,9 +678,31 @@ public class StudentAttemptService {
             estimated, json(breakdown));
         persistResultBreakdowns(attemptId, sections, resultBreakdowns);
         jdbcTemplate.update("UPDATE attempts SET status = 'SUBMITTED', submitted_at = CURRENT_TIMESTAMP(6) WHERE id = ?", attemptId);
+        updateReviewProgress(attemptId);
         updateWrongAnswerAssignmentStatus(attemptId);
         clearCorrectSelfPracticeQuestions(attemptId, studentId);
         return getOwnedAttempt(attemptId, studentId);
+    }
+
+    /** 已判定正确的复习题在任务中清除，其余题按任务窗口决定是否允许重试。 */
+    private void updateReviewProgress(long attemptId) {
+        Long assignmentId = jdbcTemplate.query("SELECT assignment_id FROM review_practice_rounds WHERE attempt_id = ?",
+            rs -> rs.next() ? rs.getLong(1) : null, attemptId);
+        if (assignmentId == null) return;
+        jdbcTemplate.update("""
+            UPDATE review_assignment_items i JOIN attempt_answers aa ON aa.paper_item_id = i.paper_item_id
+            SET i.cleared_at = COALESCE(i.cleared_at, CURRENT_TIMESTAMP(6))
+            WHERE i.assignment_id = ? AND aa.attempt_id = ? AND aa.is_correct = TRUE
+            """, assignmentId, attemptId);
+        jdbcTemplate.update("""
+            UPDATE review_assignments a JOIN review_tasks t ON t.id = a.task_id
+            SET a.status = CASE
+                WHEN NOT EXISTS (SELECT 1 FROM review_assignment_items i WHERE i.assignment_id = a.id AND i.cleared_at IS NULL)
+                  THEN 'COMPLETED'
+                WHEN t.status = 'ENDED' OR t.ends_at <= ? THEN 'ENDED'
+                ELSE 'RETRY_REQUIRED' END
+            WHERE a.id = ?
+            """, java.time.LocalDateTime.now(java.time.ZoneOffset.UTC), assignmentId);
     }
 
     private void clearCorrectSelfPracticeQuestions(long attemptId, long studentId) {
@@ -899,6 +960,30 @@ public class StudentAttemptService {
                 }
                 return sections;
             }, paperId);
+    }
+
+    /** 评分只加载本次作答所属的分段及父分段，避免不同版本的同名分段互相干扰。 */
+    private Map<Long, PaperSection> loadAttemptSections(long attemptId) {
+        return jdbcTemplate.query("""
+            WITH RECURSIVE attempt_sections AS (
+                SELECT s.id, s.parent_section_id, s.section_code, s.section_kind, s.title, s.sort_order
+                FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+                JOIN paper_sections s ON s.id = pi.section_id WHERE ai.attempt_id = ?
+                UNION DISTINCT
+                SELECT parent.id, parent.parent_section_id, parent.section_code, parent.section_kind, parent.title, parent.sort_order
+                FROM paper_sections parent JOIN attempt_sections child ON child.parent_section_id = parent.id
+            )
+            SELECT * FROM attempt_sections ORDER BY sort_order, id
+            """, rs -> {
+                Map<Long, PaperSection> sections = new HashMap<>();
+                while (rs.next()) {
+                    long id = rs.getLong("id");
+                    sections.put(id, new PaperSection(id, nullableLong(rs, "parent_section_id"),
+                        rs.getString("section_code"), rs.getString("section_kind"), rs.getString("title"),
+                        rs.getInt("sort_order")));
+                }
+                return sections;
+            }, attemptId);
     }
 
     private ResultProfile loadResultProfile(long attemptId) {

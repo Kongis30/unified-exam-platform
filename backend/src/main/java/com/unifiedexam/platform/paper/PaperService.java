@@ -20,6 +20,7 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
@@ -61,12 +62,12 @@ public class PaperService {
                    p.source_paper_id,
                    EXISTS(SELECT 1 FROM exams e WHERE e.paper_id = p.id) AS used_by_exam,
                    p.title, p.status, p.default_duration_seconds,
-                   (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id) AS section_count,
+                   (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id AND section.archived_key = 0) AS section_count,
                    (SELECT COUNT(*) FROM paper_items item JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id) AS question_count,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS question_count,
                    (SELECT COALESCE(SUM(item.max_points), 0) FROM paper_items item
                     JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id) AS total_score,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS total_score,
                    p.created_at, p.updated_at
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id
             WHERE p.exam_type_code = ? ORDER BY p.updated_at DESC, p.id DESC
@@ -105,6 +106,7 @@ public class PaperService {
         return "PAPER_" + UUID.randomUUID().toString().replace("-", "").toUpperCase(Locale.ROOT);
     }
 
+    @Transactional(readOnly = true)
     public PaperDetail get(long paperId) {
         PaperSummary summary = summary(paperId);
         String description = jdbcTemplate.queryForObject("SELECT description FROM papers WHERE id = ?", String.class, paperId);
@@ -118,7 +120,8 @@ public class PaperService {
         long solutionCount = "SHSAT".equals(summary.examTypeCode())
             ? count("SELECT COUNT(*) FROM shsat_paper_solutions WHERE paper_id = ?", paperId)
             : 0;
-        return new PaperDetail(summary, description, groupId, scoringProfileCode, sections, materials, solutionCount);
+        long structureRevision = jdbcTemplate.queryForObject("SELECT structure_revision FROM papers WHERE id = ?", Long.class, paperId);
+        return new PaperDetail(summary, description, groupId, scoringProfileCode, sections, materials, solutionCount, structureRevision);
     }
 
     /** Returns only publish-warning counts so teachers never need answer-bearing paper details. */
@@ -145,7 +148,7 @@ public class PaperService {
                 LEFT JOIN paper_sections part ON part.id = CASE
                     WHEN section.section_kind = 'PART' THEN section.id ELSE parent.id END
                 JOIN questions question ON question.id = item.question_id
-                WHERE section.paper_id = ?
+                WHERE section.paper_id = ? AND section.archived_key = 0
             ) scored
             """, (rs, rowNum) -> new PaperStructureStats(
                 rs.getLong("total"), rs.getLong("ela"), rs.getLong("math")), paperId);
@@ -178,17 +181,16 @@ public class PaperService {
         String currentStatus = jdbcTemplate.query("SELECT status FROM papers WHERE id = ?",
             rs -> rs.next() ? rs.getString(1) : null, paperId);
         if (currentStatus == null) throw notFound();
-        if ("DRAFT".equals(currentStatus)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Seal a draft paper before archiving it.");
-        }
         String targetStatus = archived ? "ARCHIVED" : "READY";
-        jdbcTemplate.update("UPDATE papers SET status = ? WHERE id = ?", targetStatus, paperId);
+        // 数据库仍保留历史状态字段，归档不再要求用户先执行封存操作。
+        jdbcTemplate.update("UPDATE papers SET status = ?, sealed_at = COALESCE(sealed_at, CURRENT_TIMESTAMP(6)) WHERE id = ?", targetStatus, paperId);
         return summary(paperId);
     }
 
     /** 从同类型试卷复制题目，按 section_code 对齐目标试卷结构。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public List<QuestionView> importQuestions(long targetPaperId, ImportQuestionsRequest request) {
+        jdbcTemplate.queryForObject("SELECT id FROM papers WHERE id = ? FOR UPDATE", Long.class, targetPaperId);
         String examTypeCode = typeCode(targetPaperId);
         requireEditable(targetPaperId, examTypeCode);
         // 新入口以试卷为来源；旧的考试入口仍按考试解析对应试卷。
@@ -269,6 +271,7 @@ public class PaperService {
             insertedIds.add(importedId);
         }
         List<QuestionView> all = flatten(loadSections(targetPaperId, null));
+        jdbcTemplate.update("UPDATE papers SET structure_revision = structure_revision + 1 WHERE id = ?", targetPaperId);
         return all.stream().filter(question -> insertedIds.contains(question.questionId())).toList();
     }
 
@@ -381,29 +384,62 @@ public class PaperService {
         return get(paperId);
     }
 
+    /** 管理页面必须携带已读版本，旧页面需要刷新后才能安全保存。 */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public PaperDetail saveStructureFromEditor(long paperId, SaveStructureRequest request) {
+        if (request.expectedRevision() == null && "SHSAT".equals(typeCode(paperId))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This editor is out of date. Reload the paper before saving.");
+        }
+        return saveStructure(paperId, request);
+    }
+
     /** 保存试卷结构；问题答案键只通过管理员接口返回。 */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public PaperDetail saveStructure(long paperId, SaveStructureRequest request) {
+        // 先锁定试卷，再读取结构；与开考串行化并避免读到更新前的事务快照。
+        Long revision = jdbcTemplate.query("SELECT structure_revision FROM papers WHERE id = ? FOR UPDATE",
+            rs -> rs.next() ? rs.getLong(1) : null, paperId);
+        if (revision == null) throw notFound();
         String examTypeCode = typeCode(paperId);
         requireEditable(paperId, examTypeCode);
         validateSectionOrders(request.sections());
         if (!"SHSAT".equals(examTypeCode)) validateQuestionStems(request.sections());
+        if ("SHSAT".equals(examTypeCode) && request.expectedRevision() != null
+                && !revision.equals(request.expectedRevision())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This paper was changed by another editor. Reload and try again.");
+        }
+        if ("SHSAT".equals(examTypeCode)) validateShsatQuestionReferences(paperId, request.sections(), new HashSet<>());
         List<MaterialWriteRequest> materials = "SHSAT".equals(examTypeCode)
             ? request.materials() == null ? loadShsatMaterials(paperId).stream().map(MaterialWriteRequest::from).toList()
                 : request.materials()
             : List.of();
-        List<Long> oldQuestionIds = jdbcTemplate.query("""
-            SELECT DISTINCT pi.question_id FROM paper_items pi
-            JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?
-            """, (rs, rowNum) -> rs.getLong(1), paperId);
-        jdbcTemplate.update("""
-            DELETE pi FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ?
-            """, paperId);
-        deletePaperSectionTree(paperId);
-        for (Long questionId : oldQuestionIds) {
-            jdbcTemplate.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)",
-                questionId, questionId);
+        List<Long> previousSectionIds = "SHSAT".equals(examTypeCode)
+            ? jdbcTemplate.queryForList("SELECT id FROM paper_sections WHERE paper_id = ? AND archived_key = 0", Long.class, paperId)
+            : List.of();
+        if ("SHSAT".equals(examTypeCode)) {
+            // 旧分段及题目不可变，历史作答和跨版本题目关联继续使用原 ID。
+            jdbcTemplate.update("UPDATE paper_sections SET archived_key = id WHERE paper_id = ? AND archived_key = 0", paperId);
+        } else {
+            if (Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+                    JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?)
+                """, Boolean.class, paperId))) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This paper has student attempts. Create a new paper version before changing questions or sections.");
+            }
+            List<Long> oldQuestionIds = jdbcTemplate.query("""
+                SELECT DISTINCT pi.question_id FROM paper_items pi
+                JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?
+                """, (rs, rowNum) -> rs.getLong(1), paperId);
+            jdbcTemplate.update("""
+                DELETE pi FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
+                WHERE ps.paper_id = ?
+                """, paperId);
+            deletePaperSectionTree(paperId);
+            for (Long questionId : oldQuestionIds) {
+                jdbcTemplate.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)",
+                    questionId, questionId);
+            }
         }
         for (SectionRequest section : request.sections()) {
             insertSection(paperId, null, section);
@@ -411,8 +447,84 @@ public class PaperService {
         if ("SHSAT".equals(examTypeCode)) {
             Map<String, Long> oldMaterialIds = saveShsatMaterials(paperId, materials);
             remapShsatQuestionMaterials(paperId, oldMaterialIds);
+            removeUnreferencedShsatRevision(paperId, previousSectionIds);
         }
+        jdbcTemplate.update("UPDATE papers SET structure_revision = structure_revision + 1 WHERE id = ?", paperId);
         return get(paperId);
+    }
+
+    /** 仅清理没有作答、复习或迁移记录引用的上一版分段和题目。 */
+    private void removeUnreferencedShsatRevision(long paperId, List<Long> sectionIds) {
+        if (sectionIds.isEmpty()) return;
+        String placeholders = String.join(",", java.util.Collections.nCopies(sectionIds.size(), "?"));
+        Boolean referenced = jdbcTemplate.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM paper_items i WHERE i.section_id IN (""" + placeholders + """
+                ) AND (EXISTS (SELECT 1 FROM attempt_items ai WHERE ai.paper_item_id = i.id)
+                    OR EXISTS (SELECT 1 FROM review_assignment_items ri WHERE ri.paper_item_id = i.id)
+                    OR EXISTS (SELECT 1 FROM shsat_attempt_item_snapshots h WHERE h.target_paper_item_id = i.id)
+                    OR EXISTS (SELECT 1 FROM shsat_attempt_answer_details h WHERE h.target_paper_item_id = i.id)))
+            """, Boolean.class, sectionIds.toArray());
+        if (Boolean.TRUE.equals(referenced)) return;
+        List<Long> questionIds = jdbcTemplate.queryForList("SELECT question_id FROM paper_items WHERE section_id IN ("
+            + placeholders + ")", Long.class, sectionIds.toArray());
+        jdbcTemplate.update("DELETE FROM paper_items WHERE section_id IN (" + placeholders + ")", sectionIds.toArray());
+        Set<Long> remaining = new HashSet<>(sectionIds);
+        while (!remaining.isEmpty()) {
+            List<Long> parents = jdbcTemplate.queryForList("SELECT DISTINCT parent_section_id FROM paper_sections WHERE id IN ("
+                + placeholders + ") AND parent_section_id IS NOT NULL", Long.class, sectionIds.toArray());
+            List<Long> leaves = remaining.stream().filter(id -> !parents.contains(id)).toList();
+            if (leaves.isEmpty()) throw new IllegalStateException("Paper section hierarchy contains a cycle.");
+            for (Long id : leaves) {
+                jdbcTemplate.update("DELETE FROM paper_sections WHERE id = ? AND paper_id = ? AND archived_key <> 0", id, paperId);
+                remaining.remove(id);
+            }
+        }
+        for (Long id : questionIds) {
+            jdbcTemplate.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)", id, id);
+        }
+    }
+
+    /** 保存前校验题目属于当前版本，避免跨试卷引用及重复引用。 */
+    private void validateShsatQuestionReferences(long paperId, List<SectionRequest> sections, Set<Long> seen) {
+        for (SectionRequest section : sections) {
+            for (QuestionRequest question : section.questions()) {
+                Long id = question.paperItemId();
+                if (id == null) continue;
+                if (!seen.add(id) || !Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                    SELECT EXISTS(SELECT 1 FROM paper_items i JOIN paper_sections s ON s.id = i.section_id
+                        WHERE i.id = ? AND s.paper_id = ? AND s.archived_key = 0)
+                    """, Boolean.class, id, paperId))) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "A question is duplicated or the paper has changed. Reload the paper and try again.");
+                }
+            }
+            validateShsatQuestionReferences(paperId, section.children(), seen);
+        }
+    }
+
+    /** 更新试卷已保存的材料内容，保留试卷题目及历史作答引用。 */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public PaperDetail updateShsatMaterials(long paperId, List<MaterialContentUpdate> materials) {
+        jdbcTemplate.queryForObject("SELECT id FROM papers WHERE id = ? FOR UPDATE", Long.class, paperId);
+        if (!"SHSAT".equals(typeCode(paperId))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This operation is only available for SHSAT papers.");
+        }
+        Map<Long, MaterialContentUpdate> updates = new HashMap<>();
+        for (MaterialContentUpdate material : materials) {
+            if (updates.put(material.id(), material) != null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A material was supplied more than once.");
+            }
+        }
+        List<MaterialWriteRequest> replacement = new ArrayList<>();
+        for (MaterialView material : loadShsatMaterials(paperId)) {
+            MaterialContentUpdate update = updates.remove(material.id());
+            replacement.add(update == null ? MaterialWriteRequest.from(material)
+                : new MaterialWriteRequest(String.valueOf(material.id()), null, material.partCode(), material.subTypeCode(),
+                    material.materialType(), update.category(), update.title(), update.content(), update.assetUrl(), material.sortOrder()));
+        }
+        if (!updates.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Paper material not found.");
+        return saveStructure(paperId, new SaveStructureRequest(
+            loadSections(paperId, null).stream().map(this::toCurrentRequest).toList(), replacement));
     }
 
     private List<MaterialView> loadShsatMaterials(long paperId) {
@@ -428,7 +540,7 @@ public class PaperService {
             JOIN paper_sections section ON section.id = material.section_id
             LEFT JOIN paper_sections part ON part.id = CASE
                 WHEN section.section_kind = 'PART' THEN section.id ELSE section.parent_section_id END
-            WHERE section.paper_id = ? AND section.section_kind IN ('PART', 'SUBTYPE')
+            WHERE section.paper_id = ? AND section.archived_key = 0 AND section.section_kind IN ('PART', 'SUBTYPE')
             ORDER BY part.sort_order, section.sort_order, material.sort_order, material.id
             """, (rs, rowNum) -> {
                 String partCode = settingText(readJson(rs.getString("part_settings")), "partCode", rs.getString("part_code"));
@@ -442,7 +554,7 @@ public class PaperService {
     /** 同步保留的材料库，并在结构整体重建后恢复题目到材料记录的关联。 */
     private Map<String, Long> saveShsatMaterials(long paperId, List<MaterialWriteRequest> materials) {
         Map<String, Long> sectionIds = jdbcTemplate.query("""
-            SELECT section_code, id FROM paper_sections WHERE paper_id = ?
+            SELECT section_code, id FROM paper_sections WHERE paper_id = ? AND archived_key = 0
             """, rs -> {
                 Map<String, Long> result = new HashMap<>();
                 while (rs.next()) result.put(rs.getString("section_code"), rs.getLong("id"));
@@ -488,7 +600,7 @@ public class PaperService {
             SELECT q.id, q.render_json FROM questions q
             JOIN paper_items pi ON pi.question_id = q.id
             JOIN paper_sections section ON section.id = pi.section_id
-            WHERE section.paper_id = ?
+            WHERE section.paper_id = ? AND section.archived_key = 0
             """, (rs, rowNum) -> new MaterialQuestionRow(rs.getLong("id"), readJson(rs.getString("render_json"))), paperId);
         for (MaterialQuestionRow question : questions) {
             if (question.render() == null || !question.render().isObject()) continue;
@@ -496,7 +608,9 @@ public class PaperService {
             String materialId = render.path("materialId").asText(null);
             String materialRef = render.path("materialRef").asText(null);
             if (materialId == null && materialRef == null) continue;
-            Long mappedId = materialIds.get(materialId);
+            // 旧卷级材料与分段材料可能拥有相同数字 ID，卷级引用不能映射到另一张表。
+            boolean paperMaterial = "PAPER".equals(render.path("material").path("scope").asText());
+            Long mappedId = paperMaterial ? null : materialIds.get(materialId);
             if (mappedId == null) mappedId = materialIds.get(materialRef);
             if (mappedId != null) {
                 render.put("materialId", mappedId);
@@ -567,25 +681,9 @@ public class PaperService {
             """, newPaperId, sourcePaperId);
     }
 
-    @Transactional
+    /** 兼容旧客户端的历史接口；试卷发布和编辑无需封存。 */
+    @Transactional(readOnly = true)
     public PaperDetail seal(long paperId) {
-        requireDraft(paperId);
-        String examTypeCode = typeCode(paperId);
-        requireActiveType(examTypeCode);
-        Integer sectionCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM paper_sections WHERE paper_id = ?", Integer.class, paperId);
-        Integer itemCount = jdbcTemplate.queryForObject("""
-            SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?
-            """, Integer.class, paperId);
-        if (sectionCount == null || sectionCount == 0 || itemCount == null || itemCount == 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Add at least one section and one question before sealing this paper.");
-        }
-        examTypeRegistry.validatePaperForPublication(examTypeCode, paperId);
-        jdbcTemplate.update("""
-            UPDATE questions q JOIN paper_items pi ON pi.question_id = q.id
-            JOIN paper_sections ps ON ps.id = pi.section_id
-            SET q.sealed_at = COALESCE(q.sealed_at, CURRENT_TIMESTAMP(6)) WHERE ps.paper_id = ?
-            """, paperId);
-        jdbcTemplate.update("UPDATE papers SET status = 'READY', sealed_at = CURRENT_TIMESTAMP(6) WHERE id = ?", paperId);
         return get(paperId);
     }
 
@@ -593,10 +691,10 @@ public class PaperService {
         PaperSummary paper = summary(paperId);
         return new PaperDeleteImpact(paperId, paper.title(), count("SELECT COUNT(*) FROM exams WHERE paper_id = ?", paperId),
             count("SELECT COUNT(*) FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE e.paper_id = ?", paperId),
-            count("SELECT COUNT(*) FROM paper_sections WHERE paper_id = ? AND section_kind = 'PART'", paperId),
-            count("SELECT COUNT(*) FROM paper_sections WHERE paper_id = ? AND section_kind = 'SUBTYPE'", paperId),
-            count("SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?", paperId),
-            count("SELECT COUNT(*) FROM shsat_section_materials sm JOIN paper_sections ps ON ps.id = sm.section_id WHERE ps.paper_id = ?", paperId),
+            count("SELECT COUNT(*) FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND section_kind = 'PART'", paperId),
+            count("SELECT COUNT(*) FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND section_kind = 'SUBTYPE'", paperId),
+            count("SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ? AND ps.archived_key = 0", paperId),
+            count("SELECT COUNT(*) FROM shsat_section_materials sm JOIN paper_sections ps ON ps.id = sm.section_id WHERE ps.paper_id = ? AND ps.archived_key = 0", paperId),
             count("SELECT COUNT(*) FROM shsat_paper_solutions WHERE paper_id = ?", paperId));
     }
 
@@ -660,6 +758,7 @@ public class PaperService {
         String placeholders = String.join(",", java.util.Collections.nCopies(examIds.size(), "?"));
         Object[] parameters = examIds.toArray();
         jdbcTemplate.update("DELETE FROM shsat_wrong_answer_tasks WHERE exam_id IN (" + placeholders + ")", parameters);
+        jdbcTemplate.update("DELETE FROM review_tasks WHERE exam_id IN (" + placeholders + ")", parameters);
         jdbcTemplate.update("DELETE FROM attempts WHERE exam_id IN (" + placeholders + ")", parameters);
         jdbcTemplate.update("DELETE FROM exam_participants WHERE exam_id IN (" + placeholders + ")", parameters);
         jdbcTemplate.update("DELETE FROM exams WHERE id IN (" + placeholders + ")", parameters);
@@ -878,16 +977,23 @@ public class PaperService {
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """, sectionId, questionId, question.categoryId(), question.sortOrder(), question.displayNumber(),
             question.maxPoints(), question.scoringSectionCode());
+        if (question.paperItemId() != null) {
+            jdbcTemplate.update("""
+                UPDATE paper_items new_item JOIN paper_items old_item ON old_item.id = ?
+                SET new_item.lineage_id = COALESCE(old_item.lineage_id, old_item.id)
+                WHERE new_item.section_id = ? AND new_item.question_id = ?
+                """, question.paperItemId(), sectionId, questionId);
+        }
         return questionId;
     }
 
     private List<SectionView> loadSections(long paperId, Long parentId) {
         List<SectionRow> rows = jdbcTemplate.query(parentId == null ? """
             SELECT id, section_code, section_kind, title, sort_order, instructions, settings_json
-            FROM paper_sections WHERE paper_id = ? AND parent_section_id IS NULL ORDER BY sort_order, id
+            FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND parent_section_id IS NULL ORDER BY sort_order, id
             """ : """
             SELECT id, section_code, section_kind, title, sort_order, instructions, settings_json
-            FROM paper_sections WHERE paper_id = ? AND parent_section_id = ? ORDER BY sort_order, id
+            FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND parent_section_id = ? ORDER BY sort_order, id
             """, (rs, rowNum) -> new SectionRow(rs.getLong("id"), rs.getString("section_code"),
                 rs.getString("section_kind"), rs.getString("title"), rs.getInt("sort_order"),
                 rs.getString("instructions"), readJson(rs.getString("settings_json"))),
@@ -906,6 +1012,7 @@ public class PaperService {
                    q.stem, q.render_json, q.answer_key_json, q.grading_json,
                    q.explanation, pi.category_id, pi.sort_order, pi.display_number, pi.max_points, pi.scoring_section_code,
                    COALESCE(shsm.id, shpm.id) AS shsat_material_id,
+                   shsm.id AS shsat_section_material_id,
                    COALESCE(shsm.title, shpm.title) AS shsat_material_title,
                    COALESCE(shsm.material_type, shpm.material_type) AS shsat_material_type,
                    COALESCE(shsm.category, shpm.category) AS shsat_material_category,
@@ -937,6 +1044,7 @@ public class PaperService {
         ObjectNode enriched = render != null && render.isObject()
             ? ((ObjectNode) render).deepCopy() : objectMapper.createObjectNode();
         ObjectNode material = objectMapper.createObjectNode();
+        material.put("scope", rs.getObject("shsat_section_material_id") == null ? "PAPER" : "SECTION");
         material.put("title", rs.getString("shsat_material_title"));
         material.put("type", rs.getString("shsat_material_type"));
         material.put("category", rs.getString("shsat_material_category"));
@@ -956,6 +1064,17 @@ public class PaperService {
         return new SectionRequest(section.sectionCode(), section.sectionKind(), section.title(), section.sortOrder(),
             section.instructions(), section.settings(), section.questions().stream().map(this::toRequest).toList(),
             section.children().stream().map(this::toRequest).toList());
+    }
+
+    /** 材料单独更新时同样保留题目版本关联；复制试卷仍使用无来源 ID 的请求。 */
+    private SectionRequest toCurrentRequest(SectionView section) {
+        return new SectionRequest(section.sectionCode(), section.sectionKind(), section.title(), section.sortOrder(),
+            section.instructions(), section.settings(), section.questions().stream().map(question -> {
+                QuestionRequest value = toRequest(question);
+                return new QuestionRequest(value.questionTypeCode(), value.stem(), value.render(), value.answerKey(),
+                    value.grading(), value.explanation(), value.categoryId(), value.sortOrder(), value.displayNumber(),
+                    value.maxPoints(), value.scoringSectionCode(), value.payloadSchemaVersion(), question.paperItemId());
+            }).toList(), section.children().stream().map(this::toCurrentRequest).toList());
     }
 
     private QuestionRequest toRequest(QuestionView question) {
@@ -984,12 +1103,12 @@ public class PaperService {
                    p.source_paper_id,
                    EXISTS(SELECT 1 FROM exams e WHERE e.paper_id = p.id) AS used_by_exam,
                    p.title, p.status, p.default_duration_seconds,
-                   (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id) AS section_count,
+                   (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id AND section.archived_key = 0) AS section_count,
                    (SELECT COUNT(*) FROM paper_items item JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id) AS question_count,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS question_count,
                    (SELECT COALESCE(SUM(item.max_points), 0) FROM paper_items item
                     JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id) AS total_score,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS total_score,
                    p.created_at, p.updated_at
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id WHERE p.id = ?
             """, (rs, rowNum) -> new PaperSummary(rs.getLong("id"), rs.getString("exam_type_code"),
@@ -1106,10 +1225,9 @@ public class PaperService {
         }
         String status = jdbcTemplate.query("SELECT status FROM papers WHERE id = ?",
             rs -> rs.next() ? rs.getString(1) : null, paperId);
-        if ("DRAFT".equals(status)) return;
         Boolean usedByExam = jdbcTemplate.queryForObject(
             "SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ?)", Boolean.class, paperId);
-        if (!"READY".equals(status) || Boolean.TRUE.equals(usedByExam)) {
+        if ("ARCHIVED".equals(status) || Boolean.TRUE.equals(usedByExam)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "This paper version is locked. Create a new version before editing it.");
         }
@@ -1160,9 +1278,15 @@ public class PaperService {
     public record WorkspaceGroupReference(@NotBlank @Size(max = 32) String examTypeCode,
                                           @Positive long groupId) { }
     public record SaveStructureRequest(@NotNull @Valid List<SectionRequest> sections,
-                                       @Valid List<MaterialWriteRequest> materials) {
-        public SaveStructureRequest(List<SectionRequest> sections) { this(sections, null); }
+                                       @Valid List<MaterialWriteRequest> materials,
+                                       @PositiveOrZero Long expectedRevision) {
+        public SaveStructureRequest(List<SectionRequest> sections) { this(sections, null, null); }
+        public SaveStructureRequest(List<SectionRequest> sections, List<MaterialWriteRequest> materials) {
+            this(sections, materials, null);
+        }
     }
+    public record MaterialContentUpdate(@Positive long id, @Size(max = 200) String title,
+            @Size(max = 100) String category, String content, @Size(max = 500) String assetUrl) { }
     public record MaterialWriteRequest(String materialId, String clientRef,
                                        @NotBlank @Size(max = 60) String partCode,
                                        @Size(max = 60) String subTypeCode,
@@ -1199,13 +1323,22 @@ public class PaperService {
                                   Integer displayNumber,
                                   @NotNull @DecimalMin("0.0") BigDecimal maxPoints,
                                   @Size(max = 30) String scoringSectionCode,
-                                  @Positive Integer payloadSchemaVersion) { }
+                                  @Positive Integer payloadSchemaVersion,
+                                  @Positive Long paperItemId) {
+        public QuestionRequest(String questionTypeCode, String stem, JsonNode render, JsonNode answerKey,
+                JsonNode grading, String explanation, Long categoryId, int sortOrder, Integer displayNumber,
+                BigDecimal maxPoints, String scoringSectionCode, Integer payloadSchemaVersion) {
+            this(questionTypeCode, stem, render, answerKey, grading, explanation, categoryId, sortOrder,
+                displayNumber, maxPoints, scoringSectionCode, payloadSchemaVersion, null);
+        }
+    }
     public record PaperSummary(long id, String examTypeCode, Long groupId, String groupName,
                                String paperCode, int versionNo, Long sourcePaperId, boolean usedByExam, String title,
                                String status, Integer defaultDurationSeconds, int sectionCount, int questionCount,
                                BigDecimal totalScore, String createdAt, String updatedAt) { }
     public record PaperDetail(PaperSummary summary, String description, Long groupId, String scoringProfileCode,
-                              List<SectionView> sections, List<MaterialView> materials, long solutionCount) { }
+                              List<SectionView> sections, List<MaterialView> materials, long solutionCount,
+                              long structureRevision) { }
     public record PaperStructureStats(long total, long ela, long math) { }
     public record MaterialView(long id, String partCode, String subTypeCode, String materialType,
                                String category, String title, String content, String assetUrl, int sortOrder) { }

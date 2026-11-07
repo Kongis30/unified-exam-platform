@@ -36,16 +36,17 @@
             </button>
           </div>
         </div>
-        <h1 class="page-title">Score Report</h1>
+        <h1 class="page-title">{{ reportData.mode === 'review' ? 'Review Report' : 'Score Report' }}</h1>
         <div class="report-info" v-if="!loading && !errorMessage">
           <p class="user-info">Student Name: {{ showValue(reportData.userName) }}</p>
           <p class="exam-info">Exam Name: {{ showValue(reportData.examName) }}</p>
           <p class="paper-info">
             Paper Name: {{ showValue(reportData.paperName) }}
-            <span class="scoring-badge">{{ reportData.scoringType }} Scoring</span>
+            <span v-if="reportData.mode !== 'review'" class="scoring-badge">{{ reportData.scoringType }} Scoring</span>
             <span v-if="reportData.mode === 'practice'" class="mode-badge">Practice</span>
+            <span v-if="reportData.mode === 'review'" class="mode-badge">Review assignment</span>
           </p>
-          <p class="proctor-info" :class="{ 'proctor-warning': reportData.abnormalCount > 0 }">
+          <p v-if="reportData.mode !== 'review'" class="proctor-info" :class="{ 'proctor-warning': reportData.abnormalCount > 0 }">
             Times Left Exam Page: {{ reportData.abnormalCount }}
           </p>
         </div>
@@ -70,25 +71,25 @@
         <div class="summary-grid">
           <div class="summary-item">
             <div class="label">RW Module 1</div>
-            <div class="value">Raw: {{ summary.rw1Raw }} | Time: {{ formatSeconds(summary.rw1Spend) }}</div>
+            <div class="value">Raw: {{ summary.rw1Raw }}<template v-if="reportData.mode !== 'review'"> | Time: {{ formatSeconds(summary.rw1Spend) }}</template></div>
           </div>
           <div class="summary-item">
             <div class="label">RW Module 2</div>
-            <div class="value">Raw: {{ summary.rw2Raw }} | Time: {{ formatSeconds(summary.rw2Spend) }}</div>
+            <div class="value">Raw: {{ summary.rw2Raw }}<template v-if="reportData.mode !== 'review'"> | Time: {{ formatSeconds(summary.rw2Spend) }}</template></div>
           </div>
           <div class="summary-item">
             <div class="label">Math Module 1</div>
-            <div class="value">Raw: {{ summary.math1Raw }} | Time: {{ formatSeconds(summary.math1Spend) }}</div>
+            <div class="value">Raw: {{ summary.math1Raw }}<template v-if="reportData.mode !== 'review'"> | Time: {{ formatSeconds(summary.math1Spend) }}</template></div>
           </div>
           <div class="summary-item">
             <div class="label">Math Module 2</div>
-            <div class="value">Raw: {{ summary.math2Raw }} | Time: {{ formatSeconds(summary.math2Spend) }}</div>
+            <div class="value">Raw: {{ summary.math2Raw }}<template v-if="reportData.mode !== 'review'"> | Time: {{ formatSeconds(summary.math2Spend) }}</template></div>
           </div>
           <div class="summary-total">
             <div class="label">Total Raw</div>
             <div class="value">{{ summary.totalRaw }}</div>
           </div>
-          <div class="summary-scores">
+          <div v-if="reportData.mode !== 'review'" class="summary-scores">
             <div class="label">Scaled Scores</div>
             <div class="scores">
               <div>EBRW: {{ showValue(summary.ebrwScaled) }}</div>
@@ -147,7 +148,7 @@
           </div>
         </div>
 
-        <div class="card analytics-card">
+        <div v-if="reportData.mode !== 'review'" class="card analytics-card">
           <div class="card-heading">
             <h2 class="card-title">Time Analysis</h2>
             <span class="muted">{{ timeAnalysis.hasQuestionTiming ? 'Question timing tracked' : 'Module timing only' }}</span>
@@ -197,18 +198,18 @@
                 <th>#</th>
                 <th>Module</th>
                 <th>Skill</th>
-                <th>Time</th>
+                <th v-if="reportData.mode !== 'review'">Time</th>
                 <th>Chosen</th>
                 <th>Correct</th>
                 <th>Result</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(a, idx) in answers" :key="idx" :class="[a.isCorrect === 1 ? 'row-ok' : (a.isCorrect === 0 ? 'row-bad' : 'row-unknown'), { 'row-clickable': !isStaff }]" @click="openQuestion(a)">
+              <tr v-for="(a, idx) in answers" :key="idx" :class="[a.isCorrect === 1 ? 'row-ok' : (a.isCorrect === 0 ? 'row-bad' : 'row-unknown'), { 'row-clickable': !isStaff || reportData.mode === 'review' }]" @click="openQuestion(a)">
                 <td>{{ idx + 1 }}</td>
                 <td>{{ a.module }}</td>
                 <td>{{ a.tagLabel || 'Uncategorized' }}</td>
-                <td>{{ formatQuestionTime(a.spendSeconds) }}</td>
+                <td v-if="reportData.mode !== 'review'">{{ formatQuestionTime(a.spendSeconds) }}</td>
                 <td>{{ a.chosen ?? '-' }}</td>
                 <td>{{ a.correct }}</td>
                 <td>
@@ -223,6 +224,13 @@
       </section>
 
     </main>
+    <AppModal v-if="reviewQuestion" title="Review question" width="960px" @close="reviewQuestion = null">
+      <div class="review-report-question">
+        <QuestionContent v-if="reviewQuestion.materialContent || reviewQuestion.materialFileUrl" :question="reviewQuestionModel" :question-number="reviewQuestionNumber" :show-question-text="false" />
+        <AnswerOptions :question="reviewQuestionModel" :question-number="reviewQuestionNumber" :selected-answer="reviewQuestion.chosen || null" :correct-answer="reviewQuestion.correct || ''" read-only />
+      </div>
+      <p v-if="reviewQuestion.explanation" class="review-report-explanation"><strong>Explanation:</strong> {{ reviewQuestion.explanation }}</p>
+    </AppModal>
   </div>
 </template>
 
@@ -230,9 +238,13 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { authState } from '@/auth'
+import AppModal from '@/components/AppModal.vue'
+import QuestionContent from '../components/exam/QuestionContent.vue'
+import AnswerOptions from '../components/exam/AnswerOptions.vue'
 
 export default {
   name: 'Report',
+  components: { AppModal, QuestionContent, AnswerOptions },
   setup() {
     const router = useRouter()
     const loading = ref(true)
@@ -240,6 +252,10 @@ export default {
     const errorMessage = ref('')
     const summary = ref({ rw1Raw: 0, rw2Raw: 0, math1Raw: 0, math2Raw: 0, rw1Spend: 0, rw2Spend: 0, math1Spend: 0, math2Spend: 0, totalRaw: 0 })
     const answers = ref([])
+    const reviewQuestion = ref(null)
+    const reviewQuestionNumber = computed(() => Math.max(1, answers.value.indexOf(reviewQuestion.value) + 1))
+    const reviewQuestionModel = computed(() => ({ question: reviewQuestion.value?.question || '', options: reviewQuestion.value?.options,
+      passage: reviewQuestion.value?.materialContent || '', material: { content: reviewQuestion.value?.materialContent || '', fileUrl: reviewQuestion.value?.materialFileUrl || '' } }))
     const knowledgeBreakdown = ref([])
     const timeAnalysis = ref({
       totalSpendSeconds: 0,
@@ -255,7 +271,7 @@ export default {
     const isStaff = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode))
     const staffReturnPath = computed(() => {
       const path = router.currentRoute.value.query.returnTo
-      return typeof path === 'string' && (/^\/(sat|psat)\/admin\//.test(path) || path.startsWith('/exam-types/SAT/admin/') || path.startsWith('/exam-types/PSAT/admin/')) ? path : ''
+      return typeof path === 'string' && (/^\/(sat|psat)(?:\/admin\/|\?tab=reviews(?:&|$))/.test(path) || path.startsWith('/exam-types/SAT/admin/') || path.startsWith('/exam-types/PSAT/admin/')) ? path : ''
     })
 
     const returnToStaffPage = () => {
@@ -282,7 +298,14 @@ export default {
       errorMessage.value = ''
       try {
         let res
-        if (isStaff.value) {
+        const reviewId = Number(router.currentRoute.value.query.reviewAssignmentId)
+        const reviewType = router.currentRoute.value.query.reviewType
+        if (reviewId && (reviewType === 'SAT' || reviewType === 'PSAT')) {
+          const { apiRequest } = await import('@/api/platform.js')
+          const base = isStaff.value ? '/api/admin' : '/api/student'
+          const assignmentPath = isStaff.value ? `/assignments/${reviewId}` : `/${reviewId}`
+          res = await apiRequest(`${base}/review-assignments/${reviewType}${assignmentPath}/report`)
+        } else if (isStaff.value) {
           const { getSatAttemptReport } = await import('../../admin/api/studentScores.js')
           res = await getSatAttemptReport(recordId)
         } else {
@@ -331,6 +354,7 @@ export default {
     }
 
     const openQuestion = (row) => {
+      if (reportData.value.mode === 'review') { reviewQuestion.value = row; return }
       if (isStaff.value) return
       const qid = row?.questionId || row?.qid
       if (!qid || !reportData.value.paperId || !reportQuery.value.recordId) return
@@ -550,6 +574,9 @@ export default {
       errorMessage,
       summary,
       answers,
+      reviewQuestion,
+      reviewQuestionNumber,
+      reviewQuestionModel,
       knowledgeBreakdown,
       knowledgeSections,
       timeAnalysis,
@@ -581,6 +608,9 @@ export default {
 </script>
 
 <style scoped>
+.review-report-question { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:16px; }
+.review-report-question > * { min-width:0; }
+.review-report-explanation { white-space:pre-wrap; line-height:1.6; }
 .report-page {
   min-height: 100vh;
   background: #fff;

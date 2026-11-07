@@ -64,6 +64,9 @@ function invalidateAfterWrite(path) {
   const scoped = (category) => code ? [`${category}:${code}`] : ['SAT', 'PSAT', 'SHSAT'].map((item) => `${category}:${item}`)
   if (/\/api\/admin\/users(?:\/|$)/.test(path)) {
     clearExamTypesCache()
+  } else if (/\/review-assignments\/(SAT|PSAT|SHSAT)(?:\/|$)/i.test(path)) {
+    const type = path.match(/\/review-assignments\/(SAT|PSAT|SHSAT)(?:\/|$)/i)[1].toUpperCase()
+    invalidateResources(`review:${type}`, 'student')
   } else if (/\/wrong-answer-tasks(?:\/|$)/.test(path)) {
     invalidateResources('review:SHSAT', 'student')
   } else if (/\/api\/admin\/(?:sat\/students\/[^/]+\/attempts|reports\/attempts)(?:\/|$)/.test(path)) {

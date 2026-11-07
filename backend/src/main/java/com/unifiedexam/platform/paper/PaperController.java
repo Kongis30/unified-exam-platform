@@ -157,7 +157,14 @@ public class PaperController {
                                                         @Valid @RequestBody PaperService.SaveStructureRequest request,
                                                         Authentication authentication) {
         paperAccess.requireAdministrator(authentication);
-        return paperService.saveStructure(paperId, request);
+        return paperService.saveStructureFromEditor(paperId, request);
+    }
+
+    @PutMapping("/papers/{paperId}/materials/content")
+    public PaperService.PaperDetail updateMaterials(@PathVariable long paperId,
+            @Valid @RequestBody List<PaperService.MaterialContentUpdate> materials, Authentication authentication) {
+        paperAccess.requireAdministrator(authentication);
+        return paperService.updateShsatMaterials(paperId, materials);
     }
 
     @PostMapping("/papers/{paperId}/versions")

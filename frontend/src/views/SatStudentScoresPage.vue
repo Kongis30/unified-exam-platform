@@ -337,12 +337,12 @@ onBeforeUnmount(dismissNotification)
 .sat-student-scores-loading, .sat-score-empty { margin: 0; border: 1px dashed var(--color-border); border-radius: 12px; padding: 32px 16px; color: var(--color-muted); background: rgba(255,255,255,.65); text-align: center; }
 .sat-score-total { display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; color: var(--color-muted); font-size: 14px; }
 .sat-score-total strong { color: var(--color-text); font-size: 18px; }
-.sat-score-stat-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.sat-score-stat-types { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .sat-score-stat-type { min-width: 0; border: 1px solid var(--color-border); border-radius: 12px; padding: 14px; background: #fbfdff; }
 .sat-score-stat-type h3 { margin: 0 0 12px; color: var(--color-text); font-size: 15px; }
 .sat-score-stat-empty { margin: 0; border: 1px dashed var(--color-border); border-radius: 10px; padding: 20px 14px; color: var(--color-muted); background: #fff; font-size: 13px; text-align: center; }
-.sat-score-stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-.sat-score-stat-grid > div { display: grid; gap: 8px; min-height: 82px; align-content: center; border: 1px solid var(--color-border); border-radius: 12px; padding: 12px 14px; background: #fbfdff; }
+.sat-score-stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.sat-score-stat-grid > div { display: grid; gap: 8px; min-height: 96px; align-content: center; border: 1px solid var(--color-border); border-radius: 12px; padding: 14px 16px; background: #fbfdff; }
 .sat-score-stat-grid span { color: var(--color-muted); font-size: 13px; font-weight: 650; }
 .sat-score-stat-grid strong { color: var(--color-text); font-size: 23px; line-height: 1.1; }
 .sat-score-chart-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: -4px 0 12px; }

@@ -206,7 +206,6 @@ const notices = reactive({
 const paperFilters = reactive({
   groupId: '',
   keyword: '',
-  online: '',
 });
 const hasAppliedPaperFilter = ref(false);
 
@@ -243,8 +242,6 @@ const paperEditForm = reactive({
   totalQuestions: 0,
   defaultDuration: 180,
   totalScore: 0,
-  status: 'DRAFT',
-  online: false,
   displayOrder: 0,
   metadata: '',
 });
@@ -612,7 +609,7 @@ const selectablePaperGroups = computed(() => {
 // 保留空文件夹卡片，让用户在筛选到空组时仍能展开或管理该文件夹。
 const selectedEmptyPaperGroup = computed(() => {
   if (!paperFilters.groupId || paperFilters.groupId === DEFAULT_FOLDER_KEY
-      || paperFilters.online || paperFilters.keyword.trim()) return false;
+      || paperFilters.keyword.trim()) return false;
   const selected = selectablePaperGroups.value.find(group => String(group.paperGroupId) === String(paperFilters.groupId));
   return selected && Number(selected.paperCount || 0) === 0;
 });
@@ -861,18 +858,6 @@ function formatNumber(value) {
 
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(1).replace(/\.0$/, '') : String(value);
-}
-
-function getOnlineText(value) {
-  if (value === true) {
-    return 'Online';
-  }
-
-  if (value === false) {
-    return 'Offline';
-  }
-
-  return 'All';
 }
 
 function getPaperGroupName(groupId) {
@@ -1303,7 +1288,6 @@ function buildPaperQuery() {
   return {
     groupId: paperFilters.groupId === DEFAULT_FOLDER_KEY ? '' : paperFilters.groupId,
     keyword: paperFilters.keyword.trim(),
-    online: paperFilters.online,
   };
 }
 
@@ -1316,8 +1300,6 @@ function getPaperPayloadFromPaper(paper, overrides = {}) {
     totalQuestions: Number(paper.totalQuestions || 0),
     defaultDuration: Number(paper.defaultDuration || 90),
     totalScore: Number(paper.totalScore || 0),
-    status: paper.status || 'READY',
-    online: paper.online !== false,
     displayOrder: Number(paper.displayOrder || 0),
     metadata: paper.metadata || '',
     ...overrides,
@@ -1355,8 +1337,6 @@ function createBlankPaperPayload(overrides = {}) {
     totalQuestions: 0,
     defaultDuration: 180,
     totalScore: 0,
-    status: 'DRAFT',
-    online: false,
     displayOrder: papers.value.length + 1,
     metadata: '',
     ...overrides,
@@ -1374,8 +1354,6 @@ function buildPaperPayloadFromForm() {
     totalQuestions: Number(paperEditForm.totalQuestions || 0),
     defaultDuration: Number(paperEditForm.defaultDuration || 1),
     totalScore: Number(paperEditForm.totalScore || 0),
-    status: paperEditForm.status.trim() || 'DRAFT',
-    online: Boolean(paperEditForm.online),
     displayOrder: Number(paperEditForm.displayOrder || 0),
     metadata: metadata || null,
   };
@@ -1403,7 +1381,6 @@ function buildPaperEditPayloadFromForm(paper) {
     // Keep derived fields aligned with the current paper details instead of the home edit form.
     totalQuestions: getActualPaperQuestionCount(paper),
     totalScore: Number(paper?.totalScore || 0),
-    status: String(paper?.status || 'DRAFT'),
   };
 }
 
@@ -1676,7 +1653,7 @@ async function loadPapers(force = false) {
   loading.papers = true;
   errors.papers = '';
   hasAppliedPaperFilter.value = Boolean(
-    paperFilters.groupId || paperFilters.online || paperFilters.keyword.trim(),
+    paperFilters.groupId || paperFilters.keyword.trim(),
   );
 
   try {
@@ -3459,12 +3436,6 @@ onBeforeUnmount(() => {
                 </option>
               </select>
 
-              <select v-model="paperFilters.online" class="form-input form-input--compact" aria-label="Online Status">
-                <option value="">All</option>
-                <option value="true">Online</option>
-                <option value="false">Offline</option>
-              </select>
-
               <input v-model="paperFilters.keyword" class="form-input paper-search-input" placeholder="Paper name" />
             </div>
 
@@ -3550,7 +3521,6 @@ onBeforeUnmount(() => {
                         <th>Questions</th>
                         <th>Duration</th>
                         <th>Score</th>
-                        <th>Status</th>
                         <th class="paper-actions-header">Actions</th>
                       </tr>
                     </thead>
@@ -3566,7 +3536,6 @@ onBeforeUnmount(() => {
                         <td>{{ paper.totalQuestions || 0 }}</td>
                         <td>{{ paper.defaultDuration || '-' }} min</td>
                         <td>{{ formatNumber(paper.totalScore) }}</td>
-                        <td>{{ paper.status || '-' }} / {{ getOnlineText(paper.online) }}</td>
                         <td class="paper-actions-cell">
                           <AdminActionMenu
                             label="Paper actions"
@@ -3932,10 +3901,6 @@ onBeforeUnmount(() => {
                   <p class="form-hint">Question count is calculated from the questions currently added to this paper.</p>
                 </div>
 
-                <label class="check-line">
-                  <input v-model="paperEditForm.online" type="checkbox" />
-                  Online
-                </label>
               </div>
 
               <p v-if="errors.papers" class="error-text">{{ errors.papers }}</p>

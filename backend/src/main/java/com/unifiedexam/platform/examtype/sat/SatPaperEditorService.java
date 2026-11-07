@@ -422,14 +422,13 @@ public class SatPaperEditorService {
         if (!"SAT".equals(code) && !"PSAT".equals(code)) throw notFound("SAT paper not found.");
     }
 
-    /** 已就绪副本仅在尚未被考试引用时可编辑，确保已发布考试使用的结构保持不变。 */
+    /** SAT 试卷被考试引用后使用副本编辑，避免改写既有考试。 */
     private void requireEditableSatPaper(long paperId) {
         requireSatPaper(paperId);
         String status = paper(paperId).status();
-        if ("DRAFT".equals(status)) return;
         Boolean usedByExam = jdbc.queryForObject(
             "SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ?)", Boolean.class, paperId);
-        if (!"READY".equals(status) || Boolean.TRUE.equals(usedByExam)) {
+        if ("ARCHIVED".equals(status) || Boolean.TRUE.equals(usedByExam)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                 "This paper version is locked. Create a new version before changing SAT content.");
         }

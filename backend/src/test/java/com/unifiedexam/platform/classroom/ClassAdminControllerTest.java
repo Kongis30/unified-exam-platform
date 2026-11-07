@@ -64,7 +64,8 @@ class ClassAdminControllerTest {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), eq(12L))).thenReturn(12L);
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(0, 0);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(0);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L), eq(12L))).thenReturn(0);
         when(jdbcTemplate.update(anyString(), eq(12L))).thenReturn(1);
 
         new ClassAdminController(jdbcTemplate).deleteClass(12L);
@@ -81,13 +82,14 @@ class ClassAdminControllerTest {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(12L))).thenReturn(true);
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), eq(12L))).thenReturn(12L);
-        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(0, 2);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L))).thenReturn(0);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq(12L), eq(12L))).thenReturn(2);
 
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
             () -> new ClassAdminController(jdbcTemplate).deleteClass(12L));
 
         assertEquals(409, error.getStatusCode().value());
-        assertTrue(error.getReason().contains("SHSAT review tasks"));
+        assertTrue(error.getReason().contains("review assignments"));
         verify(jdbcTemplate, never()).update(anyString(), eq(12L));
     }
 

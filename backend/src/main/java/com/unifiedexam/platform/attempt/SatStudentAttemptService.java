@@ -59,7 +59,7 @@ public class SatStudentAttemptService {
         return snapshot(attempt.id(), username);
     }
 
-    /** 提供可练习试卷；只列出已封存且包含题目的 SAT/PSAT 版本。 */
+    /** 提供包含题目的可用 SAT/PSAT 试卷。 */
     public List<PracticePaperView> practicePapers(String username) {
         return practicePapers(username, null);
     }
@@ -73,7 +73,10 @@ public class SatStudentAttemptService {
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id
             JOIN paper_sections s ON s.paper_id = p.id
             LEFT JOIN paper_items pi ON pi.section_id = s.id
-            WHERE p.exam_type_code IN ('SAT', 'PSAT') AND (? IS NULL OR p.exam_type_code = ?) AND p.status = 'READY'
+            WHERE p.exam_type_code IN ('SAT', 'PSAT') AND (? IS NULL OR p.exam_type_code = ?) AND p.status <> 'ARCHIVED'
+              AND (p.status = 'READY' OR EXISTS (SELECT 1 FROM sat_practice_paper_templates template WHERE template.paper_id = p.id)
+                   OR EXISTS (SELECT 1 FROM exams published WHERE published.paper_id = p.id
+                       AND published.status IN ('PUBLISHED', 'CLOSED') AND published.release_hidden_at IS NULL))
             GROUP BY p.id, p.title, p.description, p.exam_type_code, p.default_duration_seconds, g.name
             HAVING COUNT(pi.id) > 0
             ORDER BY g.sort_order, g.name, p.title, p.id
@@ -136,12 +139,18 @@ public class SatStudentAttemptService {
             FROM papers p WHERE p.id = ? FOR UPDATE
             """, rs -> rs.next() ? new PracticePaper(rs.getLong("id"), rs.getString("exam_type_code"),
                 rs.getString("title"), rs.getString("status")) : null, paperId);
-        if (paper == null || !List.of("SAT", "PSAT").contains(paper.examTypeCode()) || !"READY".equals(paper.status())) {
+        if (paper == null || !List.of("SAT", "PSAT").contains(paper.examTypeCode()) || "ARCHIVED".equals(paper.status())) {
             throw notFound("Practice paper not found.");
         }
         Long existing = jdbc.query("SELECT practice_exam_id FROM sat_practice_paper_templates WHERE paper_id = ?",
             rs -> rs.next() ? rs.getLong(1) : null, paperId);
         if (existing != null) return existing;
+        // 保留既有练习权限；新试卷发布或结束后可练习，草稿不会自动向学生公开。
+        Boolean released = jdbc.queryForObject("""
+            SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ? AND status IN ('PUBLISHED', 'CLOSED')
+                AND release_hidden_at IS NULL)
+            """, Boolean.class, paperId);
+        if (!"READY".equals(paper.status()) && !Boolean.TRUE.equals(released)) throw notFound("Practice paper not found.");
 
         jdbc.update("""
             INSERT INTO exams
@@ -366,10 +375,13 @@ public class SatStudentAttemptService {
         String reportItemsSql = """
             SELECT pi.id AS item_id, q.id AS question_id, pi.display_number, pi.max_points, q.stem, q.question_type_code,
                    q.render_json, q.answer_key_json, q.explanation, ps.section_code, ps.title AS module_title,
-                   ps.id AS module_id, ps.settings_json, aa.answer_json, aa.is_correct, aa.time_spent_seconds
+                   ps.id AS module_id, ps.settings_json, aa.answer_json, aa.is_correct, aa.time_spent_seconds,
+                   material.content AS material_content, material.file_url AS material_file_url
             FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
             JOIN paper_sections ps ON ps.id = pi.section_id JOIN questions q ON q.id = pi.question_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
+            LEFT JOIN sat_question_materials qm ON qm.question_id = q.id
+            LEFT JOIN sat_materials material ON material.id = qm.material_id
             WHERE ai.attempt_id = ? ORDER BY ai.served_order
             """;
         // 这里需要自行遍历结果集；显式使用 ResultSetExtractor，避免被推断为逐行回调后跳过首行。
@@ -405,6 +417,8 @@ public class SatStudentAttemptService {
                     row.put("correct", key.path("correctAnswer").asText(""));
                     row.put("question", rs.getString("stem"));
                     row.set("options", render.path("options"));
+                    row.put("materialContent", rs.getString("material_content"));
+                    row.put("materialFileUrl", rs.getString("material_file_url"));
                     row.put("explanation", rs.getString("explanation"));
 
                     List<String> tagsForSkill = new ArrayList<>();
@@ -429,7 +443,8 @@ public class SatStudentAttemptService {
         report.put("paperId", identity.paperId());
         report.put("scoringType", identity.scoringType());
         report.put("totalScore", reportMaxPoints(identity.scoringType(), identity.legacyImported(), identity.legacyMaxPoints()));
-        report.put("mode", attempt.practice() ? "practice" : "exam");
+        Boolean reviewRound = jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM review_practice_rounds WHERE attempt_id = ?)", Boolean.class, attemptId);
+        report.put("mode", Boolean.TRUE.equals(reviewRound) ? "review" : attempt.practice() ? "practice" : "exam");
         report.put("abnormalCount", identity.focusViolationCount());
         report.put("answersVisible", identity.answersVisible());
         int paperQuestionCount = statsByModule.values().stream().mapToInt(value -> value.questions).sum();

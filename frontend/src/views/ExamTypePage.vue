@@ -14,6 +14,8 @@ import AdminTabPanels from '@/components/admin/AdminTabPanels.vue'
 import AdminSection from '@/components/admin/AdminSection.vue'
 import AdminExamCard from '@/components/admin/AdminExamCard.vue'
 import AdminDataTable from '@/components/admin/AdminDataTable.vue'
+import ReviewAssignmentsPanel from '@/components/admin/ReviewAssignmentsPanel.vue'
+import { reviewAssignments } from '@/api/reviewAssignments'
 import { getStudentExamState } from '@/utils/studentExamState.js'
 import { examApi as satExamApi } from '@/examTypes/sat/student/api/exam'
 import ClassesPage from '@/views/ClassesPage.vue'
@@ -36,7 +38,6 @@ const papers = ref([])
 const paperFolderRecords = ref([])
 const exams = ref([])
 const studentExams = ref([])
-const studentPracticePapers = ref([])
 const studentPracticeHistory = ref([])
 const practiceHistoryPage = ref(1)
 const practiceHistoryTotal = ref(0)
@@ -47,12 +48,11 @@ const historyError = ref('')
 const studentExamError = ref('')
 const studentExamsLoading = ref(false)
 const studentPracticeLoading = ref(false)
+const studentReviewLoading = ref(false)
 const studentPracticeError = ref('')
-const activeHistoryTab = ref(localStorage.getItem('shsat.student-history-tab') || 'history')
+const activeHistoryTab = ref(localStorage.getItem(`student-history-tab.${props.code}`) || 'history')
 const startingWrongAnswerAttemptId = ref(null)
 const startingReviewTaskId = ref(null)
-const startingPracticePaperId = ref(null)
-const practicePapersCollapsed = ref(localStorage.getItem(`student.practice-papers-collapsed.${props.code}`) === 'true')
 const classes = ref([])
 const selectedPaper = ref(null)
 const isLoading = ref(true)
@@ -83,7 +83,7 @@ const isAdmin = computed(() => authState.user?.roleCode === 'ADMIN')
 const canManageWorkspace = computed(() => !isSatWorkspace.value || isAdmin.value)
 const initialTab = route.query.tab
 const initialAllowedTab = isSatWorkspace.value && !isAdmin.value
-  ? 'classes' : ['papers', 'exams', 'classes'].includes(initialTab) ? initialTab : 'papers'
+  ? (initialTab === 'reviews' ? 'reviews' : 'classes') : ['papers', 'exams', 'classes', 'reviews'].includes(initialTab) ? initialTab : 'papers'
 const activeTab = ref(initialAllowedTab)
 const openPaperActionMenuId = ref(null)
 const movePaperTarget = ref(null)
@@ -145,7 +145,7 @@ const availableExamSubtitle = computed(() => {
   return `Published ${programs} exams for your classes.`
 })
 const selectedType = computed(() => workspaceTypes.value.find((item) => item.code === props.code) || workspaceTypes.value[0])
-const readyPapers = computed(() => papers.value.filter((paper) => paper.status === 'READY'))
+const availablePapers = computed(() => papers.value.filter((paper) => paper.status !== 'ARCHIVED'))
 const filteredExams = computed(() => {
   const keyword = examKeyword.value.trim().toLocaleLowerCase()
   if (!keyword) return exams.value
@@ -164,15 +164,6 @@ const visibleExams = computed(() => currentExams.value.slice(
   (currentExamPage.value - 1) * examPageSize.value, currentExamPage.value * examPageSize.value))
 const visibleHistoricalExams = computed(() => historicalExams.value.slice(
   (historicalExamPage.value - 1) * examPageSize.value, historicalExamPage.value * examPageSize.value))
-const practicePaperGroups = computed(() => {
-  const groups = new Map()
-  for (const paper of studentPracticePapers.value) {
-    const name = paper.groupName || 'Default Folder'
-    if (!groups.has(name)) groups.set(name, [])
-    groups.get(name).push(paper)
-  }
-  return [...groups.entries()].map(([name, items]) => ({ name, items }))
-})
 const paperGroups = computed(() => {
   // 当前工作区只读取自身考试类型的文件夹。
   const groups = new Map()
@@ -219,10 +210,11 @@ const publishedExams = computed(() => {
 const adminTabs = [
   { key: 'papers', label: 'Paper Management' },
   { key: 'exams', label: 'Exam Release' },
+  { key: 'reviews', label: 'Review Assignments' },
   { key: 'classes', label: 'Classes' },
 ]
 const visibleAdminTabs = computed(() => canManageWorkspace.value
-  ? adminTabs : adminTabs.filter((tab) => tab.key === 'classes'))
+  ? adminTabs : adminTabs.filter((tab) => ['classes', 'reviews'].includes(tab.key)))
 
 const paperForm = reactive({ examTypeCode: '', title: '', description: '', groupId: '', defaultDurationMinutes: 134 })
 const createPaperFolders = computed(() => paperFolderRecords.value
@@ -236,13 +228,13 @@ const releaseForm = reactive({
 const releaseFields = { paper: 'paperId', title: 'title', description: 'description', start: 'opensAt', end: 'closesAt', duration: 'durationMinutes', attemptLimit: 'attemptLimit', scope: 'targetScope' }
 const releasePaperGroups = computed(() => {
   const groups = new Map()
-  for (const paper of readyPapers.value) {
+  for (const paper of availablePapers.value) {
     const folder = paperFolderRecords.value.find((item) => item.examTypeCode === paper.examTypeCode && String(item.id) === String(paper.groupId))
     const label = folder?.name || 'Default Folder'
     if (!groups.has(label)) groups.set(label, [])
     groups.get(label).push({ id: paper.id, title: `${paper.title} · v${paper.versionNo}` })
   }
-  if (draftExamId.value && !readyPapers.value.some((paper) => String(paper.id) === String(releaseForm.paperId))) {
+  if (draftExamId.value && !availablePapers.value.some((paper) => String(paper.id) === String(releaseForm.paperId))) {
     const label = 'Unavailable papers'
     if (!groups.has(label)) groups.set(label, [])
     groups.get(label).push({ id: releaseForm.paperId, title: `${draftPaperTitle.value} · unavailable for new releases` })
@@ -360,15 +352,10 @@ async function loadStudentExams(force = false) {
     studentPracticeLoading.value = true
     try {
       if (isSatWorkspace.value) {
-        const [practicePapers, practiceHistory] = await Promise.all([
-          satExamApi.listPracticePapers(props.code),
-          satExamApi.listPracticeHistory(practiceHistoryPage.value, 10, props.code),
-        ])
-        studentPracticePapers.value = practicePapers
+        const practiceHistory = await satExamApi.listPracticeHistory(practiceHistoryPage.value, 10, props.code)
         studentPracticeHistory.value = practiceHistory.records || []
         practiceHistoryTotal.value = practiceHistory.total || 0
       } else {
-        studentPracticePapers.value = []
         studentPracticeHistory.value = []
         practiceHistoryTotal.value = 0
       }
@@ -380,17 +367,33 @@ async function loadStudentExams(force = false) {
         ])
         studentReviewTasks.value = tasks
         studentAttemptHistory.value = history
-      } else {
+      } else if (!isSatWorkspace.value) {
         studentReviewTasks.value = []
         studentAttemptHistory.value = []
       }
     } catch (requestError) {
       if (isShsatWorkspace) historyError.value = requestError.message || 'Unable to load exam history.'
-      else studentPracticeError.value = requestError.message || 'Unable to load practice papers and history.'
+      else studentPracticeError.value = requestError.message || 'Unable to load practice history.'
     } finally { studentPracticeLoading.value = false }
   }
   try {
-    await Promise.all([assignedExams(), practiceAndHistory()])
+    const reviewTasks = async () => {
+      if (!isSatWorkspace.value) return
+      studentReviewLoading.value = true
+      try {
+        const tasks = await reviewAssignments.studentList(props.code, { force: force === true })
+        studentReviewTasks.value = tasks.map(task => ({
+          ...task,
+          assignmentId: task.id,
+          remainingQuestionCount: task.remainingCount,
+          totalQuestions: task.questionCount,
+          clearedQuestionCount: task.clearedCount,
+          practiceAttemptId: task.latestAttemptId,
+        }))
+      } catch (requestError) { studentPracticeError.value = requestError.message || 'Unable to load review assignments.' }
+      finally { studentReviewLoading.value = false }
+    }
+    await Promise.all([assignedExams(), practiceAndHistory(), reviewTasks()])
   } finally {
     if (isShsatWorkspace) historyLoading.value = false
   }
@@ -401,6 +404,10 @@ const shsatWrongAnswerBooks = computed(() => shsatFormalHistory.value.filter((it
 const activeReviewTasks = computed(() => studentReviewTasks.value.filter((task) => task.status !== 'COMPLETED'))
 const completedReviewTasks = computed(() => studentReviewTasks.value
   .filter((task) => task.status === 'COMPLETED' && task.practiceAttemptId))
+const studentHomeHistoryLoading = computed(() => props.code === 'SHSAT'
+  ? historyLoading.value
+  : studentPracticeLoading.value || studentReviewLoading.value)
+const studentHomeHistoryError = computed(() => props.code === 'SHSAT' ? historyError.value : studentPracticeError.value)
 const latestWrongAnswerPractice = computed(() => {
   const latest = new Map()
   for (const item of studentAttemptHistory.value) {
@@ -413,7 +420,7 @@ const latestWrongAnswerPractice = computed(() => {
 
 function selectStudentHistoryTab(tab) {
   activeHistoryTab.value = tab
-  localStorage.setItem('shsat.student-history-tab', tab)
+  localStorage.setItem(`student-history-tab.${props.code}`, tab)
 }
 
 function reviewTaskActionLabel(task) {
@@ -464,7 +471,12 @@ function viewShsatAttempt(item) {
 }
 
 function viewCompletedReviewReport(task) {
-  if (task.practiceAttemptId) viewShsatAttempt({ attemptId: task.practiceAttemptId })
+  if (!task.practiceAttemptId) return
+  if (isSatWorkspace.value) {
+    startReviewTask(task)
+    return
+  }
+  viewShsatAttempt({ attemptId: task.practiceAttemptId })
 }
 
 function viewShsatWrongAnswers(item) {
@@ -511,25 +523,15 @@ function viewPracticeReport(record) {
   router.push({ name: 'sat-report', query: { examId: record.paperId, recordId: record.attemptId } })
 }
 
-async function startPracticePaper(paper) {
-  if (startingPracticePaperId.value !== null) return
-  startingPracticePaperId.value = paper.id
-  error.value = ''
-  try {
-    sessionStorage.setItem('sat:workspace', props.code)
-    await router.push({ name: 'sat-student-exam', params: { examId: paper.id }, query: { mode: 'practice' } })
-  } catch (requestError) {
-    error.value = requestError.message || 'Unable to start this practice test.'
-  } finally {
-    startingPracticePaperId.value = null
-  }
-}
-
 async function startReviewTask(task) {
   if (startingReviewTaskId.value !== null) return
   startingReviewTaskId.value = task.assignmentId
   error.value = ''
   try {
+    if (isSatWorkspace.value) {
+      await router.push({ name: props.code === 'PSAT' ? 'psat-review-practice' : 'sat-review-practice', params: { assignmentId: task.assignmentId } })
+      return
+    }
     const attempt = await apiRequest(`/api/student/wrong-answer-tasks/${task.assignmentId}/start`, { method: 'POST' })
     await router.push({
       name: 'shsat-student-exam',
@@ -1221,14 +1223,12 @@ async function editPaper(summary) {
       return
     }
     try {
-      const currentDraft = papers.value
+      const currentDraft = summary.usedByExam ? papers.value
         .filter((paper) => paper.examTypeCode === summary.examTypeCode
-          && paper.paperCode === summary.paperCode && paper.status === 'DRAFT')
-        .sort((left, right) => right.versionNo - left.versionNo)[0]
-      const editablePaper = currentDraft || (summary.status === 'DRAFT'
-        || (summary.status === 'READY' && summary.sourcePaperId != null && !summary.usedByExam)
-        ? summary
-        : (await createPaperVersion(summary.id)).summary)
+          && paper.paperCode === summary.paperCode && paper.status !== 'ARCHIVED' && !paper.usedByExam)
+        .sort((left, right) => right.versionNo - left.versionNo)[0] : null
+      const editablePaper = currentDraft || (!summary.usedByExam
+        ? summary : (await createPaperVersion(summary.id)).summary)
       if (editablePaper.id !== summary.id) await loadWorkspacePapers()
       await router.push({
         name: `${props.code.toLowerCase()}-paper-edit`,
@@ -1280,7 +1280,7 @@ async function openRelease() {
   error.value = ''; notice.value = ''; draftExamId.value = null
   draftPaperTitle.value = ''; draftHadTargets.value = false
   selectedClassIds.value = []; selectedStudentIds.value = []; selectedStudentTargets.value = []
-  const firstPaper = readyPapers.value[0]
+  const firstPaper = availablePapers.value[0]
   releaseForm.paperId = firstPaper?.id || ''
   releaseForm.title = ''; releaseForm.description = ''
   const openedAt = new Date()
@@ -1344,7 +1344,7 @@ function toLocalDateTime(value) {
 
 watch(() => releaseForm.paperId, (paperId) => {
   if (!releaseOpen.value || !paperId) return
-  const paper = readyPapers.value.find((item) => String(item.id) === String(paperId))
+  const paper = availablePapers.value.find((item) => String(item.id) === String(paperId))
   if (paper) releaseForm.durationMinutes = defaultReleaseDurationMinutes(paper)
 })
 
@@ -1446,11 +1446,6 @@ function toggleAvailableExams() {
   localStorage.setItem(`admin.available-exams-collapsed.${props.code}`, String(availableExamsCollapsed.value))
 }
 
-function togglePracticePapers() {
-  practicePapersCollapsed.value = !practicePapersCollapsed.value
-  localStorage.setItem(`student.practice-papers-collapsed.${props.code}`, String(practicePapersCollapsed.value))
-}
-
 // SHSAT 使用专属考试页；其他类型的可用练习通过统一作答 API 创建并续考。
 async function openStudentExam(exam) {
   if (startingExamId.value !== null) return
@@ -1526,7 +1521,7 @@ onActivated(() => {
   document.addEventListener('visibilitychange', refreshOnVisibility)
   syncExamReleaseRefresh()
   if (!workspaceVisited) { workspaceVisited = true; return }
-  if (['papers', 'exams', 'classes'].includes(route.query.tab)) activeTab.value = route.query.tab
+  if (['papers', 'exams', 'classes', 'reviews'].includes(route.query.tab)) activeTab.value = route.query.tab
   refreshActiveWorkspace()
 })
 onDeactivated(() => {
@@ -1541,14 +1536,13 @@ watch(activeTab, (tab) => {
 })
 watch(() => props.code, (code) => {
   availableExamsCollapsed.value = localStorage.getItem(`admin.available-exams-collapsed.${code}`) === 'true'
-  practicePapersCollapsed.value = localStorage.getItem(`student.practice-papers-collapsed.${code}`) === 'true'
   loadPage()
   syncExamReleaseRefresh()
 })
 </script>
 
 <template>
-  <div class="page-content type-page-content" :class="{ 'type-page-content--compact-student': !isStaff, 'student-workspace-page': !isStaff }">
+  <div class="page-content type-page-content" :class="{ 'type-page-content--compact-student': !isStaff, 'student-dashboard-workspace': !isStaff }">
     <Teleport to="body">
       <Transition name="exam-notification">
         <div v-if="notification.open" class="exam-notification" :class="`exam-notification--${notification.variant}`" role="status" aria-live="polite">
@@ -1561,8 +1555,8 @@ watch(() => props.code, (code) => {
         </div>
       </Transition>
     </Teleport>
-    <RouterLink v-if="!(isStaff && isSatWorkspace)" class="back-link" to="/">← Back to exam types</RouterLink>
-    <section v-if="selectedType && !(isStaff && isSatWorkspace)" class="module-intro type-workspace-intro" :class="{ 'type-workspace-intro--compact-student': !isStaff }">
+    <RouterLink v-if="isStaff && !isSatWorkspace" class="back-link" to="/">← Back to exam types</RouterLink>
+    <section v-if="selectedType && isStaff && !isSatWorkspace" class="module-intro type-workspace-intro">
       <div v-if="isStaff" class="eyebrow"><span class="eyebrow-line"></span>EXAM MANAGEMENT</div>
       <span v-if="isStaff" class="module-code">{{ selectedType.code }}</span>
       <h1>{{ selectedType.displayName }}</h1>
@@ -1625,6 +1619,7 @@ watch(() => props.code, (code) => {
             :initial-classes="error ? null : classes" @classes-updated="classes = $event" />
         </KeepAlive>
         <p v-if="activeTab === 'classes' && staffClassesLoading && !staffClassesLoaded" class="admin-state">Loading classes...</p>
+        <ReviewAssignmentsPanel v-if="activeTab === 'reviews'" :exam-type-code="props.code" />
 
       <AppCard v-if="activeTab === 'papers'" class="paper-list-card" title="Paper List" :subtitle="`View paper summaries and manage ${props.code} paper versions.`">
         <div class="paper-list-toolbar">
@@ -1855,7 +1850,7 @@ watch(() => props.code, (code) => {
       <AppCard v-if="activeTab === 'exams'" class="sat-exam-releases-card" title="Exam Releases" subtitle="Review exam releases and their availability windows.">
         <div class="card-top-actions">
           <AppButton variant="secondary" @click="openDraftList">Drafts <span class="draft-count">{{ draftExams.length }}</span></AppButton>
-          <AppButton class="card-top-actions__primary" :disabled="!readyPapers.length" @click="openRelease">Create Exam</AppButton>
+          <AppButton class="card-top-actions__primary" :disabled="!availablePapers.length" @click="openRelease">Create Exam</AppButton>
           <button class="admin-refresh-button" type="button" aria-label="Refresh releases" title="Refresh releases" @click="loadWorkspaceExams(true)">
             <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" /></svg>
           </button>
@@ -1905,7 +1900,7 @@ watch(() => props.code, (code) => {
             </tbody>
           </AdminDataTable>
         </div>
-        <p v-else class="admin-state">{{ !exams.length ? 'No exam releases yet. Seal a paper before creating an exam.' : !filteredExams.length ? 'No releases match your search.' : 'No upcoming or active releases. Ended exams are listed below.' }}</p>
+        <p v-else class="admin-state">{{ !exams.length ? 'No exam releases yet. Create an exam to get started.' : !filteredExams.length ? 'No releases match your search.' : 'No upcoming or active releases. Ended exams are listed below.' }}</p>
         <div v-if="!examReleasesCollapsed && currentExams.length" class="exam-list-pagination">
           <span>Showing {{ (currentExamPage - 1) * examPageSize + 1 }}–{{ Math.min(currentExamPage * examPageSize, currentExams.length) }} of {{ currentExams.length }}</span>
           <label>Rows <select v-model.number="examPageSize"><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option></select></label>
@@ -2127,148 +2122,192 @@ watch(() => props.code, (code) => {
     </template>
 
     <template v-else-if="selectedType">
-      <AppCard v-if="isSatWorkspace" class="management-card student-practice-list" :class="{ 'student-practice-list--collapsed': practicePapersCollapsed }">
-        <div class="card-heading">
-          <div><h2>Practice papers</h2><p>Choose a paper to start a timed full-length practice test.</p></div>
-          <button class="collapse-arrow-button" type="button" :aria-expanded="!practicePapersCollapsed"
-            :aria-label="practicePapersCollapsed ? 'Expand practice papers' : 'Collapse practice papers'"
-            :title="practicePapersCollapsed ? 'Expand practice papers' : 'Collapse practice papers'" @click="togglePracticePapers">
-            <svg class="collapse-arrow-button__icon" :class="{ 'collapse-arrow-button__icon--collapsed': practicePapersCollapsed }" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-        </div>
-        <div v-if="!practicePapersCollapsed" class="student-practice-list__body">
-          <section v-for="group in practicePaperGroups" :key="group.name" class="practice-paper-group">
-            <h3>{{ group.name }}</h3>
-            <div class="student-exam-card-grid">
-              <AdminExamCard v-for="paper in group.items" :key="paper.id" :title="paper.title"
-                status-label="Practice" status-tone="active" :description="`${paper.examTypeCode} practice paper`"
-                :metadata="[
-                  { label: 'Questions', value: `${paper.questionCount} questions` },
-                  { label: 'Duration', value: paper.durationSeconds ? `${Math.round(paper.durationSeconds / 60)} min` : 'No time limit' },
-                ]">
-                <template #actions>
-                  <AppButton :aria-label="`Start practice: ${paper.title}`" :disabled="startingPracticePaperId === paper.id" @click="startPracticePaper(paper)">
-                    {{ startingPracticePaperId === paper.id ? 'Opening…' : 'Start practice' }}
-                  </AppButton>
-                </template>
-              </AdminExamCard>
+        <div class="student-home">
+          <AppCard class="management-card student-home-section" title="My Exams" subtitle="Only exams published to your account are shown.">
+            <button class="student-home-refresh" type="button" aria-label="Refresh exams" title="Refresh exams" :disabled="studentExamsLoading" @click="loadStudentExams(true)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
+            </button>
+            <div v-if="studentExamsLoading && !studentExams.length" class="student-home-state">Loading exams...</div>
+            <p v-else-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
+            <p v-else-if="!studentExams.length" class="student-home-state">No exams have been assigned to you yet.</p>
+            <div v-else class="student-home-grid">
+              <article v-for="exam in studentExams" :key="exam.id" class="student-home-exam-card">
+                <header class="student-home-exam-card__header">
+                  <div><span class="student-home-eyebrow">Exam #{{ exam.id }}</span><h3>{{ exam.title }}</h3></div>
+                  <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).label }}</span>
+                </header>
+                <p class="student-home-exam-card__description">{{ exam.paperTitle || 'Assigned exam' }}</p>
+                <dl class="student-home-meta">
+                  <div class="student-home-meta__wide"><dt>Time Window</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
+                  <div><dt>Submission</dt><dd>{{ getStudentExamState(exam).canViewAttempt ? 'Final result recorded' : getStudentExamState(exam).label }}</dd></div>
+                  <div><dt>Duration</dt><dd>{{ exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' }}</dd></div>
+                </dl>
+                <AppButton v-if="getStudentExamState(exam).canStart" class="student-home-card-action" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
+                  {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
+                </AppButton>
+                <AppButton v-else-if="getStudentExamState(exam).canViewAttempt" class="student-home-card-action" variant="secondary" @click="viewAttempt(exam)">View attempt</AppButton>
+                <AppButton v-else class="student-home-card-action" disabled>{{ getStudentExamState(exam).label }}</AppButton>
+              </article>
             </div>
-          </section>
-          <p v-if="studentPracticeLoading && !practicePaperGroups.length" class="table-empty">Loading practice papers...</p>
-          <p v-else-if="studentPracticeError" class="error-text" role="alert">{{ studentPracticeError }}</p>
-          <p v-else-if="!practicePaperGroups.length" class="table-empty">No practice papers are available yet.</p>
-        </div>
-      </AppCard>
-      <AppCard v-if="isSatWorkspace" class="management-card student-practice-history" :class="{ 'student-practice-history--empty': !studentPracticeHistory.length && !studentPracticeLoading }">
-        <div class="card-heading"><div><span class="eyebrow">YOUR {{ props.code }} PRACTICE</span><h2>Completed practice</h2><p>{{ studentPracticeHistory.length ? 'Review your completed practice reports.' : 'Your completed practices appear here.' }}</p></div></div>
-        <div v-if="studentPracticeHistory.length" class="practice-history-list">
-          <article v-for="record in studentPracticeHistory" :key="record.attemptId" class="practice-history-row">
-            <div class="paper-mark">{{ record.examTypeCode }}</div>
-            <div class="paper-copy"><strong>{{ record.paperTitle }}</strong><small>{{ formatExamDate(record.submittedAt) }} · {{ Math.round(record.timeSpentSeconds / 60) }} min</small></div>
-            <div class="practice-history-score"><strong>{{ record.rawScore ?? '—' }}<span v-if="record.rawMaximum"> / {{ record.rawMaximum }}</span></strong><small>Raw score</small></div>
-            <div class="practice-history-actions">
-              <button class="secondary-button compact-button" @click="viewPracticeReport(record)">View report</button>
+          </AppCard>
+
+          <AppCard class="management-card student-home-section" title="Assigned Review" subtitle="Redo incorrect and unanswered questions assigned by your teacher. Your original exam result stays unchanged.">
+            <button class="student-home-refresh" type="button" aria-label="Refresh assigned reviews" title="Refresh assigned reviews" :disabled="studentHomeHistoryLoading" @click="loadStudentExams(true)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
+            </button>
+            <p v-if="studentHomeHistoryError" class="error-text" role="alert">{{ studentHomeHistoryError }}</p>
+            <p v-else-if="(props.code === 'SHSAT' ? historyLoading : studentReviewLoading) && !studentReviewTasks.length" class="student-home-state">Loading assigned reviews...</p>
+            <p v-else-if="!activeReviewTasks.length" class="student-home-state">No review assignments to complete.</p>
+            <div v-else class="student-home-grid">
+              <article v-for="task in activeReviewTasks" :key="task.assignmentId" class="student-home-review-card">
+                <header class="student-home-exam-card__header">
+                  <div><span class="student-home-eyebrow">Exam Review Practice</span><h3>{{ task.title }}</h3></div>
+                  <span class="student-home-status">{{ reviewTaskStatusLabel(task.status) }}</span>
+                </header>
+                <p class="student-home-review-card__exam">{{ task.examTitle }}</p>
+                <p v-if="task.description" class="student-home-review-card__description">{{ task.description }}</p>
+                <dl class="student-home-review-meta">
+                  <div><dt>Questions remaining</dt><dd><strong>{{ task.remainingQuestionCount }}</strong><small>Original review set: {{ task.totalQuestions }} questions</small></dd></div>
+                  <div><dt>Latest accuracy</dt><dd>{{ task.accuracy == null ? '—' : `${Math.round(Number(task.accuracy))}%` }}</dd></div>
+                </dl>
+                <p v-if="task.startAt || task.endAt" class="student-home-review-card__availability">Available {{ task.startAt ? formatExamDate(task.startAt) : 'now' }}<span v-if="task.endAt"> – {{ formatExamDate(task.endAt) }}</span></p>
+                <AppButton class="student-home-card-action" :disabled="!task.canStart && task.status !== 'IN_PROGRESS' || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
+                  {{ reviewTaskActionLabel(task) }}
+                </AppButton>
+              </article>
             </div>
-          </article>
-          <div v-if="practiceHistoryTotal > 10" class="practice-history-pagination">
-            <button class="secondary-button compact-button" :disabled="practiceHistoryPage <= 1" @click="changePracticeHistoryPage(practiceHistoryPage - 1)">Previous</button>
-            <span>Page {{ practiceHistoryPage }} of {{ Math.ceil(practiceHistoryTotal / 10) }}</span>
-            <button class="secondary-button compact-button" :disabled="practiceHistoryPage >= Math.ceil(practiceHistoryTotal / 10)" @click="changePracticeHistoryPage(practiceHistoryPage + 1)">Next</button>
-          </div>
-        </div>
-        <p v-else-if="studentPracticeLoading" class="table-empty">Loading practice history...</p>
-        <p v-else-if="!studentPracticeError" class="table-empty">No completed practice tests yet.</p>
-      </AppCard>
-      <AppCard v-if="props.code === 'SHSAT' && activeReviewTasks.length" class="management-card student-review-list">
-        <div class="card-heading"><div><span class="eyebrow">SHSAT REVIEW</span><h2>Review assignments</h2></div></div>
-        <article v-for="task in activeReviewTasks" :key="task.assignmentId" class="paper-row">
-          <div class="paper-mark">↻</div>
-          <div class="paper-copy">
-            <strong>{{ task.title }}</strong>
-            <small>{{ task.examTitle }} · {{ task.remainingQuestionCount }} questions remaining<span v-if="task.endAt"> · Due {{ formatExamDate(task.endAt) }}</span></small>
-          </div>
-          <span class="status-pill" :class="task.status === 'COMPLETED' ? 'is-active' : ''">{{ reviewTaskStatusLabel(task.status) }}</span>
-          <button class="secondary-button compact-button" :disabled="!task.canStart || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
-            {{ reviewTaskActionLabel(task) }}<span v-if="task.status !== 'ENDED' && startingReviewTaskId !== task.assignmentId">↗</span>
-          </button>
-        </article>
-      </AppCard>
-      <AppCard class="management-card student-exam-list" :class="{ 'student-exam-list--empty': !studentExams.length && !studentExamsLoading }">
-        <div class="card-heading"><div><span class="eyebrow">{{ selectedType.code }} EXAMS</span><h2>Your exams</h2></div></div>
-        <div v-if="studentExams.length" class="student-exam-card-grid">
-          <AdminExamCard v-for="exam in studentExams" :key="exam.id" :title="exam.title"
-            :status-label="getStudentExamState(exam).label" :status-tone="studentExamStatusTone(exam)"
-            :description="exam.paperTitle || 'Assigned exam'"
-            :metadata="[
-              { label: 'Available', value: `${formatExamDate(exam.opensAt)} – ${formatExamDate(exam.closesAt)}`, wide: true },
-              { label: 'Program', value: exam.examTypeCode || props.code },
-              { label: 'Duration', value: exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' },
-            ]">
-            <template #actions>
-              <AppButton v-if="getStudentExamState(exam).canStart" variant="secondary" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
-                {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
-              </AppButton>
-              <AppButton v-if="getStudentExamState(exam).canViewAttempt" variant="ghost" @click="viewAttempt(exam)">View attempt</AppButton>
-            </template>
-          </AdminExamCard>
-        </div>
-        <p v-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
-        <p v-if="studentExamsLoading && !studentExams.length" class="table-empty">Loading exams...</p>
-        <p v-else-if="!studentExams.length && !studentExamError" class="table-empty">No exams have been assigned to you yet.</p>
-      </AppCard>
-      <AppCard v-if="props.code === 'SHSAT'" class="management-card shsat-student-history">
-        <div class="card-heading"><div><span class="eyebrow">YOUR SHSAT RECORDS</span><h2>Exam History</h2><p>Review completed exams, personal wrong answers, and assigned review tasks.</p></div>
-          <button class="secondary-button compact-button" :disabled="historyLoading" @click="loadStudentExams(true)">{{ historyLoading ? 'Refreshing…' : 'Refresh' }}</button>
-        </div>
-        <p v-if="historyError" class="error-text" role="alert">{{ historyError }}</p>
-        <div class="history-tabs" role="tablist" aria-label="SHSAT student history">
-          <button v-for="tab in [
-            { key: 'history', label: 'Exam History' },
-            { key: 'wrong-answers', label: 'Wrong Answer Book', count: shsatWrongAnswerBooks.length },
-            { key: 'review-tasks', label: 'Review Task History', count: completedReviewTasks.length },
-          ]" :key="tab.key" class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === tab.key }"
-            type="button" role="tab" :aria-selected="activeHistoryTab === tab.key" @click="selectStudentHistoryTab(tab.key)">
-            {{ tab.label }} <span v-if="tab.count" class="history-tab__count">{{ tab.count }}</span>
-          </button>
-        </div>
-        <div v-if="activeHistoryTab === 'history'" class="shsat-history-list">
-          <article v-for="item in shsatFormalHistory" :key="item.attemptId" class="shsat-history-row">
-            <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>Attempt #{{ item.attemptNumber }} · {{ formatExamDate(item.submittedAt || item.startedAt) }}</small></div>
-            <div class="shsat-history-score"><strong>{{ item.scoreVisible ? (item.totalScore ?? '—') : 'Not available yet' }}</strong><small>Raw score</small></div>
-            <AppButton variant="secondary" @click="viewShsatAttempt(item)">View report</AppButton>
-          </article>
-          <p v-if="!shsatFormalHistory.length && !historyLoading && !historyError" class="table-empty">No completed SHSAT exams yet.</p>
-        </div>
-        <div v-else-if="activeHistoryTab === 'wrong-answers'" class="shsat-history-list">
-          <article v-for="item in shsatWrongAnswerBooks" :key="item.attemptId" class="shsat-history-row">
-            <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>{{ wrongAnswerBookStatus(item) }}</small></div>
-            <div class="shsat-history-actions">
-              <AppButton variant="secondary" :disabled="!item.answersVisible || !item.remainingReviewCount" @click="viewShsatWrongAnswers(item)">View wrong answers</AppButton>
-              <AppButton variant="primary" :disabled="!item.answersVisible || !item.remainingReviewCount || startingWrongAnswerAttemptId !== null" @click="practiceShsatWrongAnswers(item)">
-                {{ startingWrongAnswerAttemptId === item.attemptId ? 'Starting…' : 'Practice' }}
-              </AppButton>
-              <AppButton variant="ghost" :disabled="!latestWrongAnswerPractice.get(String(item.attemptId))" @click="viewLatestShsatPractice(item)">Latest practice report</AppButton>
+          </AppCard>
+
+          <AppCard class="management-card student-home-section" title="Score History and Explanations" subtitle="Scores and answers follow the visibility policy set by your teacher.">
+            <button class="student-home-refresh" type="button" aria-label="Refresh score history" title="Refresh score history" :disabled="studentHomeHistoryLoading" @click="loadStudentExams(true)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
+            </button>
+            <p class="student-home-history-note">Completed attempts appear here when scores or explanations are available.</p>
+            <p v-if="studentHomeHistoryError" class="error-text" role="alert">{{ studentHomeHistoryError }}</p>
+            <p v-else-if="studentHomeHistoryLoading && !(props.code === 'SHSAT' ? studentAttemptHistory.length : studentPracticeHistory.length)" class="student-home-state">Loading score history...</p>
+            <div v-else>
+              <div class="history-tabs" role="tablist" aria-label="Student history views">
+                <button class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === 'history' }" type="button" role="tab" :aria-selected="activeHistoryTab === 'history'" @click="selectStudentHistoryTab('history')">Exam History</button>
+                <button class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === 'review-tasks' }" type="button" role="tab" :aria-selected="activeHistoryTab === 'review-tasks'" @click="selectStudentHistoryTab('review-tasks')">Review Task History <span v-if="completedReviewTasks.length" class="history-tab__count">{{ completedReviewTasks.length }}</span></button>
+                <button v-if="props.code === 'SHSAT'" class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === 'wrong-answers' }" type="button" role="tab" :aria-selected="activeHistoryTab === 'wrong-answers'" @click="selectStudentHistoryTab('wrong-answers')">Wrong Answer Book <span v-if="shsatWrongAnswerBooks.length" class="history-tab__count">{{ shsatWrongAnswerBooks.length }}</span></button>
+              </div>
+              <div v-if="activeHistoryTab === 'history' && props.code === 'SHSAT'" class="shsat-history-list">
+                <article v-for="item in shsatFormalHistory" :key="item.attemptId" class="shsat-history-row">
+                  <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>Attempt #{{ item.attemptNumber }} · {{ formatExamDate(item.submittedAt || item.startedAt) }}</small></div>
+                  <div class="shsat-history-score"><strong>{{ item.scoreVisible ? (item.totalScore ?? '—') : 'Not available yet' }}</strong><small>Raw score</small></div>
+                  <AppButton variant="secondary" @click="viewShsatAttempt(item)">View report</AppButton>
+                </article>
+                <p v-if="!shsatFormalHistory.length" class="table-empty">No completed SHSAT exams yet.</p>
+              </div>
+              <div v-else-if="activeHistoryTab === 'history'" class="shsat-history-list">
+                <article v-for="record in studentPracticeHistory" :key="record.attemptId" class="shsat-history-row">
+                  <div class="paper-copy"><strong>{{ record.paperTitle }}</strong><small>{{ formatExamDate(record.submittedAt) }} · {{ Math.round(record.timeSpentSeconds / 60) }} min</small></div>
+                  <div class="shsat-history-score"><strong>{{ record.rawScore ?? '—' }}<span v-if="record.rawMaximum"> / {{ record.rawMaximum }}</span></strong><small>Raw score</small></div>
+                  <AppButton variant="secondary" @click="viewPracticeReport(record)">View report</AppButton>
+                </article>
+                <div v-if="practiceHistoryTotal > 10" class="practice-history-pagination">
+                  <button class="secondary-button compact-button" :disabled="practiceHistoryPage <= 1" @click="changePracticeHistoryPage(practiceHistoryPage - 1)">Previous</button>
+                  <span>Page {{ practiceHistoryPage }} of {{ Math.ceil(practiceHistoryTotal / 10) }}</span>
+                  <button class="secondary-button compact-button" :disabled="practiceHistoryPage >= Math.ceil(practiceHistoryTotal / 10)" @click="changePracticeHistoryPage(practiceHistoryPage + 1)">Next</button>
+                </div>
+                <p v-if="!studentPracticeHistory.length" class="table-empty">No completed practice tests yet.</p>
+              </div>
+              <div v-else-if="activeHistoryTab === 'review-tasks'" class="shsat-history-list">
+                <article v-for="task in completedReviewTasks" :key="task.assignmentId" class="shsat-history-row">
+                  <div class="paper-copy"><strong>{{ task.title }}</strong><small>{{ task.examTitle }} · {{ task.clearedQuestionCount }} / {{ task.totalQuestions }} questions cleared</small></div>
+                  <span class="status-pill is-active">Completed</span>
+                  <AppButton variant="secondary" @click="viewCompletedReviewReport(task)">View report</AppButton>
+                </article>
+                <p v-if="!completedReviewTasks.length" class="table-empty">No completed review assignments yet.</p>
+              </div>
+              <div v-else-if="props.code === 'SHSAT'" class="student-home-wrong-answer-grid">
+                <article v-for="item in shsatWrongAnswerBooks" :key="item.attemptId" class="student-home-wrong-book">
+                  <div class="student-home-wrong-book__cover">
+                    <span class="student-home-eyebrow">Wrong Answer Book</span>
+                    <h3>{{ item.examTitle }}</h3>
+                    <div class="student-home-wrong-book__count"><strong>{{ item.answersVisible ? item.remainingReviewCount : '—' }}</strong><span>{{ item.answersVisible ? 'questions remaining' : 'review locked' }}</span></div>
+                    <small>Exam {{ item.examId }} · Attempt {{ item.attemptNumber }}</small>
+                  </div>
+                  <div class="student-home-wrong-book__body">
+                    <div class="student-home-wrong-book__meta">
+                      <span>{{ formatExamDate(item.submittedAt || item.startedAt) }}</span>
+                      <span class="student-home-wrong-book__status">{{ !item.answersVisible ? 'Review disabled' : item.remainingReviewCount ? 'Ready to review' : 'Cleared' }}</span>
+                    </div>
+                    <p>{{ item.answersVisible ? 'Review the questions you missed in this exam.' : 'Review is disabled for this exam.' }}</p>
+                    <AppButton variant="secondary" :disabled="!item.answersVisible || !item.remainingReviewCount" @click="viewShsatWrongAnswers(item)">View wrong answers</AppButton>
+                    <AppButton :disabled="!item.answersVisible || !item.remainingReviewCount || startingWrongAnswerAttemptId !== null" @click="practiceShsatWrongAnswers(item)">{{ startingWrongAnswerAttemptId === item.attemptId ? 'Starting…' : 'Practice' }}</AppButton>
+                    <AppButton variant="ghost" :disabled="!latestWrongAnswerPractice.get(String(item.attemptId))" @click="viewLatestShsatPractice(item)">Latest practice report</AppButton>
+                  </div>
+                </article>
+                <p v-if="!shsatWrongAnswerBooks.length" class="table-empty">No wrong answers are available for review.</p>
+              </div>
+              <p v-else class="table-empty">No completed review assignments yet.</p>
             </div>
-          </article>
-          <p v-if="!shsatWrongAnswerBooks.length && !historyLoading && !historyError" class="table-empty">No wrong answers are available for review.</p>
+          </AppCard>
         </div>
-        <div v-else class="shsat-history-list">
-          <article v-for="task in completedReviewTasks" :key="task.assignmentId" class="shsat-history-row">
-            <div class="paper-copy"><strong>{{ task.title }}</strong><small>{{ task.examTitle }} · {{ task.clearedQuestionCount }} / {{ task.totalQuestions }} questions cleared</small></div>
-            <span class="status-pill is-active">Completed</span>
-            <AppButton variant="secondary" @click="viewCompletedReviewReport(task)">View report</AppButton>
-          </article>
-          <p v-if="!completedReviewTasks.length && !historyLoading && !historyError" class="table-empty">No completed review assignments yet.</p>
-        </div>
-      </AppCard>
     </template>
     <div v-if="isLoading" class="loading-state"><span class="loading-rule"></span>Loading…</div>
   </div>
 </template>
 
 <style scoped>
+.student-dashboard-workspace { max-width: 1200px; padding-top: 36px; }
+.student-home { display: grid; gap: 22px; }
+.student-home-section { position: relative; margin: 0; }
+.student-home-section :deep(.app-card__header) { margin-bottom: 20px; }
+.student-home-section :deep(.app-card__title) { color: #202b40; font-size: 20px; font-weight: 700; }
+.student-home-section :deep(.app-card__subtitle) { color: #667b9e; line-height: 1.5; }
+.student-home-refresh { position: absolute; top: 20px; right: 22px; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #d4e2ff; border-radius: 50%; background: #edf3ff; color: #2563eb; cursor: pointer; }
+.student-home-refresh svg { width: 16px; height: 16px; }
+.student-home-refresh:disabled { cursor: wait; opacity: .55; }
+.student-home-state { margin: 0; padding: 12px 2px; color: #667b9e; font-size: 14px; }
+.student-home-history-note { margin: 0; color: #667b9e; font-size: 13px; }
+.student-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); align-items: stretch; gap: 16px; padding: 0 4px 2px; }
+.student-home-exam-card, .student-home-review-card { display: flex; min-width: 0; flex-direction: column; gap: 12px; border: 1px solid #d7e4fb; border-radius: 16px; padding: 14px; background: #fff; box-shadow: 0 10px 26px rgb(31 75 135 / 6%); }
+.student-home-exam-card { min-height: 278px; }
+.student-home-exam-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.student-home-exam-card__header > div { min-width: 0; }
+.student-home-eyebrow { color: #687d9e; font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.student-home-exam-card h3, .student-home-review-card h3 { margin: 6px 0 0; color: #1c2940; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+.student-home-status { flex: 0 0 auto; max-width: 115px; border-radius: 999px; padding: 5px 9px; background: #edf3f8; color: #63758f; font-size: 11px; font-weight: 750; line-height: 1.2; text-align: center; }
+.student-home-status--is-active, .student-home-status--is-progress { background: #eaf1ff; color: #245dd8; }
+.student-home-status--is-upcoming { background: #f1f6ff; color: #52627a; }
+.student-home-exam-card__description { min-height: 34px; margin: 0; color: #667b9e; font-size: 13px; line-height: 1.4; }
+.student-home-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; }
+.student-home-meta > div { min-width: 0; border: 1px solid #d7e4fb; border-radius: 12px; padding: 8px; background: #fbfdff; }
+.student-home-meta__wide { grid-column: 1 / -1; }
+.student-home-meta dt, .student-home-review-meta dt { color: #687d9e; font-size: 11px; }
+.student-home-meta dd { margin: 2px 0 0; color: #1c2940; font-size: 12px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.student-home-card-action { width: 100%; min-height: 40px; margin-top: auto; }
+.student-home-card-action:deep(.app-button) { width: 100%; }
+.student-home-review-card { min-height: 338px; padding: 16px; background: linear-gradient(145deg, #fff, #f7faff); }
+.student-home-review-card__exam, .student-home-review-card__description, .student-home-review-card__availability { margin: 0; color: #667b9e; font-size: 12px; line-height: 1.45; }
+.student-home-review-card__exam { color: #245dd8; font-weight: 750; }
+.student-home-review-card__description { min-height: 34px; }
+.student-home-review-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: auto 0 0; border-top: 1px solid #d7e4fb; padding-top: 12px; }
+.student-home-review-meta dd { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 0; color: #1c2940; font-size: 14px; font-weight: 750; }
+.student-home-review-meta dd strong { font-size: 16px; }
+.student-home-review-meta dd small { color: #687d9e; font-size: 10px; font-weight: 500; }
+.student-home-history-note + .history-tabs { margin-top: 12px; }
+.student-home-wrong-answer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); gap: 16px; padding: 8px 0 2px; }
+.student-home-wrong-book { overflow: hidden; border: 1px solid #f0ddc7; border-radius: 12px; background: #fff; box-shadow: 0 10px 24px rgb(99 62 24 / 7%); }
+.student-home-wrong-book__cover { display: grid; gap: 10px; min-height: 220px; border-left: 6px solid #f27a19; padding: 18px; background: #fff7ec; }
+.student-home-wrong-book__cover h3 { margin: 8px 0 0; color: #233452; font-family: Georgia, serif; font-size: 20px; line-height: 1.25; overflow-wrap: anywhere; }
+.student-home-wrong-book__count { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; color: #6b7d99; font-size: 11px; font-weight: 650; }
+.student-home-wrong-book__count strong { color: #e86611; font-size: 21px; }
+.student-home-wrong-book__cover > small { color: #687d9e; font-size: 11px; }
+.student-home-wrong-book__body { display: grid; gap: 9px; padding: 14px 16px 16px; }
+.student-home-wrong-book__meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #687d9e; font-size: 11px; }
+.student-home-wrong-book__body p { min-height: 32px; margin: 0; color: #667b9e; font-size: 12px; line-height: 1.45; }
+.student-home-wrong-book__status { color: #16804a; font-size: 11px; font-weight: 750; }
+.student-home-wrong-book__body :deep(.app-button) { width: 100%; min-height: 38px; }
+@media (max-width: 700px) {
+  .student-dashboard-workspace { padding-top: 18px; }
+  .student-home-refresh { top: 16px; right: 16px; }
+  .student-home-section :deep(.app-card__header) { padding-right: 40px; }
+  .student-home-grid, .student-home-wrong-answer-grid { grid-template-columns: minmax(0, 1fr); }
+  .student-home-exam-card, .student-home-review-card { min-height: 0; }
+}
 .exam-delete-warning {
   margin: 0;
   border-radius: 12px;
@@ -2286,65 +2325,12 @@ watch(() => props.code, (code) => {
 .shsat-history-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(110px, auto) auto; align-items: center; gap: 18px; border-bottom: 1px solid var(--color-border); padding: 14px 2px; }
 .shsat-history-row > .status-pill { justify-self: start; }
 .shsat-history-row:last-child { border-bottom: 0; }
-.shsat-history-actions .app-button--primary:disabled { color: var(--color-muted); background: #eef2f8; border-color: #dce4ef; box-shadow: none; opacity: 1; }
 .shsat-history-score { display: grid; gap: 3px; text-align: right; font-variant-numeric: tabular-nums; }
 .shsat-history-score strong { color: var(--color-text); font-size: 15px; }
 .shsat-history-score small, .shsat-history-row .paper-copy small { color: var(--color-muted); font-size: 13px; }
-.shsat-history-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-@media (max-width: 760px) { .shsat-history-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } .shsat-history-score { text-align: left; } .shsat-history-actions { justify-content: flex-start; } }
-.exam-list-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 9px; margin-top: 12px; color: var(--color-muted); font-size: 13px; }
-.exam-list-pagination > span:first-child { margin-right: auto; }
-.exam-list-pagination label { display: flex; align-items: center; gap: 7px; font-weight: 650; }
-.exam-list-pagination select, .exam-list-pagination button { min-height: 34px; border: 1px solid var(--color-border); border-radius: 9px; padding: 0 10px; background: #fff; color: var(--color-text); font: inherit; }
-.exam-list-pagination button { cursor: pointer; }
-.exam-list-pagination button:disabled { cursor: not-allowed; opacity: .45; }
-.practice-paper-group + .practice-paper-group { margin-top: 18px; }
-.practice-paper-group h3 { margin: 0 0 12px; color: #526783; font-size: 14px; font-weight: 750; }
-.student-exam-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 360px)); align-items: stretch; justify-content: start; gap: 16px; min-width: 0; padding: 4px 6px 8px; }
-.student-exam-card-grid :deep(.admin-exam-card) { width: 100%; }
-@media (max-width: 780px) { .student-exam-card-grid { grid-template-columns: minmax(0, 1fr); } }
-.student-practice-list { display: flex; min-height: 390px; max-height: 960px; flex-direction: column; overflow: hidden; }
-.student-practice-list--collapsed { min-height: 0; }
-.student-practice-list .card-heading { flex: 0 0 auto; align-items: center; }
-.student-practice-list .card-heading h2 { margin-top: 0; }
-.student-practice-list .card-heading p { margin: 7px 0 0; color: var(--color-muted); font-size: 14px; line-height: 1.5; }
-.student-practice-list__body { min-height: 0; overflow-y: auto; border-top: 1px solid #e6eefb; padding: 16px 6px 18px 0; scrollbar-color: #9fb6d8 #edf3fb; scrollbar-width: thin; box-shadow: inset 0 -12px 12px -14px rgba(31, 75, 135, .45); }
-.student-exam-list .status-pill.is-progress,
-.student-exam-list .status-pill.is-complete { background: #eaf1ff; color: #245dd8; }
-.student-exam-list .status-pill.is-upcoming { background: #f1f6ff; color: #52627a; }
-.student-exam-list .status-pill.is-closed { background: #eef2f6; color: #66758d; }
-.practice-history-list { border-top: 1px solid var(--color-border); }
-.practice-history-row { display: grid; grid-template-columns: auto minmax(220px, 1fr) minmax(90px, auto) auto; align-items: center; gap: 16px; padding: 14px 4px; border-bottom: 1px solid var(--color-border); }
-.practice-history-score { display: grid; gap: 3px; color: var(--color-text); text-align: right; font-variant-numeric: tabular-nums; }
-.practice-history-score strong { font-size: 15px; }
-.practice-history-score small, .practice-history-row .paper-copy small { color: var(--color-muted); font-size: 12px; }
-.practice-history-actions { display: flex; align-items: center; gap: 8px; }
+.shsat-history-row { grid-template-columns: minmax(220px, 1fr) minmax(100px, auto) auto; }
+@media (max-width: 760px) { .shsat-history-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } .shsat-history-score { text-align: left; } }
 .practice-history-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-top: 14px; color: var(--color-muted); font-size: 13px; }
-.student-practice-history--empty .card-heading, .student-exam-list--empty .card-heading { margin-bottom: 8px; }
-.student-practice-history--empty .table-empty, .student-exam-list--empty .table-empty { margin: 0; padding: 10px 8px 4px; }
-.student-workspace-page .type-workspace-intro--compact-student { max-width: none; padding-bottom: 20px; }
-.student-workspace-page .management-card { margin-bottom: 20px; }
-.student-workspace-page .card-heading { margin-bottom: 18px; }
-.student-workspace-page .card-heading h2 { font-size: 21px; letter-spacing: -0.025em; }
-.student-workspace-page .card-heading p { margin: 7px 0 0; color: var(--color-muted); font-size: 14px; line-height: 1.5; }
-.student-workspace-page .practice-paper-group h3 { margin: 24px 0 12px; color: #526783; font-size: 14px; font-weight: 700; }
-.student-workspace-page .practice-paper-group:first-of-type h3 { margin-top: 22px; }
-@media (max-width: 700px) { .practice-history-row { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; } .practice-history-score { grid-column: 2; justify-self: start; text-align: left; } .practice-history-actions { grid-column: 2 / -1; } }
-@media (max-width: 700px) { .student-practice-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; } .student-practice-list .paper-mark { grid-column: 1; grid-row: 1; } .student-practice-list .paper-copy { grid-column: 2; grid-row: 1; } .student-practice-list .paper-row .compact-button { grid-column: 2; justify-self: start; } }
-@media (max-width: 700px) {
-  .student-review-list .paper-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px 12px; padding: 12px 0; }
-  .student-review-list .paper-mark { grid-column: 1; grid-row: 1 / span 3; align-self: start; }
-  .student-review-list .paper-copy { grid-column: 2; grid-row: 1; }
-  .student-review-list .status-pill { grid-column: 2; justify-self: start; }
-  .student-review-list .paper-row .compact-button { grid-column: 2; justify-self: start; min-height: 40px; font-size: 13px; }
-}
-@media (max-width: 700px) {
-  .student-exam-list .paper-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 0; }
-  .student-exam-list .paper-copy { grid-column: 1; }
-  .student-exam-list .paper-copy strong { overflow: visible; text-overflow: clip; white-space: normal; }
-  .student-exam-list .status-pill { grid-column: 1; justify-self: start; }
-  .student-exam-list .paper-row .compact-button { grid-column: 1; justify-self: start; min-height: 40px; font-size: 13px; }
-}
 .exam-notification { position: fixed; z-index: 1200; top: 82px; right: 24px; display: flex; width: min(380px, calc(100vw - 32px)); align-items: center; gap: 12px; border: 1px solid var(--color-border); border-radius: 14px; padding: 13px 12px 13px 14px; background: #fff; color: var(--color-text); box-shadow: 0 16px 40px rgb(18 36 64 / 16%); }
 .exam-notification--success { border-color: #bbf7d0; }
 .exam-notification--error { border-color: #fecaca; }

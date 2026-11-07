@@ -485,7 +485,7 @@ public class ShsatAdminReportService {
             FROM paper_sections ps JOIN paper_items pi ON pi.section_id = ps.id
             JOIN questions q ON q.id = pi.question_id
             LEFT JOIN shsat_question_metadata qm ON qm.question_id = q.id
-            WHERE ps.paper_id = ? AND pi.display_number = ? ORDER BY pi.id LIMIT 1
+            WHERE ps.paper_id = ? AND ps.archived_key = 0 AND pi.display_number = ? ORDER BY pi.id LIMIT 1
             """, rs -> rs.next() ? questionView(rs) : null, exam.paperId(), questionNumber);
         if (question == null) throw notFound("Question not found in this exam.");
         Map<String, Object> result = new LinkedHashMap<>();
@@ -519,6 +519,7 @@ public class ShsatAdminReportService {
             SELECT q.id AS question_id, pi.display_number, q.question_type_code, q.stem, q.render_json,
                    q.answer_key_json, q.grading_json, pi.max_points, aa.answer_json, aa.is_correct,
                    aa.awarded_points, aa.time_spent_seconds, imported_answer.source_metadata_json AS imported_answer_metadata,
+                   imported_snapshot.snapshot_json AS imported_question_snapshot,
                    qm.skill_tag_code, ps.section_code, ps.title AS section_title,
                    ps.section_kind, parent.section_code AS parent_section_code, parent.title AS parent_section_title,
                    COALESCE(shsm.id, shpm.id) AS shsat_material_id,
@@ -535,6 +536,8 @@ public class ShsatAdminReportService {
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
             LEFT JOIN shsat_attempt_answer_details imported_answer
                 ON imported_answer.attempt_id = ai.attempt_id AND imported_answer.target_paper_item_id = ai.paper_item_id
+            LEFT JOIN shsat_attempt_item_snapshots imported_snapshot
+                ON imported_snapshot.attempt_id = ai.attempt_id AND imported_snapshot.target_paper_item_id = ai.paper_item_id
             LEFT JOIN shsat_question_metadata qm ON qm.question_id = q.id
             LEFT JOIN shsat_section_materials shsm
                 ON shsm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
@@ -596,8 +599,49 @@ public class ShsatAdminReportService {
                 question.put("materialTitle", material.path("title").asText(null));
                 question.put("materialContent", material.path("content").asText(null));
                 question.put("assetUrl", material.path("assetUrl").asText(null));
+                applyImportedQuestionSnapshot(question, readJson(rs.getString("imported_question_snapshot")), importedAnswer);
                 return question;
             }, attemptId);
+    }
+
+    /** 迁移考试优先展示独立系统冻结的题面；已有答题答案和得分仍以迁移记录为准。 */
+    private void applyImportedQuestionSnapshot(Map<String, Object> question, JsonNode snapshot, JsonNode answer) {
+        if (snapshot == null || !snapshot.isObject()) return;
+        Map<String, String> fields = Map.of(
+            "question_number", "questionNumber", "question_type", "questionType",
+            "part_code", "partCode", "part_name", "partName", "sub_type_code", "subTypeCode",
+            "sub_type_name", "subTypeName", "stem", "stem");
+        fields.forEach((source, target) -> {
+            JsonNode value = snapshot.get(source);
+            if (value != null) question.put(target, value.isNull() ? null : objectMapper.convertValue(value, Object.class));
+        });
+        for (String[] field : new String[][]{{"options", "options"}, {"question_config", "questionConfig"},
+                {"validation_rules", "validationRules"}}) {
+            JsonNode value = snapshot.get(field[0]);
+            if (value != null) question.put(field[1], value.isNull() ? null : value.toString());
+        }
+        if (snapshot.has("scoring_rules")) question.put("scoringRules", snapshot.get("scoring_rules"));
+        JsonNode answerData = answer.path("correct_answer_data");
+        if (answerData.isMissingNode() || answerData.isNull()) answerData = snapshot.path("correct_answer_data");
+        if (!answerData.isMissingNode()) question.put("correctAnswerData", answerData);
+        String correctAnswer = answer.path("correct_answer").asText(null);
+        if (correctAnswer == null || correctAnswer.isBlank()) correctAnswer = snapshot.path("correct_answer").asText(null);
+        question.put("correctAnswer", correctAnswer);
+        JsonNode maxScore = answer.path("max_score");
+        if (!maxScore.isNumber()) maxScore = snapshot.path("max_score");
+        if (maxScore.isNumber()) question.put("maxScore", maxScore.decimalValue());
+        String materialType = snapshot.path("material_type").asText(null);
+        String title = snapshot.path("material_title").asText(null);
+        String content = snapshot.path("material_content").asText(null);
+        String asset = snapshot.path("materialAssetKey").asText(null);
+        if (asset == null) asset = snapshot.path("asset_url").asText(null);
+        String assetUrl = shsatMaterialAssetUrl(asset);
+        ObjectNode material = objectMapper.createObjectNode();
+        material.put("type", materialType); material.put("title", title);
+        material.put("content", content); material.put("assetUrl", assetUrl);
+        question.put("material", materialType == null && title == null && content == null && assetUrl == null ? null : material);
+        question.put("materialType", materialType); question.put("materialTitle", title);
+        question.put("materialContent", content); question.put("assetUrl", assetUrl);
     }
 
     private Map<String, Object> historyRow(ResultSet rs) throws SQLException {

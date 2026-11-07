@@ -63,7 +63,11 @@ public class PaperImageController {
         var paper = jdbcTemplate.query("SELECT status, exam_type_code FROM papers WHERE id = ?",
             rs -> rs.next() ? new String[] {rs.getString(1), rs.getString(2)} : null, paperId);
         if (paper == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Paper not found.");
-        if (!"SHSAT".equals(paper[1]) && !"DRAFT".equals(paper[0])) throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an editable paper version before uploading images.");
+        if (!"SHSAT".equals(paper[1])) {
+            Boolean usedByExam = jdbcTemplate.queryForObject("SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ?)", Boolean.class, paperId);
+            if ("ARCHIVED".equals(paper[0]) || Boolean.TRUE.equals(usedByExam))
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Create an editable paper version before uploading images.");
+        }
     }
 
     public record MaterialImageView(Long materialId, long paperId, Long partId, Long subTypeId,

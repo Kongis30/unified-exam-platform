@@ -41,7 +41,7 @@ public class ShsatPaperPublicationValidator {
             JOIN paper_sections section ON section.id = item.section_id
             LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
             JOIN questions question ON question.id = item.question_id
-            WHERE section.paper_id = ?
+            WHERE section.paper_id = ? AND section.archived_key = 0
             ORDER BY section.sort_order, item.sort_order, item.id
             """, (resultSet, rowNumber) -> new PublicationQuestion(
                 resultSet.getString("part_code"), resultSet.getString("grading_json")), paperId);

@@ -68,6 +68,7 @@ const importPapers = ref([]);
 const importPaperGroups = ref([]);
 const importSourcePaper = ref(null);
 const importSourceExam = ref(null);
+let importAnalyticsRequest = 0;
 const importPaperId = ref('');
 const importAnalytics = ref([]);
 const importAnalyticsFilter = ref('all');
@@ -87,6 +88,7 @@ const noticeType = ref('success');
 const uploadingImageQuestionId = ref(null);
 const modifiedQuestionIds = ref(new Set());
 const modifiedStructureKeys = ref(new Set());
+const modifiedMaterialIds = ref(new Set());
 const textMaterialPreviewOpen = ref(true);
 const officialStructureKeys = ref({
   partIds: new Set(),
@@ -455,6 +457,7 @@ const hasQuestionOrStructureChanges = computed(() => {
 
 const hasChanges = computed(() => {
   return hasQuestionOrStructureChanges.value
+    || modifiedMaterialIds.value.size > 0
     || scoringProfileCode.value !== (paper.value?.scoringProfileCode || 'SHSAT_2026_100');
 });
 
@@ -2020,6 +2023,7 @@ async function loadPaper() {
     questionOrderDirty.value = false;
     modifiedQuestionIds.value = new Set();
     modifiedStructureKeys.value = new Set();
+    modifiedMaterialIds.value = new Set();
   } catch (error) {
     errorMessage.value = error.message || 'Failed to load paper details';
     paper.value = null;
@@ -2053,6 +2057,7 @@ async function saveChanges() {
     if (hasQuestionOrStructureChanges.value) {
       const selectedNumber = currentQuestion.value?.questionNumber;
       const saved = unwrapResponse(await adminApi.savePaperStructure(paperId.value, {
+        expectedRevision: paper.value?.structureRevision,
         parts: parts.value,
         subTypes: subTypes.value,
         materials: materials.value,
@@ -2068,7 +2073,21 @@ async function saveChanges() {
         || null;
       modifiedQuestionIds.value = new Set();
       modifiedStructureKeys.value = new Set();
+      modifiedMaterialIds.value = new Set();
       questionOrderDirty.value = false;
+    }
+    if (!hasQuestionOrStructureChanges.value && modifiedMaterialIds.value.size > 0) {
+      const updated = materials.value.filter((material) => modifiedMaterialIds.value.has(String(material.materialId)));
+      const selectedNumber = currentQuestion.value?.questionNumber;
+      const saved = unwrapResponse(await adminApi.updateMaterialContents(paperId.value, updated));
+      paper.value = saved;
+      parts.value = saved.parts || [];
+      subTypes.value = saved.subTypes || [];
+      materials.value = saved.materials || [];
+      questions.value = (saved.questions || []).map(normalizeQuestion);
+      selectedQuestionId.value = questions.value.find((question) => Number(question.questionNumber) === Number(selectedNumber))?.localId
+        || questions.value[0]?.localId || null;
+      modifiedMaterialIds.value = new Set();
     }
     if (scoringProfileCode.value !== (paper.value?.scoringProfileCode || 'SHSAT_2026_100')) {
       const updatedPaper = unwrapResponse(await adminApi.updatePaperScoringProfile(paperId.value, scoringProfileCode.value));
@@ -2178,8 +2197,9 @@ async function openImportQuestions() {
     importPaperGroups.value = unwrapResponse(groupResponse) || [];
     importPapers.value = (unwrapResponse(paperResponse) || []).map((sourcePaper) => ({
       ...sourcePaper,
-      sourceExams: exams.filter((exam) => String(exam.paperId) === String(sourcePaper.paperId) && ['PUBLISHED', 'CLOSED'].includes(exam.status))
-        .sort((a, b) => new Date(b.publishedAt || b.startTime || 0) - new Date(a.publishedAt || a.startTime || 0)),
+      sourceExams: exams.filter((exam) => String(exam.paperId) === String(sourcePaper.paperId))
+        .sort((a, b) => (a.examTitle || '').localeCompare(b.examTitle || '', undefined, { sensitivity: 'base', numeric: true })
+          || new Date(b.startTime || 0) - new Date(a.startTime || 0)),
     }));
     if (groupedImportPapers.value[0]?.papers[0]) await selectImportSourcePaper(groupedImportPapers.value[0].papers[0].paperId);
   } catch (error) {
@@ -2190,6 +2210,7 @@ async function openImportQuestions() {
 }
 
 async function selectImportSourcePaper(sourcePaperId) {
+  const request = ++importAnalyticsRequest;
   importPaperId.value = String(sourcePaperId || '');
   importSourcePaper.value = null;
   importSourceExam.value = null;
@@ -2208,19 +2229,37 @@ async function selectImportSourcePaper(sourcePaperId) {
   loadingImportAnalytics.value = true;
   try {
     const paper = await adminApi.getPaper(importPaperId.value);
+    if (request !== importAnalyticsRequest) return;
     importSourcePaper.value = unwrapResponse(paper);
     const sourceExams = selectedImportPaper.value?.sourceExams || [];
-    importSourceExam.value = sourceExams[0] || null;
+    await selectImportSourceExam(sourceExams[0]?.examId || '', request);
+    if (request !== importAnalyticsRequest) return;
+    const firstQuestion = sortedImportAnalytics.value[0];
+    if (firstQuestion) await previewImportQuestionDetails(firstQuestion.paperItemId);
+  } catch (error) {
+    if (request === importAnalyticsRequest) importQuestionsError.value = error.message || 'Failed to load paper questions.';
+  } finally {
+    if (request === importAnalyticsRequest) loadingImportAnalytics.value = false;
+  }
+}
+
+// 切换统计来源时保留题目选择，并避免过期请求覆盖当前考试的数据。
+async function selectImportSourceExam(examId, existingRequest = null) {
+  const request = existingRequest ?? ++importAnalyticsRequest;
+  importSourceExam.value = (selectedImportPaper.value?.sourceExams || []).find((exam) => String(exam.examId) === String(examId)) || null;
+  importQuestionsError.value = '';
+  loadingImportAnalytics.value = true;
+  try {
     let stats = [];
     if (importSourceExam.value) {
       try {
         const response = await adminApi.getExamMonitorAnalytics(importSourceExam.value.examId);
         stats = unwrapResponse(response)?.questionAnalytics || [];
       } catch {
-        importSourceExam.value = null;
-        importQuestionsError.value = 'Could not load exam performance data. You can still preview and import questions.';
+        if (request === importAnalyticsRequest) importQuestionsError.value = 'Could not load exam performance data. You can still preview and import questions.';
       }
     }
+    if (request !== importAnalyticsRequest) return;
     const statsByNumber = new Map(stats.map((row) => [Number(row.questionNumber), row]));
     const sourceQuestions = importSourcePaper.value?.questions || [];
     const numberCounts = new Map();
@@ -2235,12 +2274,13 @@ async function selectImportSourcePaper(sourcePaperId) {
         paperItemId: question.paperItemId, materialId: material?.materialId ?? null, materialTitle: material?.materialTitle ?? null,
       };
     });
-    const firstQuestion = sortedImportAnalytics.value[0];
-    if (firstQuestion) await previewImportQuestionDetails(firstQuestion.paperItemId);
   } catch (error) {
-    importQuestionsError.value = error.message || 'Failed to load paper questions.';
+    if (request === importAnalyticsRequest) {
+      importAnalytics.value = importAnalytics.value.map((row) => ({ ...row, attempted: 0, wrongCount: 0, accuracy: null }));
+      importQuestionsError.value = 'Could not load exam performance data. You can still preview and import questions.';
+    }
   } finally {
-    loadingImportAnalytics.value = false;
+    if (request === importAnalyticsRequest && existingRequest === null) loadingImportAnalytics.value = false;
   }
 }
 
@@ -2509,7 +2549,12 @@ function updateMaterialDraft(question = currentQuestion.value) {
     question.material = materialUpdate;
   }
 
-  markQuestionDirty(question);
+  const savedMaterial = materials.value.find((material) => sameId(material.materialId, question.materialId));
+  if (savedMaterial?.persistedSectionMaterial) {
+    modifiedMaterialIds.value = new Set([...modifiedMaterialIds.value, String(question.materialId)]);
+  } else {
+    markQuestionDirty(question);
+  }
 }
 
 function updateTextMaterialField(question = currentQuestion.value, fieldName, value) {
@@ -3392,6 +3437,15 @@ onBeforeUnmount(() => {
                       {{ sourcePaper.paperName }}
                     </option>
                   </optgroup>
+                </select>
+              </label>
+              <label class="import-exam-select">
+                <span>Exam for accuracy</span>
+                <select :value="importSourceExam?.examId || ''" :disabled="loadingImportPapers || loadingImportAnalytics || importingQuestions || !selectedImportPaper?.sourceExams?.length" @change="selectImportSourceExam($event.target.value)">
+                  <option value="">{{ selectedImportPaper?.sourceExams?.length ? 'Select an exam' : 'No associated exams' }}</option>
+                  <option v-for="exam in selectedImportPaper?.sourceExams || []" :key="exam.examId" :value="exam.examId">
+                    {{ exam.examTitle }}{{ exam.startTime ? ` · ${new Date(exam.startTime).toLocaleDateString()}` : '' }}
+                  </option>
                 </select>
               </label>
               <label class="import-type-select">
@@ -6472,13 +6526,14 @@ select.form-input {
 
 .import-source-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 280px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(160px, 220px);
   gap: 14px;
   padding: 16px 26px 12px;
   background: #fff;
 }
 
 .import-source-select,
+.import-exam-select,
 .import-type-select {
   display: grid;
   gap: 6px;
@@ -6488,6 +6543,7 @@ select.form-input {
 }
 
 .import-source-select select,
+.import-exam-select select,
 .import-type-select select {
   width: 100%;
   min-height: 40px;

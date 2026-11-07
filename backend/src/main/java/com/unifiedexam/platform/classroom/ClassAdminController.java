@@ -65,6 +65,8 @@ public class ClassAdminController {
                     WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
                 ) AND NOT EXISTS (
                     SELECT 1 FROM shsat_wrong_answer_tasks review_tasks WHERE review_tasks.class_id = c.id
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM review_tasks review_tasks WHERE review_tasks.class_id = c.id
                 ) AND NOT EXISTS (SELECT 1 FROM class_membership_periods p WHERE p.class_id = c.id)
                   AND NOT EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.class_id = c.id)
                   AND NOT EXISTS (SELECT 1 FROM exam_participant_classes pc WHERE pc.class_id = c.id)
@@ -187,8 +189,10 @@ public class ClassAdminController {
                        %s AS math2_raw,
                        shsat.ela_raw AS shsat_ela_raw, shsat.math_raw AS shsat_math_raw,
                        shsat.ela_scaled AS shsat_ela_scaled, shsat.math_scaled AS shsat_math_scaled,
-                       (SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-                        WHERE ps.paper_id = p.id) AS paper_question_count,
+                       CASE WHEN p.exam_type_code = 'SHSAT'
+                            THEN (SELECT COUNT(*) FROM attempt_items ai WHERE ai.attempt_id = a.id)
+                            ELSE (SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
+                                  WHERE ps.paper_id = p.id AND ps.archived_key = 0) END AS paper_question_count,
                        ROW_NUMBER() OVER (
                            PARTITION BY e.id, a.student_user_id
                            ORDER BY a.submitted_at DESC, a.id DESC
@@ -386,10 +390,10 @@ public class ClassAdminController {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only empty classes can be deleted.");
         }
         Integer taskCount = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM shsat_wrong_answer_tasks WHERE class_id = ?", Integer.class, classId);
+            "SELECT (SELECT COUNT(*) FROM shsat_wrong_answer_tasks WHERE class_id = ?) + (SELECT COUNT(*) FROM review_tasks WHERE class_id = ?)", Integer.class, classId, classId);
         if (taskCount != null && taskCount > 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "Reassign or remove this class's SHSAT review tasks before deleting the class.");
+                "Remove this class's review assignments before deleting the class.");
         }
         Boolean hasHistory = jdbcTemplate.queryForObject("""
             SELECT EXISTS(SELECT 1 FROM class_membership_periods WHERE class_id = ?)
@@ -543,6 +547,8 @@ public class ClassAdminController {
                     WHERE active_members.class_id = c.id AND active_members.left_at IS NULL
                 ) AND NOT EXISTS (
                     SELECT 1 FROM shsat_wrong_answer_tasks review_tasks WHERE review_tasks.class_id = c.id
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM review_tasks review_tasks WHERE review_tasks.class_id = c.id
                 ) AND NOT EXISTS (SELECT 1 FROM class_membership_periods p WHERE p.class_id = c.id)
                   AND NOT EXISTS (SELECT 1 FROM attempt_classes ac WHERE ac.class_id = c.id)
                   AND NOT EXISTS (SELECT 1 FROM exam_participant_classes pc WHERE pc.class_id = c.id)

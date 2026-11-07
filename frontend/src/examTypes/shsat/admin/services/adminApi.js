@@ -25,7 +25,7 @@ function paperSummary(paper) {
     totalQuestions: paper.questionCount || 0,
     totalParts: paper.sectionCount || 0,
     totalScore: Number(paper.totalScore || 0),
-    online: paper.status === 'READY',
+    online: paper.status !== 'ARCHIVED',
   };
 }
 
@@ -95,6 +95,7 @@ function mapPaperDetail(detail) {
       : null;
     return {
       materialId: String(item.id), paperId: detail.summary.id,
+      persistedSectionMaterial: true,
       partId: part ? String(part.partId) : null,
       subTypeId: subType ? String(subType.subTypeId) : null,
       materialType: item.materialType || 'TEXT', materialCategory: item.category || null,
@@ -112,9 +113,14 @@ function mapPaperDetail(detail) {
       const material = render.material || null;
       let materialId = render.materialId == null ? null : String(render.materialId);
       if (material) {
+        // 卷级和分段材料使用不同 ID 空间，避免同号材料被错误合并。
+        if (material.scope === 'PAPER' && materialId) {
+          materialId = `paper-material-${materialId}-${part.id}-${section.id}`;
+        }
         const key = `${material.type || 'TEXT'}:${material.title || ''}:${material.content || material.assetUrl || ''}`;
         let saved = materials.find((entry) => entry.materialId === materialId)
-          || materials.find((entry) => entry.key === key);
+          || materials.find((entry) => entry.key === key && String(entry.partId) === String(part.id)
+            && String(entry.subTypeId || '') === String(section.subTypeId || ''));
         if (!saved) {
           saved = {
             key, materialId: materialId || `material-${materials.length + 1}`, paperId: detail.summary.id,
@@ -162,6 +168,14 @@ function mapPaperDetail(detail) {
       return {
         questionId: item.questionId, paperItemId: item.paperItemId, paperId: detail.summary.id,
         partId: null, subTypeId: null, materialId: null,
+        questionSchemaVersion: item.payloadSchemaVersion || 1,
+        scoringSectionCode: item.scoringSectionCode || null,
+        explanation: item.explanation ?? null, totalScore: item.maxPoints ?? 1,
+        sourceQuestionId: render.sourceQuestionId ?? null,
+        sourceScoringSectionCode: render.sourceScoringSectionCode ?? null,
+        sourceDifficulty: render.sourceDifficulty ?? null,
+        legacyCorrectAnswer: render.legacyCorrectAnswer ?? null,
+        shsatSkillTag: render.questionConfig?.shsatSkillTag || null,
         questionNumber, questionType: item.questionTypeCode,
         stem: item.stem, options: JSON.stringify(render.options || []),
         correctAnswerData: JSON.stringify(item.answerKey), questionConfig: JSON.stringify(render.questionConfig || {}),
@@ -172,10 +186,10 @@ function mapPaperDetail(detail) {
     }));
   }
   return {
-    paperId: detail.summary.id, paperGroupId: detail.groupId,
+    paperId: detail.summary.id, structureRevision: detail.structureRevision, paperGroupId: detail.groupId,
     paperGroupName: detail.summary.groupName, paperName: detail.summary.title,
     paperDescription: detail.description || '', defaultDuration: Math.round((detail.summary.defaultDurationSeconds || 0) / 60),
-    status: detail.summary.status, online: detail.summary.status === 'READY',
+    status: detail.summary.status, online: detail.summary.status !== 'ARCHIVED',
     totalParts: parts.length, totalQuestions: questions.length,
     scoringProfileCode: detail.scoringProfileCode || 'SHSAT_2026_100',
     parts, subTypes, materials, questions, solutionCount: Number(detail.solutionCount || 0),
@@ -214,6 +228,7 @@ function mapShsatQuestion(question, sortOrder, sectionCode) {
     };
   }
   return {
+    paperItemId: /^\d+$/.test(String(question.paperItemId || '')) ? Number(question.paperItemId) : null,
     questionTypeCode: question.questionType || 'MULTIPLE_CHOICE',
     payloadSchemaVersion: Number(question.questionSchemaVersion || 1),
     stem: question.stem || '', render, answerKey,
@@ -316,6 +331,16 @@ export const adminApi = {
     return apiRequest(`/api/admin/papers/${paperId}/structure-stats`);
   },
 
+  updateMaterialContents(paperId, materials) {
+    return apiRequest(`/api/admin/papers/${paperId}/materials/content`, {
+      method: 'PUT', body: JSON.stringify(materials.map((material) => ({
+        id: Number(material.materialId), title: material.materialTitle || null,
+        category: material.materialCategory || null, content: material.materialContent || null,
+        assetUrl: material.assetUrl || null,
+      }))),
+    }).then(mapPaperDetail);
+  },
+
   savePaperStructure(paperId, structure) {
     const sections = [...structure.parts]
       .sort((a, b) => Number(a.displayOrder || a.partNumber || 0) - Number(b.displayOrder || b.partNumber || 0))
@@ -334,7 +359,7 @@ export const adminApi = {
       .map((material, index) => toMaterialRequest(material, structure.parts, structure.subTypes, index))
       .filter(Boolean);
     return apiRequest(`/api/admin/papers/${paperId}/structure`, {
-      method: 'PUT', body: JSON.stringify({ sections, materials }),
+      method: 'PUT', body: JSON.stringify({ sections, materials, expectedRevision: structure.expectedRevision }),
     }).then(mapPaperDetail);
   },
 

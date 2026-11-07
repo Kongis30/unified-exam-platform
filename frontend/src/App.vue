@@ -16,6 +16,8 @@ const isExamRoute = computed(() => [
   'student-exam', 'shsat-student-exam', 'sat-student-exam', 'sat-exam-break',
   'sat-module-wait', 'sat-report-wait',
 ].includes(route.name))
+// SHSAT 长题目通过页面滚动查看，SAT 使用独立的固定考试布局。
+const isShsatExamRoute = computed(() => ['student-exam', 'shsat-student-exam'].includes(route.name))
 const isStaff = computed(() => ['ADMIN', 'TEACHER'].includes(authState.user?.roleCode))
 const isPaperView = computed(() => ['sat-paper-preview', 'psat-paper-preview', 'sat-paper-export',
   'psat-paper-export', 'admin-paper-preview', 'admin-paper-export'].includes(route.name))
@@ -73,7 +75,7 @@ onBeforeUnmount(() => window.removeEventListener('storage', handleSessionChange)
       <component :is="Component" v-if="!isWorkspaceHome(viewRoute)" />
     </RouterView>
   </AdminLayout>
-  <div v-else class="main-layout" :class="{ 'main-layout--exam': isExamRoute }">
+  <div v-else class="main-layout" :class="{ 'main-layout--exam': isExamRoute, 'main-layout--shsat-exam': isShsatExamRoute }">
     <header v-if="!isExamRoute" class="main-layout__header">
       <RouterLink class="main-layout__brand" to="/" aria-label="Jin Exam System home">
         <span class="main-layout__mark"><img src="/logo.png" alt="" /></span>
