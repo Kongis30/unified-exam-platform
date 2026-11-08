@@ -1231,13 +1231,13 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 32px;
   background: rgba(17, 24, 39, 0.78);
 }
 
 .image-preview-img {
-  max-width: min(100%, 1200px);
-  max-height: calc(100vh - 48px);
+  max-width: min(96vw, 1200px);
+  max-height: 92vh;
   object-fit: contain;
   border: 1px solid #e5e7eb;
   border-radius: 8px;

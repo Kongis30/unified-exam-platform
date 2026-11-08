@@ -22,7 +22,7 @@ import ClassesPage from '@/views/ClassesPage.vue'
 import {
   createExam, createPaper, createPaperGroup, createPaperVersion, hideExamRelease, deletePaper, deletePaperGroup,
   apiRequest, cachedResource, closeExam, getExam, getExamTypes, getPaper, listClasses, listExams, listPaperGroups, listPapers,
-  listStudentExams, movePaperToGroup, publishExam, reorderWorkspacePaperGroups, saveExamTargets, startStudentAttempt, unpublishExam,
+  listStudentExams, movePaperToGroup, publishExam, reorderWorkspacePaperGroups, saveExamTargets, unpublishExam,
   savePaperStructure, updateExam, updatePaper, updatePaperGroup,
 } from '@/api/platform'
 import { authState } from '@/auth'
@@ -1458,7 +1458,7 @@ function toggleAvailableExams() {
   localStorage.setItem(`admin.available-exams-collapsed.${props.code}`, String(availableExamsCollapsed.value))
 }
 
-// SHSAT 使用专属考试页；其他类型的可用练习通过统一作答 API 创建并续考。
+// 各考试类型使用各自的作答界面，SAT 和 PSAT 共用 SAT 考试流程。
 async function openStudentExam(exam) {
   if (startingExamId.value !== null) return
   error.value = ''
@@ -1473,14 +1473,8 @@ async function openStudentExam(exam) {
       return
     }
 
-    if (!isStaff.value) {
-      sessionStorage.setItem('sat:workspace', exam.examTypeCode)
-      await router.push({ name: 'sat-student-exam', params: { examId: exam.id } })
-      return
-    }
-
-    const attempt = await startStudentAttempt(exam.id)
-    await router.push({ name: 'student-attempt', params: { attemptId: attempt.id } })
+    sessionStorage.setItem('sat:workspace', exam.examTypeCode)
+    await router.push({ name: 'sat-student-exam', params: { examId: exam.id } })
   } catch (requestError) {
     error.value = requestError.message || 'Unable to start this exam.'
   } finally {
@@ -2190,8 +2184,8 @@ watch(() => props.code, (code) => {
             <div v-else>
               <div class="history-tabs" role="tablist" aria-label="Student history views">
                 <button class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === 'history' }" type="button" role="tab" :aria-selected="activeHistoryTab === 'history'" @click="selectStudentHistoryTab('history')">Exam History</button>
-                <button class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === 'review-tasks' }" type="button" role="tab" :aria-selected="activeHistoryTab === 'review-tasks'" @click="selectStudentHistoryTab('review-tasks')">Review Task History <span v-if="completedReviewTasks.length" class="history-tab__count">{{ completedReviewTasks.length }}</span></button>
                 <button v-if="props.code === 'SHSAT'" class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === 'wrong-answers' }" type="button" role="tab" :aria-selected="activeHistoryTab === 'wrong-answers'" @click="selectStudentHistoryTab('wrong-answers')">Wrong Answer Book <span v-if="shsatWrongAnswerBooks.length" class="history-tab__count">{{ shsatWrongAnswerBooks.length }}</span></button>
+                <button class="history-tab" :class="{ 'history-tab--active': activeHistoryTab === 'review-tasks' }" type="button" role="tab" :aria-selected="activeHistoryTab === 'review-tasks'" @click="selectStudentHistoryTab('review-tasks')">Review Task History <span v-if="completedReviewTasks.length" class="history-tab__count">{{ completedReviewTasks.length }}</span></button>
               </div>
               <div v-if="activeHistoryTab === 'history' && props.code === 'SHSAT'" class="shsat-history-list">
                 <article v-for="item in shsatFormalHistory" :key="item.attemptId" class="shsat-history-row">

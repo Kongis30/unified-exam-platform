@@ -77,6 +77,11 @@ async function loadAttempt() {
   error.value = ''
   try {
     attempt.value = await getStudentAttempt(props.attemptId)
+    if (['SAT', 'PSAT'].includes(attempt.value.examTypeCode)) {
+      sessionStorage.setItem('sat:workspace', attempt.value.examTypeCode)
+      await router.replace({ name: 'sat-student-exam', params: { examId: attempt.value.examId }, query: { recordId: attempt.value.id } })
+      return
+    }
     const enteredAt = Date.now()
     for (const question of attempt.value.questions) {
       answers[question.paperItemId] = initialAnswer(question)

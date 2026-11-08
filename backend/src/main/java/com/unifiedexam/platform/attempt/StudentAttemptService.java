@@ -855,7 +855,7 @@ public class StudentAttemptService {
                 }
                 return new AttemptQuestion(rs.getLong("paper_item_id"), rs.getString("question_type_code"),
                     rs.getInt("payload_schema_version"), rs.getString("stem"), display,
-                    (Integer) rs.getObject("display_number"), rs.getString("section_code"), rs.getString("section_title"),
+                    nullableInt(rs, "display_number"), rs.getString("section_code"), rs.getString("section_title"),
                     rs.getString("parent_section_code"), rs.getString("parent_section_title"),
                     rs.getBigDecimal("max_points"), parseNullable(rs.getString("answer_json")),
                     rs.getBoolean("is_marked_for_review") || markedQuestionIds.contains(rs.getLong("paper_item_id")));

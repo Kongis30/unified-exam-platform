@@ -19,7 +19,7 @@ import com.unifiedexam.platform.identity.WorkspaceAccessService;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
-/** SAT/PSAT 专属正式考试接口；权限只开放给学生，管理员教师继续走练习模式。 */
+/** SAT/PSAT 考试接口；管理员和教师使用自己的练习记录。 */
 @RestController
 @RequestMapping("/api/student")
 public class SatStudentAttemptController {

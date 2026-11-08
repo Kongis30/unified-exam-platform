@@ -830,7 +830,7 @@ public class SatStudentAttemptService {
             FROM sat_attempt_state state JOIN attempts a ON a.id = state.attempt_id
             JOIN exams e ON e.id = a.exam_id JOIN papers p ON p.id = e.paper_id
             WHERE state.attempt_id = ? AND a.student_user_id = (
-                SELECT id FROM users WHERE username = ? AND role_code = 'STUDENT' AND status = 'ACTIVE'
+                SELECT id FROM users WHERE username = ? AND role_code IN ('STUDENT', 'ADMIN', 'TEACHER') AND status = 'ACTIVE'
             ) FOR UPDATE
             """, rs -> rs.next() ? new SatState(rs.getLong("attempt_id"), rs.getLong("exam_id"), rs.getLong("paper_id"), nullableLong(rs, "active_module_section_id"),
                 rs.getTimestamp("module_started_at"),

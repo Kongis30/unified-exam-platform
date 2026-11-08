@@ -72,17 +72,15 @@
         </div>
       </template>
 
-      <!-- 填空题或无选项题型使用原生输入框，避免依赖未注册的 UI 组件。 -->
+      <!-- 与独立 SAT 页面一致，填空使用 Element Plus 输入框。 -->
       <template v-else>
         <div class="fill-blank-input">
-          <input
-            type="text"
-            class="fill-blank-control"
+          <el-input
             v-model="freeAnswer"
             placeholder="Type your answer here"
+            clearable
             :disabled="readOnly"
-            autocomplete="off"
-            @input="onFreeAnswerChange($event.target.value)"
+            @input="onFreeAnswerChange"
           />
         </div>
       </template>
@@ -97,10 +95,13 @@
 
 <script>
 import { ref, computed, watch } from 'vue'
+import { ElInput } from 'element-plus'
+import 'element-plus/theme-chalk/el-input.css'
 import { renderMarkdown } from '../../utils/markdown.js'
 
 export default {
   name: 'AnswerOptions',
+  components: { ElInput },
   props: {
     question: {
       type: Object,
@@ -447,25 +448,6 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.fill-blank-control {
-  width: min(100%, 360px);
-  min-height: 48px;
-  padding: 0 14px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #fff;
-  color: #172033;
-  font: inherit;
-  font-size: calc(16px * var(--exam-font-scale, 1));
-}
-.fill-blank-control:focus {
-  border-color: #3976f6;
-  outline: 3px solid rgb(57 118 246 / 16%);
-}
-.fill-blank-control:disabled {
-  background: #f7f9fc;
-  color: #64748b;
 }
 .fill-label {
   font-size: calc(15px * var(--exam-font-scale, 1));
