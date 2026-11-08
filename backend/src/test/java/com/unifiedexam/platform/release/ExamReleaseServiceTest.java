@@ -268,7 +268,6 @@ class ExamReleaseServiceTest {
         ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
         when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(41L))).thenReturn(false);
         when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq(41L))).thenReturn("PUBLISHED");
-        when(jdbc.queryForObject(any(String.class), eq(Integer.class), eq(41L))).thenReturn(1);
         ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(41L, "SHSAT", 12L,
             "Practice Paper", "Saturday Test", null, "DRAFT", "SELECTED", "2026-10-24T09:00:00Z",
             "2026-10-24T12:00:00Z", 7200, 1, true, true, true,
@@ -281,7 +280,7 @@ class ExamReleaseServiceTest {
         assertEquals("DRAFT", result.summary().status());
         assertTrue(result.summary().hasStudentAttempts());
         verify(jdbc).update(argThat(sql -> sql.contains("DELETE FROM exam_participants ep")
-            && sql.contains("NOT EXISTS") && sql.contains("a.is_practice = FALSE")), eq(41L));
+            && sql.contains("NOT EXISTS") && !sql.contains("a.is_practice")), eq(41L));
         verify(jdbc).update("UPDATE exams SET status = 'DRAFT', published_at = NULL WHERE id = ?", 41L);
     }
 

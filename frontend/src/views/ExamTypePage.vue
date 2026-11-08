@@ -20,7 +20,7 @@ import { getStudentExamState } from '@/utils/studentExamState.js'
 import { examApi as satExamApi } from '@/examTypes/sat/student/api/exam'
 import ClassesPage from '@/views/ClassesPage.vue'
 import {
-  createExam, createPaper, createPaperGroup, createPaperVersion, hideExamRelease, deletePaper, deletePaperGroup,
+  createExam, createPaper, createPaperGroup, hideExamRelease, deletePaper, deletePaperGroup,
   apiRequest, cachedResource, closeExam, getExam, getExamTypes, getPaper, listClasses, listExams, listPaperGroups, listPapers,
   listStudentExams, movePaperToGroup, publishExam, reorderWorkspacePaperGroups, saveExamTargets, unpublishExam,
   savePaperStructure, updateExam, updatePaper, updatePaperGroup,
@@ -94,6 +94,7 @@ const movePaperTarget = ref(null)
 const movePaperGroupKey = ref('')
 const editPaperTarget = ref(null)
 const editPaperTitle = ref('')
+const editPaperDurationMinutes = ref('')
 const paperActionDialog = ref(null)
 const paperActionDialogSaving = ref(false)
 const paperActionDialogError = ref('')
@@ -816,20 +817,31 @@ async function movePaper() {
 function openEditPaperInfoDialog(summary) {
   editPaperTarget.value = summary
   editPaperTitle.value = summary.title
+  editPaperDurationMinutes.value = summary.defaultDurationSeconds == null ? '' : summary.defaultDurationSeconds / 60
   paperActionDialogError.value = ''
 }
 
 async function editPaperInfo() {
   const summary = editPaperTarget.value
   const title = editPaperTitle.value.trim()
-  if (!summary || !title || title === summary.title || paperActionDialogSaving.value) return
+  if (!summary || !title || paperActionDialogSaving.value) return
+  const minutes = editPaperDurationMinutes.value
+  const durationSeconds = minutes === '' ? null : Math.round(Number(minutes) * 60)
+  if (durationSeconds !== null && (!Number.isFinite(durationSeconds) || durationSeconds < 60)) {
+    paperActionDialogError.value = 'Enter a duration of at least 1 minute.'
+    return
+  }
+  if (title === summary.title && durationSeconds === (summary.defaultDurationSeconds ?? null)) {
+    editPaperTarget.value = null
+    return
+  }
   paperActionDialogError.value = ''
   paperActionDialogSaving.value = true
   try {
     const detail = await getPaper(summary.id)
     await updatePaper(summary.id, {
       title, description: detail.description || null, groupId: detail.groupId,
-      defaultDurationSeconds: summary.defaultDurationSeconds,
+      defaultDurationSeconds: durationSeconds,
     })
     await loadWorkspacePapers()
     editPaperTarget.value = null
@@ -1095,11 +1107,9 @@ function getExamActions(exam) {
     })
   }
   if (exam.status === 'DRAFT' || exam.status === 'PUBLISHED') {
-    const cannotUnpublish = exam.status === 'PUBLISHED' && exam.hasStudentAttempts
     actions.push({
       label: examActionId.value === exam.id ? 'Saving…' : exam.status === 'PUBLISHED' ? 'Unpublish' : 'Publish',
-      disabled: examActionId.value === exam.id || cannotUnpublish,
-      title: cannotUnpublish ? 'Students have started this exam. Use End exam to stop new attempts.' : undefined,
+      disabled: examActionId.value === exam.id,
       onSelect: () => toggleExamPublication(exam),
     })
   }
@@ -1279,20 +1289,13 @@ async function editPaper(summary) {
       return
     }
     try {
-      const currentDraft = summary.usedByExam ? papers.value
-        .filter((paper) => paper.examTypeCode === summary.examTypeCode
-          && paper.paperCode === summary.paperCode && paper.status !== 'ARCHIVED' && !paper.usedByExam)
-        .sort((left, right) => right.versionNo - left.versionNo)[0] : null
-      const editablePaper = currentDraft || (!summary.usedByExam
-        ? summary : (await createPaperVersion(summary.id)).summary)
-      if (editablePaper.id !== summary.id) await loadWorkspacePapers()
       await router.push({
         name: `${props.code.toLowerCase()}-paper-edit`,
-        params: { paperId: editablePaper.id },
+        params: { paperId: summary.id },
         query: { returnTo: getWorkspaceReturnPath() },
       })
     } catch (requestError) {
-      error.value = requestError.message || 'Unable to open an editable paper version.'
+      error.value = requestError.message || 'Unable to open the paper for editing.'
     }
     return
   }
@@ -1838,11 +1841,15 @@ watch(() => props.code, (code) => {
             <span class="form-label">Paper name</span>
             <input v-model.trim="editPaperTitle" class="form-input" maxlength="255" autofocus required />
           </label>
+          <label class="form-field">
+            <span class="form-label">Default duration (minutes)</span>
+            <input v-model.number="editPaperDurationMinutes" class="form-input" type="number" min="1" step="any" placeholder="No time limit" />
+          </label>
           <p v-if="paperActionDialogError && !isSatWorkspace" class="error-text" role="alert">{{ paperActionDialogError }}</p>
         </form>
         <template #footer>
           <AppButton type="button" variant="secondary" :disabled="paperActionDialogSaving" @click="editPaperTarget = null">Cancel</AppButton>
-          <AppButton type="submit" form="edit-paper-info-form" :disabled="paperActionDialogSaving || !editPaperTitle.trim() || editPaperTitle.trim() === editPaperTarget.title">
+          <AppButton type="submit" form="edit-paper-info-form" :disabled="paperActionDialogSaving || !editPaperTitle.trim()">
             {{ paperActionDialogSaving ? 'Saving…' : 'Save changes' }}
           </AppButton>
         </template>

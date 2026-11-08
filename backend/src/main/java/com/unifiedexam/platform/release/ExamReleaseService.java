@@ -306,20 +306,14 @@ public class ExamReleaseService {
         if (!"PUBLISHED".equals(status)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Only published exams can be unpublished.");
         }
-        Integer attemptCount = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM attempts WHERE exam_id = ? AND is_practice = FALSE", Integer.class, examId);
-        if (attemptCount != null && attemptCount > 0) {
-            // 撤回只移除尚未开考学生的资格，保留已有尝试的参与记录，保证进行中的学生可继续作答、历史报告仍可访问。
-            jdbcTemplate.update("""
-                DELETE FROM exam_participants ep
-                WHERE ep.exam_id = ? AND NOT EXISTS (
-                    SELECT 1 FROM attempts a
-                    WHERE a.exam_id = ep.exam_id AND a.student_user_id = ep.student_user_id AND a.is_practice = FALSE
-                )
-                """, examId);
-        } else {
-            jdbcTemplate.update("DELETE FROM exam_participants WHERE exam_id = ?", examId);
-        }
+        // 正式和练习答题都会引用参与者，撤回时保留所有已有答题记录的参与者。
+        jdbcTemplate.update("""
+            DELETE FROM exam_participants ep
+            WHERE ep.exam_id = ? AND NOT EXISTS (
+                SELECT 1 FROM attempts a
+                WHERE a.exam_id = ep.exam_id AND a.student_user_id = ep.student_user_id
+            )
+            """, examId);
         jdbcTemplate.update("UPDATE exams SET status = 'DRAFT', published_at = NULL WHERE id = ?", examId);
         return get(examId);
     }

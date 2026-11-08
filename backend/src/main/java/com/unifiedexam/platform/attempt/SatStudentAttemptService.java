@@ -667,8 +667,10 @@ public class SatStudentAttemptService {
         JsonNode sat = display.path("sat");
         JsonNode material = display.path("material");
         String type = "SAT_FILL_IN_BLANK".equals(question.questionTypeCode()) ? "fill_blank" : "multiple_choice";
-        return new SatQuestion(question.paperItemId(), question.stem(), type, question.sectionTitle(),
-            display.path("options"), material.path("content").asText(""), material.path("assetUrl").asText(""),
+        String materialContent = material.path("content").asText("");
+        String materialFileUrl = material.path("assetUrl").asText("");
+        return new SatQuestion(question.paperItemId(), question.stem(), type, materialContent,
+            display.path("options"), materialFileUrl, materialFileUrl,
             new SatQuestionMetadata(sat.path("subject").asText("RW"), sat.path("typeName").asText("Multiple Choice")));
     }
 
