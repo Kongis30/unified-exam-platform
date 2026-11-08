@@ -3,6 +3,14 @@
     <div v-if="!isReviewMode && !isPreviewMode && !isOnline" class="exam-network-alert" role="status" aria-live="polite">
       You are offline. Your progress will sync when your connection is restored.
     </div>
+    <div v-if="isPreviewMode && (previewLoading || previewError)" class="preview-load-state" role="status">
+      <span v-if="previewLoading">Loading paper preview…</span>
+      <template v-else>
+        <span>{{ previewError }}</span>
+        <button type="button" @click="loadPaperPreview">Retry</button>
+      </template>
+    </div>
+    <template v-if="!isPreviewMode || (!previewLoading && !previewError)">
     <!-- 顶部导航栏 -->
     <ExamHeader 
       :exam-title="examTitle"
@@ -179,6 +187,7 @@
       <button class="image-preview-close" type="button" aria-label="Close image preview" @click.stop="closeImagePreview">×</button>
       <img class="image-preview-img" :src="imagePreview.src" alt="Preview" @click.stop />
     </div>
+    </template>
   </div>
 </template>
 
@@ -187,6 +196,7 @@ import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExamFlowStore } from '../stores/examFlow.js'
 import { examApi } from '../api/exam.js'
+import { apiRequest } from '@/api/platform'
 import ExamHeader from '../components/exam/ExamHeader.vue'
 import QuestionContent from '../components/exam/QuestionContent.vue'
 import AnswerOptions from '../components/exam/AnswerOptions.vue'
@@ -211,6 +221,8 @@ export default {
       || router.currentRoute.value.query.preview === '1')
     const previewModules = computed(() => flow.order.map((id) => ({ id, title: flow.modulesMeta[id]?.title || 'SAT Module' })))
     const selectedPreviewModule = computed(() => flow.currentModuleId)
+    const previewLoading = ref(false)
+    const previewError = ref('')
     const currentQuestion = ref(1)
     const totalQuestions = ref(0)
     const timeRemaining = ref(flow.currentDurationMinutes * 60)
@@ -835,15 +847,71 @@ export default {
       })
     }
 
-    // 预览共享正式考试的题目布局，仅切换本地模块状态，不创建答题记录。
-    const selectPreviewModule = async (moduleId) => {
+    // 管理员预览走编辑器结构接口，避免误用仅允许已完成考试复查的学生接口。
+    const loadPaperPreview = async () => {
+      const route = router.currentRoute.value
+      const paperId = Number(route.query.paperId || route.params.paperId)
+      if (!paperId) {
+        previewError.value = 'Paper ID is missing.'
+        return
+      }
+      previewLoading.value = true
+      previewError.value = ''
+      try {
+        const paper = await apiRequest(`/api/admin/sat/papers/${paperId}/editor/structure`)
+        const modules = (paper.stages || []).flatMap((stage) => (stage.modules || [])
+          .flatMap((module) => [module, ...(module.adaptiveOptions || [])]))
+        if (!modules.length) throw new Error('This paper has no modules to preview.')
+
+        flow.reset()
+        flow.paperId = paper.paperId
+        flow.reviewMode = true
+        flow.order = modules.map((module) => module.moduleId)
+        flow.index = 0
+        flow.modulesMeta = Object.fromEntries(modules.map((module) => [module.moduleId, {
+          id: module.moduleId,
+          title: module.moduleName,
+          durationSeconds: Number(module.duration || 0) * 60,
+          subject: module.subjectCode === 2 ? 'MATH' : 'RW',
+          sortOrder: module.sortOrder,
+          moduleType: module.moduleNumber,
+          questionCount: module.questionCount,
+        }]))
+        flow.moduleQuestions = Object.fromEntries(modules.map((module) => [module.moduleId,
+          (module.questions || []).map((question) => ({
+            id: question.questionId,
+            question: question.content || '',
+            type: question.typeName,
+            passage: question.material?.content || '',
+            options: question.options,
+            materialFileUrl: question.material?.fileUrl || '',
+            fileUrl: question.material?.fileUrl || '',
+            material: question.material ? {
+              content: question.material.content || '',
+              fileUrl: question.material.fileUrl || '',
+            } : null,
+          }))]))
+        totalQuestions.value = flow.currentQuestions.length
+        selectedAnswers.value = Array(totalQuestions.value).fill(null)
+        questionStatus.value = Array(totalQuestions.value).fill(null).map((_, index) => ({
+          current: index === 0,
+          answered: false,
+          reviewed: false,
+        }))
+        timeRemaining.value = flow.currentDurationMinutes * 60
+      } catch (error) {
+        previewError.value = error.message || 'Unable to load this paper preview.'
+      } finally {
+        previewLoading.value = false
+      }
+    }
+
+    // 预览只切换本地模块状态，不创建答题记录。
+    const selectPreviewModule = (moduleId) => {
       const index = flow.order.findIndex((id) => String(id) === String(moduleId))
       if (index < 0 || index === flow.index) return
       flow.index = index
       currentQuestion.value = 1
-      selectedAnswers.value = []
-      questionStatus.value = []
-      await flow.loadQuestionsForCurrentModule()
       totalQuestions.value = flow.currentQuestions.length
       selectedAnswers.value = Array(totalQuestions.value).fill(null)
       questionStatus.value = Array(totalQuestions.value).fill(null).map((_, questionIndex) => ({
@@ -966,21 +1034,7 @@ export default {
       }
       const q = router.currentRoute.value.query
       if (isPreviewMode.value) {
-        const paperId = Number(q.paperId || router.currentRoute.value.params.paperId)
-        if (!paperId) {
-          returnToPaperManagement()
-          return
-        }
-        await flow.initReviewMode(paperId)
-        await flow.loadQuestionsForCurrentModule()
-        totalQuestions.value = flow.currentQuestions.length
-        selectedAnswers.value = Array(totalQuestions.value).fill(null)
-        questionStatus.value = Array(totalQuestions.value).fill(null).map((_, index) => ({
-          current: index === 0,
-          answered: false,
-          reviewed: false
-        }))
-        timeRemaining.value = flow.currentDurationMinutes * 60
+        await loadPaperPreview()
         return
       }
       const mode = q.mode || 'exam'
@@ -1098,6 +1152,9 @@ export default {
       isPreviewMode,
       previewModules,
       selectedPreviewModule,
+      previewLoading,
+      previewError,
+      loadPaperPreview,
       currentQuestion,
       isOnline,
       isReviewMode,
@@ -1177,6 +1234,28 @@ export default {
   font-size: 14px;
   font-weight: 600;
   text-align: center;
+}
+
+.preview-load-state {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: #334155;
+  background: #fff;
+  font-size: 16px;
+}
+
+.preview-load-state button {
+  border: 1px solid #cbd8eb;
+  border-radius: 6px;
+  padding: 8px 14px;
+  color: #2453a4;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
 }
 
 .exam-content {
