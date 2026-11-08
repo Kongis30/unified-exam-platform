@@ -51,6 +51,10 @@ const studentPracticeLoading = ref(false)
 const studentReviewLoading = ref(false)
 const studentPracticeError = ref('')
 const activeHistoryTab = ref(localStorage.getItem(`student-history-tab.${props.code}`) || 'history')
+const wrongAnswerBookGrid = ref(null)
+const wrongAnswerBookColumns = ref(3)
+const wrongAnswerBookPage = ref(1)
+let wrongAnswerBookResizeObserver = null
 const startingWrongAnswerAttemptId = ref(null)
 const startingReviewTaskId = ref(null)
 const classes = ref([])
@@ -401,6 +405,12 @@ async function loadStudentExams(force = false) {
 
 const shsatFormalHistory = computed(() => studentAttemptHistory.value.filter((item) => !item.practice))
 const shsatWrongAnswerBooks = computed(() => shsatFormalHistory.value.filter((item) => Number(item.reviewCount) > 0))
+const wrongAnswerBookPageSize = computed(() => wrongAnswerBookColumns.value * 2)
+const wrongAnswerBookPageCount = computed(() => Math.max(1, Math.ceil(shsatWrongAnswerBooks.value.length / wrongAnswerBookPageSize.value)))
+const visibleWrongAnswerBooks = computed(() => {
+  const start = (wrongAnswerBookPage.value - 1) * wrongAnswerBookPageSize.value
+  return shsatWrongAnswerBooks.value.slice(start, start + wrongAnswerBookPageSize.value)
+})
 const activeReviewTasks = computed(() => studentReviewTasks.value.filter((task) => task.status !== 'COMPLETED'))
 const completedReviewTasks = computed(() => studentReviewTasks.value
   .filter((task) => task.status === 'COMPLETED' && task.practiceAttemptId))
@@ -422,6 +432,39 @@ function selectStudentHistoryTab(tab) {
   activeHistoryTab.value = tab
   localStorage.setItem(`student-history-tab.${props.code}`, tab)
 }
+
+// 按网格实际列数分页，确保宽屏或窄屏下每页都只展示两排错题卡片。
+function updateWrongAnswerBookPagination() {
+  const grid = wrongAnswerBookGrid.value
+  if (!grid) return
+
+  const columns = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length || 1
+  if (columns !== wrongAnswerBookColumns.value) {
+    wrongAnswerBookColumns.value = columns
+    wrongAnswerBookPage.value = 1
+  }
+}
+
+async function observeWrongAnswerBookGrid() {
+  await nextTick()
+  wrongAnswerBookResizeObserver?.disconnect()
+  wrongAnswerBookResizeObserver = null
+  updateWrongAnswerBookPagination()
+
+  if (wrongAnswerBookGrid.value && typeof ResizeObserver !== 'undefined') {
+    wrongAnswerBookResizeObserver = new ResizeObserver(updateWrongAnswerBookPagination)
+    wrongAnswerBookResizeObserver.observe(wrongAnswerBookGrid.value)
+  }
+}
+
+function changeWrongAnswerBookPage(page) {
+  wrongAnswerBookPage.value = Math.min(Math.max(page, 1), wrongAnswerBookPageCount.value)
+}
+
+watch([activeHistoryTab, shsatWrongAnswerBooks], observeWrongAnswerBookGrid, { flush: 'post' })
+watch(wrongAnswerBookPageCount, (pageCount) => {
+  if (wrongAnswerBookPage.value > pageCount) wrongAnswerBookPage.value = pageCount
+})
 
 function reviewTaskActionLabel(task) {
   if (startingReviewTaskId.value === task.assignmentId) return 'Starting…'
@@ -1012,6 +1055,7 @@ async function confirmDeleteExam() {
 }
 
 onBeforeUnmount(() => {
+  wrongAnswerBookResizeObserver?.disconnect()
   clearExamDeleteCooldown()
   dismissNotification()
   document.removeEventListener('visibilitychange', refreshOnVisibility)
@@ -2216,27 +2260,34 @@ watch(() => props.code, (code) => {
                 </article>
                 <p v-if="!completedReviewTasks.length" class="table-empty">No completed review assignments yet.</p>
               </div>
-              <div v-else-if="props.code === 'SHSAT'" class="student-home-wrong-answer-grid">
-                <article v-for="item in shsatWrongAnswerBooks" :key="item.attemptId" class="student-home-wrong-book">
-                  <div class="student-home-wrong-book__cover">
-                    <span class="student-home-eyebrow">Wrong Answer Book</span>
-                    <h3>{{ item.examTitle }}</h3>
-                    <div class="student-home-wrong-book__count"><strong>{{ item.answersVisible ? item.remainingReviewCount : '—' }}</strong><span>{{ item.answersVisible ? 'questions remaining' : 'review locked' }}</span></div>
-                    <small>Exam {{ item.examId }} · Attempt {{ item.attemptNumber }}</small>
-                  </div>
-                  <div class="student-home-wrong-book__body">
-                    <div class="student-home-wrong-book__meta">
-                      <span>{{ formatExamDate(item.submittedAt || item.startedAt) }}</span>
-                      <span class="student-home-wrong-book__status">{{ !item.answersVisible ? 'Review disabled' : item.remainingReviewCount ? 'Ready to review' : 'Cleared' }}</span>
+              <template v-else-if="props.code === 'SHSAT'">
+                <div v-if="shsatWrongAnswerBooks.length" ref="wrongAnswerBookGrid" class="student-home-wrong-answer-grid">
+                  <article v-for="item in visibleWrongAnswerBooks" :key="item.attemptId" class="student-home-wrong-book">
+                    <div class="student-home-wrong-book__cover">
+                      <span class="student-home-eyebrow">Wrong Answer Book</span>
+                      <h3>{{ item.examTitle }}</h3>
+                      <div class="student-home-wrong-book__count"><strong>{{ item.answersVisible ? item.remainingReviewCount : '—' }}</strong><span>{{ item.answersVisible ? 'questions remaining' : 'review locked' }}</span></div>
+                      <small>Exam {{ item.examId }} · Attempt {{ item.attemptNumber }}</small>
                     </div>
-                    <p>{{ item.answersVisible ? 'Review the questions you missed in this exam.' : 'Review is disabled for this exam.' }}</p>
-                    <AppButton variant="secondary" :disabled="!item.answersVisible || !item.remainingReviewCount" @click="viewShsatWrongAnswers(item)">View wrong answers</AppButton>
-                    <AppButton :disabled="!item.answersVisible || !item.remainingReviewCount || startingWrongAnswerAttemptId !== null" @click="practiceShsatWrongAnswers(item)">{{ startingWrongAnswerAttemptId === item.attemptId ? 'Starting…' : 'Practice' }}</AppButton>
-                    <AppButton variant="ghost" :disabled="!latestWrongAnswerPractice.get(String(item.attemptId))" @click="viewLatestShsatPractice(item)">Latest practice report</AppButton>
-                  </div>
-                </article>
+                    <div class="student-home-wrong-book__body">
+                      <div class="student-home-wrong-book__meta">
+                        <span>{{ formatExamDate(item.submittedAt || item.startedAt) }}</span>
+                        <span class="student-home-wrong-book__status">{{ !item.answersVisible ? 'Review disabled' : item.remainingReviewCount ? 'Ready to review' : 'Cleared' }}</span>
+                      </div>
+                      <p>{{ item.answersVisible ? 'Review the questions you missed in this exam.' : 'Review is disabled for this exam.' }}</p>
+                      <AppButton variant="secondary" :disabled="!item.answersVisible || !item.remainingReviewCount" @click="viewShsatWrongAnswers(item)">View wrong answers</AppButton>
+                      <AppButton :disabled="!item.answersVisible || !item.remainingReviewCount || startingWrongAnswerAttemptId !== null" @click="practiceShsatWrongAnswers(item)">{{ startingWrongAnswerAttemptId === item.attemptId ? 'Starting…' : 'Practice' }}</AppButton>
+                      <AppButton variant="ghost" :disabled="!latestWrongAnswerPractice.get(String(item.attemptId))" @click="viewLatestShsatPractice(item)">Latest practice report</AppButton>
+                    </div>
+                  </article>
+                </div>
+                <div v-if="wrongAnswerBookPageCount > 1" class="wrong-answer-book-pagination" aria-label="Wrong answer book pages">
+                  <button type="button" :disabled="wrongAnswerBookPage <= 1" @click="changeWrongAnswerBookPage(wrongAnswerBookPage - 1)">Previous</button>
+                  <span>Page {{ wrongAnswerBookPage }} of {{ wrongAnswerBookPageCount }}</span>
+                  <button type="button" :disabled="wrongAnswerBookPage >= wrongAnswerBookPageCount" @click="changeWrongAnswerBookPage(wrongAnswerBookPage + 1)">Next</button>
+                </div>
                 <p v-if="!shsatWrongAnswerBooks.length" class="table-empty">No wrong answers are available for review.</p>
-              </div>
+              </template>
               <p v-else class="table-empty">No completed review assignments yet.</p>
             </div>
           </AppCard>
@@ -2285,7 +2336,11 @@ watch(() => props.code, (code) => {
 .student-home-review-meta dd strong { font-size: 16px; }
 .student-home-review-meta dd small { color: #687d9e; font-size: 10px; font-weight: 500; }
 .student-home-history-note + .history-tabs { margin-top: 12px; }
-.student-home-wrong-answer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); gap: 16px; padding: 8px 0 2px; }
+.student-home-wrong-answer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); align-content: start; gap: 16px; min-height: 420px; max-height: min(1000px, calc(100vh - 240px)); overflow-y: auto; padding: 8px 0 2px; }
+.wrong-answer-book-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-top: 14px; color: #667b9e; font-size: 13px; }
+.wrong-answer-book-pagination button { min-height: 34px; border: 1px solid #d4e2ff; border-radius: 999px; padding: 0 14px; background: #f5f8ff; color: #245dd8; cursor: pointer; font: inherit; font-weight: 650; }
+.wrong-answer-book-pagination button:hover:not(:disabled) { background: #eaf1ff; }
+.wrong-answer-book-pagination button:disabled { cursor: default; opacity: .45; }
 .student-home-wrong-book { overflow: hidden; border: 1px solid #f0ddc7; border-radius: 12px; background: #fff; box-shadow: 0 10px 24px rgb(99 62 24 / 7%); }
 .student-home-wrong-book__cover { display: grid; gap: 10px; min-height: 220px; border-left: 6px solid #f27a19; padding: 18px; background: #fff7ec; }
 .student-home-wrong-book__cover h3 { margin: 8px 0 0; color: #233452; font-family: Georgia, serif; font-size: 20px; line-height: 1.25; overflow-wrap: anywhere; }
@@ -2302,6 +2357,7 @@ watch(() => props.code, (code) => {
   .student-home-refresh { top: 16px; right: 16px; }
   .student-home-section :deep(.app-card__header) { padding-right: 40px; }
   .student-home-grid, .student-home-wrong-answer-grid { grid-template-columns: minmax(0, 1fr); }
+  .student-home-wrong-answer-grid { min-height: 420px; max-height: min(1000px, calc(100vh - 220px)); }
   .student-home-exam-card, .student-home-review-card { min-height: 0; }
 }
 .exam-delete-warning {
