@@ -150,7 +150,17 @@ const availableExamSubtitle = computed(() => {
   return `Published ${programs} exams for your classes.`
 })
 const selectedType = computed(() => workspaceTypes.value.find((item) => item.code === props.code) || workspaceTypes.value[0])
-const availablePapers = computed(() => papers.value.filter((paper) => paper.status !== 'ARCHIVED'))
+const latestPaperVersions = computed(() => {
+  if (!isSatWorkspace.value) return papers.value
+  const latestByCode = new Map()
+  for (const paper of papers.value) {
+    const key = `${paper.examTypeCode}:${paper.paperCode}`
+    const current = latestByCode.get(key)
+    if (!current || paper.versionNo > current.versionNo) latestByCode.set(key, paper)
+  }
+  return [...latestByCode.values()]
+})
+const availablePapers = computed(() => latestPaperVersions.value.filter((paper) => paper.status !== 'ARCHIVED'))
 const filteredExams = computed(() => {
   const keyword = examKeyword.value.trim().toLocaleLowerCase()
   if (!keyword) return exams.value
@@ -181,7 +191,7 @@ const paperGroups = computed(() => {
 })
 const filteredPapers = computed(() => {
   const keyword = appliedPaperKeyword.value.toLocaleLowerCase()
-  return papers.value.filter((paper) => {
+  return latestPaperVersions.value.filter((paper) => {
     const matchesGroup = !paperFilters.groupId
       || (paperFilters.groupId === 'default' ? paper.groupId == null : paperGroups.value.some((group) =>
         group.key === paperFilters.groupId && String(group.idsByType[paper.examTypeCode]) === String(paper.groupId)))
@@ -195,10 +205,10 @@ const paperFolderSections = computed(() => {
     String(left.title || '').localeCompare(String(right.title || ''), undefined, { sensitivity: 'base', numeric: true }))
   const sections = [
     { key: 'default', name: 'Default Folder', group: null,
-      totalItems: papers.value.filter((paper) => paper.groupId == null).length,
+      totalItems: latestPaperVersions.value.filter((paper) => paper.groupId == null).length,
       items: sortPapersByTitle(filteredPapers.value.filter((paper) => paper.groupId == null)) },
     ...paperGroups.value.map((group) => ({ key: group.key, name: group.name, group,
-      totalItems: papers.value.filter((paper) => String(group.idsByType[paper.examTypeCode]) === String(paper.groupId)).length,
+      totalItems: latestPaperVersions.value.filter((paper) => String(group.idsByType[paper.examTypeCode]) === String(paper.groupId)).length,
       items: sortPapersByTitle(filteredPapers.value.filter((paper) => String(group.idsByType[paper.examTypeCode]) === String(paper.groupId))) })),
   ]
   return sections.filter((section) => !paperFilters.groupId || section.key === paperFilters.groupId)
@@ -1665,7 +1675,7 @@ watch(() => props.code, (code) => {
         <p v-if="activeTab === 'classes' && staffClassesLoading && !staffClassesLoaded" class="admin-state">Loading classes...</p>
         <ReviewAssignmentsPanel v-if="activeTab === 'reviews'" :exam-type-code="props.code" />
 
-      <AppCard v-if="activeTab === 'papers'" class="paper-list-card" title="Paper List" :subtitle="`View paper summaries and manage ${props.code} paper versions.`">
+      <AppCard v-if="activeTab === 'papers'" class="paper-list-card" title="Paper List" :subtitle="`Manage the latest ${props.code} paper versions.`">
         <div class="paper-list-toolbar">
           <form class="paper-list-toolbar__search" @submit.prevent="searchPapers">
             <select v-model="paperFilters.groupId" class="form-input form-input--compact" aria-label="Folder">
@@ -1899,7 +1909,7 @@ watch(() => props.code, (code) => {
         <div class="card-top-actions">
           <AppButton variant="secondary" @click="openDraftList">Drafts <span class="draft-count">{{ draftExams.length }}</span></AppButton>
           <AppButton class="card-top-actions__primary" :disabled="!availablePapers.length" @click="openRelease">Create Exam</AppButton>
-          <button class="admin-refresh-button" type="button" aria-label="Refresh releases" title="Refresh releases" @click="loadWorkspaceExams(true)">
+          <button class="admin-refresh-button" :class="{ 'admin-refresh-button--loading': staffExamsLoading }" type="button" :disabled="staffExamsLoading" aria-label="Refresh releases" title="Refresh releases" @click="loadWorkspaceExams(true)">
             <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" /></svg>
           </button>
           <button class="collapse-arrow-button" type="button" :aria-label="examReleasesCollapsed ? 'Expand exam releases' : 'Collapse exam releases'" :title="examReleasesCollapsed ? 'Expand' : 'Collapse'" @click="toggleExamReleases">
@@ -1920,6 +1930,7 @@ watch(() => props.code, (code) => {
           aria-label="Exam releases"
           tabindex="0"
         >
+          <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
           <AdminDataTable class="sat-exam-release-table">
             <colgroup>
               <col class="sat-exam-release-table__exam-column" />
@@ -1949,12 +1960,14 @@ watch(() => props.code, (code) => {
           </AdminDataTable>
         </div>
         <p v-else class="admin-state">{{ !exams.length ? 'No exam releases yet. Create an exam to get started.' : !filteredExams.length ? 'No releases match your search.' : 'No upcoming or active releases. Ended exams are listed below.' }}</p>
-        <div v-if="!examReleasesCollapsed && currentExams.length" class="exam-list-pagination">
-          <span>Showing {{ (currentExamPage - 1) * examPageSize + 1 }}–{{ Math.min(currentExamPage * examPageSize, currentExams.length) }} of {{ currentExams.length }}</span>
-          <label>Rows <select v-model.number="examPageSize"><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option></select></label>
-          <button type="button" :disabled="currentExamPage <= 1" @click="currentExamPage--">Prev</button>
-          <span>Page {{ currentExamPage }} / {{ currentExamPageCount }}</span>
-          <button type="button" :disabled="currentExamPage >= currentExamPageCount" @click="currentExamPage++">Next</button>
+        <div v-if="!examReleasesCollapsed && currentExams.length" class="table-pagination sat-exam-pagination">
+          <span>Showing {{ (currentExamPage - 1) * examPageSize + 1 }}-{{ Math.min(currentExamPage * examPageSize, currentExams.length) }} of {{ currentExams.length }}</span>
+          <div class="table-pagination__actions">
+            <label class="table-pagination__page-size"><span>Rows</span><select v-model.number="examPageSize" class="form-input form-input--compact" aria-label="Rows per page"><option :value="5">5</option><option :value="10">10</option><option :value="20">20</option></select></label>
+            <button type="button" :disabled="currentExamPage <= 1" @click="currentExamPage--">Prev</button>
+            <span>Page {{ currentExamPage }} / {{ currentExamPageCount }}</span>
+            <button type="button" :disabled="currentExamPage >= currentExamPageCount" @click="currentExamPage++">Next</button>
+          </div>
         </div>
         </template>
       </AppCard>
@@ -1992,12 +2005,14 @@ watch(() => props.code, (code) => {
             </tbody>
           </AdminDataTable>
         </div>
-        <div v-if="!historicalExamsCollapsed && historicalExams.length" class="exam-list-pagination">
-          <span>Showing {{ (historicalExamPage - 1) * examPageSize + 1 }}–{{ Math.min(historicalExamPage * examPageSize, historicalExams.length) }} of {{ historicalExams.length }}</span>
-          <label>Rows <select v-model.number="examPageSize"><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option></select></label>
-          <button type="button" :disabled="historicalExamPage <= 1" @click="historicalExamPage--">Prev</button>
-          <span>Page {{ historicalExamPage }} / {{ historicalExamPageCount }}</span>
-          <button type="button" :disabled="historicalExamPage >= historicalExamPageCount" @click="historicalExamPage++">Next</button>
+        <div v-if="!historicalExamsCollapsed && historicalExams.length" class="table-pagination sat-exam-pagination">
+          <span>Showing {{ (historicalExamPage - 1) * examPageSize + 1 }}-{{ Math.min(historicalExamPage * examPageSize, historicalExams.length) }} of {{ historicalExams.length }}</span>
+          <div class="table-pagination__actions">
+            <label class="table-pagination__page-size"><span>Rows</span><select v-model.number="examPageSize" class="form-input form-input--compact" aria-label="Rows per page"><option :value="5">5</option><option :value="10">10</option><option :value="20">20</option></select></label>
+            <button type="button" :disabled="historicalExamPage <= 1" @click="historicalExamPage--">Prev</button>
+            <span>Page {{ historicalExamPage }} / {{ historicalExamPageCount }}</span>
+            <button type="button" :disabled="historicalExamPage >= historicalExamPageCount" @click="historicalExamPage++">Next</button>
+          </div>
         </div>
         <p v-else-if="!historicalExamsCollapsed && staffExamsLoading && !exams.length" class="admin-state">Loading historical exams…</p>
         <p v-else-if="!historicalExamsCollapsed" class="admin-state">{{ exams.length && !historicalExams.length ? 'No historical exams match your search.' : 'No historical exams yet.' }}</p>
