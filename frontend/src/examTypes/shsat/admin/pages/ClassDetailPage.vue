@@ -75,6 +75,7 @@ const examFilters = reactive({
 const classForm = reactive({
   className: '',
   classDescription: '',
+  classType: 'STANDARD',
   teacherName: '',
   teacherEmail: '',
   gradeLevel: '',
@@ -220,14 +221,14 @@ async function loadPage({ forceTrend = false } = {}) {
   studentsLoading.value = true;
   examsError.value = '';
   studentsError.value = '';
-  // 首屏班级资料加载时预取图表，失败由图表自身提示并支持重试。
-  listClassExamScoreTrend(requestedClassId, ['SHSAT'], { force: forceTrend }).catch(() => {});
-
-  await Promise.all([
+  const [loadedClass] = await Promise.all([
     adminApi.getClass(requestedClassId, { force: forceTrend }).then((response) => {
-      if (request === classRequest) classInfo.value = unwrapResponse(response, 'Failed to load class details');
+      const row = unwrapResponse(response, 'Failed to load class details');
+      if (request === classRequest) classInfo.value = row;
+      return row;
     }).catch((error) => {
       if (request === classRequest) errorMessage.value = error.message || 'Failed to load class details.';
+      return null;
     }).finally(() => { if (request === classRequest) loading.value = false; }),
     adminApi.getClassExams(requestedClassId, { force: forceTrend }).then((response) => {
       if (request === classRequest) exams.value = unwrapListResponse(response, 'Failed to load exams');
@@ -240,6 +241,10 @@ async function loadPage({ forceTrend = false } = {}) {
       if (request === classRequest) studentsError.value = error.message || 'Failed to load students.';
     }).finally(() => { if (request === classRequest) studentsLoading.value = false; }),
   ]);
+  if (request === classRequest && loadedClass?.classType !== 'INDIVIDUAL') {
+    // 普通班级才展示班级趋势；零散学生集合不请求该聚合指标。
+    listClassExamScoreTrend(requestedClassId, ['SHSAT'], { force: forceTrend }).catch(() => {});
+  }
 }
 
 function goBack() {
@@ -288,7 +293,7 @@ async function restoreClassDetailScroll() {
     const saved = JSON.parse(window.sessionStorage.getItem(classExamStateKey()) || 'null');
     if (!Number.isFinite(saved?.scrollY) || saved.scrollY <= 0) return;
 
-    if (!errorMessage.value && !classScoreTrendReady) await classScoreTrendReadyPromise;
+    if (!errorMessage.value && classInfo.value?.classType !== 'INDIVIDUAL' && !classScoreTrendReady) await classScoreTrendReadyPromise;
     await nextTick();
     window.scrollTo(0, saved.scrollY);
   } catch {
@@ -378,6 +383,7 @@ function openEditClassModal() {
   Object.assign(classForm, {
     className: item.className || '',
     classDescription: item.classDescription || '',
+    classType: item.classType || 'STANDARD',
     teacherName: item.teacherName || '',
     teacherEmail: item.teacherEmail || '',
     gradeLevel: item.gradeLevel || '',
@@ -973,6 +979,10 @@ onBeforeUnmount(() => {
 
         <dl class="class-detail-summary">
           <div>
+            <dt>Type</dt>
+            <dd>{{ classInfo?.classType === 'INDIVIDUAL' ? 'Individual students' : 'Standard class' }}</dd>
+          </div>
+          <div>
             <dt>Students</dt>
             <dd>{{ summary.students }}</dd>
           </div>
@@ -980,7 +990,7 @@ onBeforeUnmount(() => {
             <dt>Exams</dt>
             <dd>{{ summary.exams }}</dd>
           </div>
-          <div>
+          <div v-if="classInfo?.classType !== 'INDIVIDUAL'">
             <dt>Average</dt>
             <dd>{{ summary.average }}</dd>
           </div>
@@ -1011,7 +1021,7 @@ onBeforeUnmount(() => {
       </AppCard>
 
       <template v-else>
-        <ClassExamScoreTrend :key="trendVersion" :class-id="classId" :exam-type-codes="['SHSAT']" @loaded="markClassScoreTrendReady" />
+        <ClassExamScoreTrend v-if="classInfo?.classType !== 'INDIVIDUAL'" :key="trendVersion" :class-id="classId" :exam-type-codes="['SHSAT']" @loaded="markClassScoreTrendReady" />
 
         <AppCard class="class-exams-card" title="Class Exams" subtitle="Review the exams that students in this class have actually taken.">
           <div class="admin-toolbar class-exams-toolbar">
@@ -1258,6 +1268,13 @@ onBeforeUnmount(() => {
               <label class="form-field">
                 <span class="form-label">Class Name</span>
                 <input v-model="classForm.className" class="form-input" placeholder="e.g. Grade 8 Class A" />
+              </label>
+              <label class="form-field">
+                <span class="form-label">Class Type</span>
+                <select v-model="classForm.classType" class="form-input">
+                  <option value="STANDARD">Standard class</option>
+                  <option value="INDIVIDUAL">Individual students</option>
+                </select>
               </label>
               <label class="form-field">
                 <span class="form-label">Teacher</span>

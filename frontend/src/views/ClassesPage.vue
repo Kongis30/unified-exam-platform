@@ -33,7 +33,7 @@ const notice = ref('')
 const draggingClassId = ref('')
 const classDragMoved = ref(false)
 let suppressClassClickUntil = 0
-const classForm = ref({ name: '', description: '', sortOrder: 0 })
+const classForm = ref({ name: '', description: '', sortOrder: 0, classType: 'STANDARD' })
 const classExamTypeCodes = computed(() => [props.examTypeCode || 'SHSAT'])
 const canReorderClasses = computed(() => satWorkspace.value
   && filteredClasses.value.length > 1
@@ -44,7 +44,9 @@ const filteredClasses = computed(() => {
     const statusMatches = classStatus.value === 'ALL' || item.status === classStatus.value
     const queryMatches = !query || [item.name, item.description, item.status]
       .some((value) => String(value || '').toLocaleLowerCase().includes(query))
-    return statusMatches && queryMatches
+    const typeLabel = item.classType === 'INDIVIDUAL' ? 'individual students' : 'standard class'
+    const classTypeMatches = !query || typeLabel.includes(query)
+    return statusMatches && (queryMatches || classTypeMatches)
   })
 })
 
@@ -183,7 +185,7 @@ async function saveClass() {
   isSavingClass.value = true
   try {
     await createClass({ ...classForm.value, name }, classExamTypeCodes.value)
-    classForm.value = { name: '', description: '', sortOrder: 0 }
+    classForm.value = { name: '', description: '', sortOrder: 0, classType: 'STANDARD' }
     showCreateDialog.value = false
     if (satWorkspace.value) notifyOperation('Class created.')
     else notice.value = 'Class created.'
@@ -203,7 +205,7 @@ async function saveClass() {
 
 function openCreateDialog() {
   error.value = ''
-  classForm.value = { name: '', description: '', sortOrder: 0 }
+  classForm.value = { name: '', description: '', sortOrder: 0, classType: 'STANDARD' }
   classCreateError.value = ''
   notice.value = ''
   showCreateDialog.value = true
@@ -269,7 +271,7 @@ watch(() => props.initialClasses, (rows) => {
         @dragend="finishClassDrag"
       >
         <div class="class-card__header">
-          <div><span class="class-card__eyebrow">Class #{{ classroom.id }}</span><h3>{{ classroom.name }}</h3></div>
+          <div><span class="class-card__eyebrow">Class #{{ classroom.id }}</span><h3>{{ classroom.name }}</h3><span class="class-type-badge">{{ classroom.classType === 'INDIVIDUAL' ? 'Individual students' : 'Standard class' }}</span></div>
           <span class="status-pill" :class="classroom.status === 'ACTIVE' ? 'status-pill--on' : ''">{{ classroom.status === 'ACTIVE' ? 'Active' : 'Archived' }}</span>
         </div>
         <p>{{ classroom.description || 'No description' }}</p>
@@ -294,6 +296,13 @@ watch(() => props.initialClasses, (rows) => {
         <input v-model.trim="classForm.name" class="form-input" maxlength="100" required autofocus placeholder="e.g. Spring Prep" />
       </label>
       <label class="form-field">
+        <span class="form-label">Class type</span>
+        <select v-model="classForm.classType" class="form-input">
+          <option value="STANDARD">Standard class</option>
+          <option value="INDIVIDUAL">Individual students</option>
+        </select>
+      </label>
+      <label class="form-field">
         <span class="form-label">Description</span>
         <textarea v-model.trim="classForm.description" class="form-input" rows="3" maxlength="500" placeholder="Optional" />
       </label>
@@ -315,4 +324,5 @@ watch(() => props.initialClasses, (rows) => {
 .class-create-dialog-form .form-field { display: grid; gap: 7px; }
 .class-create-dialog-form .form-input { box-sizing: border-box; width: 100%; min-height: 42px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 9px 12px; background: #fbfdff; color: var(--color-text); font: inherit; font-size: 15px; }
 .class-create-dialog-form textarea.form-input { min-height: 88px; resize: vertical; }
+.class-type-badge { display: inline-flex; margin-top: 5px; border-radius: 999px; padding: 3px 8px; color: var(--color-primary-strong); background: var(--color-primary-soft); font-size: 11px; font-weight: 700; }
 </style>

@@ -52,6 +52,7 @@ function classSavePayload(payload) {
     name: payload.name || payload.className,
     description: payload.description ?? payload.classDescription ?? null,
     sortOrder: payload.displayOrder || 0,
+    classType: payload.classType || 'STANDARD',
     teacherName: payload.teacherName || null,
     teacherEmail: payload.teacherEmail || null,
     gradeLevel: payload.gradeLevel || null,

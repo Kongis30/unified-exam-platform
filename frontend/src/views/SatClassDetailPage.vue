@@ -36,7 +36,7 @@ const studentOptionsLoading = ref(false)
 const studentOptionsError = ref('')
 const removeStudentTarget = ref(null)
 const deleteClassOpen = ref(false)
-const classForm = reactive({ name: '', description: '' })
+const classForm = reactive({ name: '', description: '', classType: 'STANDARD' })
 const addStudentSearch = ref('')
 const selectedStudentIds = ref([])
 let classRequest = 0
@@ -74,13 +74,13 @@ async function loadPage() {
   studentsLoading.value = true
   examsError.value = ''
   studentsError.value = ''
-  // 图表与班级资料并发请求，图表组件复用同一个会话内请求。
-  listClassExamScoreTrend(requestedClassId, [requestedWorkspace]).catch(() => {})
-  await Promise.all([
+  const [loadedClass] = await Promise.all([
     getClass(requestedClassId, [requestedWorkspace]).then((row) => {
       if (request === classRequest) classroom.value = row
+      return row
     }).catch((requestError) => {
       if (request === classRequest) error.value = requestError.message || 'Unable to load class details.'
+      return null
     }).finally(() => { if (request === classRequest) isLoading.value = false }),
     listClassStudents(requestedClassId, [requestedWorkspace]).then((rows) => {
       if (request === classRequest) students.value = rows
@@ -93,6 +93,9 @@ async function loadPage() {
       if (request === classRequest) examsError.value = requestError.message || 'Unable to load exams.'
     }).finally(() => { if (request === classRequest) examsLoading.value = false }),
   ])
+  if (request === classRequest && loadedClass?.classType !== 'INDIVIDUAL') {
+    listClassExamScoreTrend(requestedClassId, [requestedWorkspace]).catch(() => {})
+  }
 }
 
 function goBack() {
@@ -123,7 +126,11 @@ function openExamMonitor(exam) {
 }
 
 function openEditDialog() {
-  Object.assign(classForm, { name: classroom.value.name, description: classroom.value.description || '' })
+  Object.assign(classForm, {
+    name: classroom.value.name,
+    description: classroom.value.description || '',
+    classType: classroom.value.classType || 'STANDARD',
+  })
   editOpen.value = true
 }
 
@@ -134,6 +141,7 @@ async function saveClass() {
     await updateClass(classId.value, {
       name: classForm.name.trim(),
       description: classForm.description.trim(),
+      classType: classForm.classType,
       sortOrder: classroom.value.sortOrder,
     }, [workspaceCode.value])
     editOpen.value = false
@@ -289,12 +297,13 @@ watch([classId, workspaceCode], () => {
       <AppCard class="sat-class-info-card" :title="classroom.name" :subtitle="classroom.description || 'Class details and enrollment.'">
         <dl class="sat-class-summary">
           <div><dt>Status</dt><dd><span class="status-pill" :class="classroom.status === 'ACTIVE' ? 'status-pill--on' : ''">{{ classroom.status === 'ACTIVE' ? 'Active' : 'Archived' }}</span></dd></div>
+          <div><dt>Type</dt><dd>{{ classroom.classType === 'INDIVIDUAL' ? 'Individual students' : 'Standard class' }}</dd></div>
           <div><dt>Students</dt><dd>{{ students.length }}</dd></div>
           <div><dt>Exam releases</dt><dd>{{ exams.length }}</dd></div>
         </dl>
       </AppCard>
 
-      <ClassExamScoreTrend :key="trendVersion" :class-id="classId" :exam-type-codes="[workspaceCode]" />
+      <ClassExamScoreTrend v-if="classroom.classType !== 'INDIVIDUAL'" :key="trendVersion" :class-id="classId" :exam-type-codes="[workspaceCode]" />
 
       <AppCard class="sat-class-detail-section" title="Exam Releases" subtitle="Review releases targeted to this class, including drafts and published exams.">
         <div v-if="examsLoading" class="admin-state">Loading exam records...</div>
@@ -363,6 +372,7 @@ watch([classId, workspaceCode], () => {
     <AppModal v-if="editOpen" title="Edit class" description="Update this class's name and description." :busy="isSaving" @close="editOpen = false">
       <form id="sat-edit-class-form" class="sat-class-form" @submit.prevent="saveClass">
         <label class="form-field"><span class="form-label">Class name</span><input v-model.trim="classForm.name" class="form-input" maxlength="100" required /></label>
+        <label class="form-field"><span class="form-label">Class type</span><select v-model="classForm.classType" class="form-input"><option value="STANDARD">Standard class</option><option value="INDIVIDUAL">Individual students</option></select></label>
         <label class="form-field"><span class="form-label">Description</span><textarea v-model.trim="classForm.description" class="form-input" rows="3" maxlength="500" /></label>
       </form>
       <template #footer><AppButton variant="secondary" :disabled="isSaving" @click="editOpen = false">Cancel</AppButton><AppButton type="submit" form="sat-edit-class-form" :disabled="isSaving">Save changes</AppButton></template>

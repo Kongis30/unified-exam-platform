@@ -273,6 +273,7 @@ const sharedExamPaperGroups = computed(() => examPaperGroups.value.map((group) =
 const classForm = reactive({
   className: '',
   classDescription: '',
+  classType: 'STANDARD',
   teacherName: '',
   teacherEmail: '',
   gradeLevel: '',
@@ -2877,6 +2878,7 @@ function openClassModal() {
   clearObject(classForm, {
     className: '',
     classDescription: '',
+    classType: 'STANDARD',
     teacherName: '',
     teacherEmail: '',
     gradeLevel: '',
@@ -2899,6 +2901,7 @@ function openEditClassModal() {
   clearObject(classForm, {
     className: target.className || '',
     classDescription: target.classDescription || '',
+    classType: target.classType || 'STANDARD',
     teacherName: target.teacherName || '',
     teacherEmail: target.teacherEmail || '',
     gradeLevel: target.gradeLevel || '',
@@ -4728,6 +4731,7 @@ onBeforeUnmount(() => {
                     <div>
                       <span class="admin-eyebrow">Class #{{ item.classId }}</span>
                       <h3>{{ item.className }}</h3>
+                      <span class="class-type-badge">{{ item.classType === 'INDIVIDUAL' ? 'Individual students' : 'Standard class' }}</span>
                     </div>
                     <div class="class-card__actions">
                       <span class="status-pill" :class="{ 'status-pill--on': getClassActiveState(item) }">
@@ -4755,7 +4759,7 @@ onBeforeUnmount(() => {
                       <dt>Exams</dt>
                       <dd>{{ item.examCount || item.participatedExamCount || 0 }}</dd>
                     </div>
-                    <div>
+                    <div v-if="item.classType !== 'INDIVIDUAL'">
                       <dt>Average</dt>
                       <dd>{{ formatNumber(getClassAverage(item)) }}</dd>
                     </div>
@@ -4911,6 +4915,13 @@ onBeforeUnmount(() => {
                 <label class="form-field">
                   <span class="form-label">Class Name</span>
                   <input v-model="classForm.className" class="form-input" placeholder="e.g. Grade 8 Class A" />
+                </label>
+                <label class="form-field">
+                  <span class="form-label">Class Type</span>
+                  <select v-model="classForm.classType" class="form-input">
+                    <option value="STANDARD">Standard class</option>
+                    <option value="INDIVIDUAL">Individual students</option>
+                  </select>
                 </label>
                 <label class="form-field">
                   <span class="form-label">Teacher</span>
@@ -5496,6 +5507,7 @@ onBeforeUnmount(() => {
 
 .class-card__header { flex-wrap: wrap; }
 .class-card__header > div:first-child { min-width: 0; flex: 1 1 120px; }
+.class-type-badge { display: inline-flex; margin-top: 5px; border-radius: 999px; padding: 3px 8px; color: var(--color-primary-strong); background: var(--color-primary-soft); font-size: 11px; font-weight: 700; }
 
 .class-card__actions {
   display: inline-flex;
