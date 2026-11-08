@@ -32,9 +32,10 @@ public class MonitorAnswerGradingService {
             FROM attempt_answers aa
             JOIN attempts a ON a.id = aa.attempt_id
             JOIN exams e ON e.id = a.exam_id
+            JOIN papers p ON p.id = e.paper_id
             JOIN paper_items pi ON pi.id = aa.paper_item_id
             JOIN questions q ON q.id = pi.question_id
-            WHERE a.exam_id = ? AND e.exam_type_code = ? AND a.is_practice = FALSE
+            WHERE a.exam_id = ? AND p.exam_type_code = ? AND a.is_practice = FALSE
               AND a.status NOT IN ('NOT_STARTED', 'CANCELLED') AND aa.is_correct IS NULL
             ORDER BY aa.attempt_id, aa.paper_item_id
             """, (rs, row) -> new PendingAnswer(rs.getLong("attempt_id"), rs.getLong("paper_item_id"),
