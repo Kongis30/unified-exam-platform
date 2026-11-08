@@ -1191,6 +1191,7 @@ export default {
       fontScale,
       handleChangeFontScale,
       selectPreviewModule,
+      returnToPaperManagement,
       openImagePreview,
       closeImagePreview,
       closeHelpModal,
