@@ -343,7 +343,7 @@ async function loadStudentExams(force = false) {
     studentExamsLoading.value = true
     try {
       studentExams.value = (await listStudentExams({ force: force === true }))
-        .filter((exam) => workspaceCodes.has(exam.examTypeCode))
+        .filter((exam) => workspaceCodes.has(exam.examTypeCode) && isStudentExamVisible(exam))
     } catch (requestError) {
       studentExamError.value = requestError.message || 'Unable to load your assigned exams.'
     } finally { studentExamsLoading.value = false }
@@ -440,6 +440,18 @@ function reviewTaskStatusLabel(status) {
     ENDED: 'Ended',
   }
   return labels[status] || 'Assigned'
+}
+
+// 学生考试卡片只保留未结束的考试和正在作答的考试；历史记录由成绩区展示。
+function isStudentExamVisible(exam, now = Date.now()) {
+  if (exam.activeAttemptId) return true
+
+  const status = String(exam.status || '').toUpperCase()
+  if (['ENDED', 'EXPIRED', 'CLOSED'].includes(status)) return false
+  if (!exam.closesAt) return true
+
+  const closesAt = new Date(exam.closesAt).getTime()
+  return !Number.isFinite(closesAt) || closesAt > now
 }
 
 function studentExamStatusClass(exam) {
