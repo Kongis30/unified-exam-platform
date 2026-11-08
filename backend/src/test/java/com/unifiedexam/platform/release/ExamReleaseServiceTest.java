@@ -144,7 +144,9 @@ class ExamReleaseServiceTest {
 
         org.mockito.ArgumentCaptor<String> sql = forClass(String.class);
         verify(jdbc).update(sql.capture(), any(Object[].class));
-        assertTrue(sql.getValue().contains("IF(exam_type_code IN ('SAT', 'PSAT', 'SHSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE')"));
+        String shsatAfterSubmitDefault = "IF(exam_type_code IN ('SAT', 'PSAT', 'SHSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE')";
+        assertEquals(2, sql.getValue().split(java.util.regex.Pattern.quote(shsatAfterSubmitDefault), -1).length - 1,
+            "SHSAT answer review and score visibility default to after submission");
     }
 
     @Test

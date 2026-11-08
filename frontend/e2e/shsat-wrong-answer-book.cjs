@@ -92,28 +92,19 @@ async function main() {
     const practice = book.getByRole('button', { name: 'Practice', exact: true });
     const latestReport = book.getByRole('button', { name: 'Latest practice report', exact: true });
     assert.equal(await latestReport.isDisabled(), true, 'no practice report is available before the first practice');
-    await book.getByText('Review locked', { exact: false }).waitFor();
-    assert.equal(await viewAnswers.isDisabled(), true, 'wrong-answer details stay locked until the exam closes');
-    assert.equal(await practice.isDisabled(), true, 'personal practice stays locked until the exam closes');
-    const lockedPracticeStyle = await practice.evaluate(element => ({
-      backgroundImage: getComputedStyle(element).backgroundImage,
-      boxShadow: getComputedStyle(element).boxShadow,
-    }));
-    assert.equal(lockedPracticeStyle.backgroundImage, 'none', 'locked primary action is visually muted');
-    assert.equal(lockedPracticeStyle.boxShadow, 'none', 'locked primary action has no active shadow');
-    await student.screenshot({ path: `/tmp/shsat-wrong-book-locked-${stamp}.png` });
+    await book.getByText('Ready to review', { exact: true }).waitFor();
+    assert.equal(await viewAnswers.isEnabled(), true, 'wrong-answer details open immediately after submission');
+    assert.equal(await practice.isEnabled(), true, 'personal practice opens immediately after submission');
+    await student.screenshot({ path: `/tmp/shsat-wrong-book-open-${stamp}.png` });
     await student.setViewportSize({ width: 390, height: 844 });
     await book.scrollIntoViewIfNeeded();
-    const lockedMobileSize = await pageSize(student);
-    assert.ok(lockedMobileSize.page <= lockedMobileSize.viewport, `locked wrong-answer book fits mobile: ${JSON.stringify(lockedMobileSize)}`);
-    await student.screenshot({ path: `/tmp/shsat-wrong-book-locked-mobile-${stamp}.png` });
+    const openMobileSize = await pageSize(student);
+    assert.ok(openMobileSize.page <= openMobileSize.viewport, `open wrong-answer book fits mobile: ${JSON.stringify(openMobileSize)}`);
+    await student.screenshot({ path: `/tmp/shsat-wrong-book-open-mobile-${stamp}.png` });
     await student.setViewportSize({ width: 1440, height: 900 });
 
-    await api(admin, `/api/admin/exams/${examId}/close`, 'POST');
-    await student.getByRole('button', { name: 'Refresh', exact: true }).click();
-    await book.getByText('2 questions remaining', { exact: false }).waitFor();
-    assert.equal(await viewAnswers.isEnabled(), true, 'wrong-answer details unlock after the exam closes');
-    assert.equal(await practice.isEnabled(), true, 'personal practice unlocks after the exam closes');
+    const sourceReport = await api(student, `/api/student/attempts/${sourceAttempt.id}/report`);
+    assert.equal(sourceReport.answersVisible, true, 'answer details are visible before the exam closes when review is allowed');
 
     await viewAnswers.click();
     await student.waitForURL(url => url.pathname === `/student/attempts/${sourceAttempt.id}/wrong-answers`);

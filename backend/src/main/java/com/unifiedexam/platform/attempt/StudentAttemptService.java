@@ -64,7 +64,7 @@ public class StudentAttemptService {
         return start(examId, null, username, true, false);
     }
 
-    /** 仅为本人可查看答案的 SHSAT 正式尝试建立个人错题练习，不复用教师任务记录。 */
+    /** 仅为本人已提交且允许复习的 SHSAT 正式尝试建立个人错题练习，不复用教师任务记录。 */
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public AttemptView startWrongAnswerPractice(long sourceAttemptId, String username) {
         Account student = account(username);
@@ -74,7 +74,7 @@ public class StudentAttemptService {
                 || !List.of("SUBMITTED", "COMPLETED", "EXPIRED").contains(source.status())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "A completed SHSAT exam is required.");
         }
-        requireStudentAnswersVisible(sourceAttemptId);
+        requireWrongAnswerReviewAllowed(sourceAttemptId);
 
         Long openPracticeId = jdbcTemplate.query("""
             SELECT id FROM attempts WHERE shsat_self_practice_source_attempt_id = ? AND student_user_id = ?
@@ -110,7 +110,7 @@ public class StudentAttemptService {
         return getOwnedAttempt(practiceId, student.id());
     }
 
-    /** 返回当前仍需复习的错题编号；没有本人权限或答案尚未开放时不暴露题目数据。 */
+    /** 返回当前仍需复习的错题编号；未提交或考试未允许复习时不暴露题目数据。 */
     @Transactional(readOnly = true)
     public List<Integer> wrongAnswerQuestionNumbers(long sourceAttemptId, String username) {
         Account student = account(username);
@@ -120,18 +120,17 @@ public class StudentAttemptService {
                 || !List.of("SUBMITTED", "COMPLETED", "EXPIRED").contains(source.status())) {
             throw notFound("Attempt not found.");
         }
-        requireStudentAnswersVisible(sourceAttemptId);
+        requireWrongAnswerReviewAllowed(sourceAttemptId);
         return findRemainingWrongQuestions(sourceAttemptId, student.id()).stream()
             .map(SelfPracticeQuestion::displayNumber).toList();
     }
 
-    private void requireStudentAnswersVisible(long attemptId) {
+    private void requireWrongAnswerReviewAllowed(long attemptId) {
         Boolean visible = jdbcTemplate.queryForObject("""
-            SELECT e.allow_review AND (e.answer_visibility = 'AFTER_SUBMIT'
-                OR (e.answer_visibility = 'AFTER_CLOSE' AND e.closes_at <= CURRENT_TIMESTAMP(6)))
+            SELECT e.allow_review
             FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE a.id = ?
             """, Boolean.class, attemptId);
-        if (!Boolean.TRUE.equals(visible)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Answers are not available for this exam yet.");
+        if (!Boolean.TRUE.equals(visible)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Wrong-answer review is disabled for this exam.");
     }
 
     private List<SelfPracticeQuestion> findRemainingWrongQuestions(long sourceAttemptId, long studentId) {

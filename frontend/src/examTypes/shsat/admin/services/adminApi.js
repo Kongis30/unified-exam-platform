@@ -550,7 +550,7 @@ export const adminApi = {
       attemptLimit: Number(payload.attemptLimit || 1),
       targetScope: payload.targetType === 'ALL_STUDENTS' ? 'ALL_STUDENTS' : 'SELECTED',
       autoSubmit: payload.autoSubmit,
-      allowReview: payload.allowReview,
+      allowReview: true,
     });
     if (payload.targetType === 'SPECIFIC_CLASSES') {
       try {
@@ -571,7 +571,7 @@ export const adminApi = {
       durationSeconds: Math.max(1, Number(payload.duration || 0) * 60), attemptLimit: Number(payload.attemptLimit || 1),
       targetScope: payload.targetType === 'ALL_STUDENTS' ? 'ALL_STUDENTS' : 'SELECTED',
       autoSubmit: payload.autoSubmit,
-      allowReview: payload.allowReview,
+      allowReview: true,
     });
     if (payload.targetType === 'SPECIFIC_CLASSES') {
       await saveExamTargets(examId, { classIds: payload.target_ids || [], studentUserIds: payload.studentUserIds || [], studentTargets: payload.studentTargets || [] });

@@ -260,7 +260,6 @@ const examForm = reactive({
   targetStudentClasses: [],
   attemptLimit: 1,
   autoSubmit: true,
-  allowReview: true,
 });
 const wrongAnswerTaskStartAtInput = ref(null);
 const wrongAnswerTaskEndAtInput = ref(null);
@@ -1583,7 +1582,7 @@ function buildExamPayload() {
     studentTargets: examForm.targetType === 'SPECIFIC_CLASSES' ? examForm.targetStudentClasses : [],
     attemptLimit: examForm.attemptLimit || 1,
     autoSubmit: examForm.autoSubmit,
-    allowReview: examForm.allowReview,
+    allowReview: true,
   };
 }
 
@@ -2381,7 +2380,6 @@ async function openExamDraft(exam) {
       targetStudentClasses: detail.studentTargets || [],
       attemptLimit: detail.attemptLimit || 1,
       autoSubmit: detail.autoSubmit,
-      allowReview: detail.allowReview,
     });
     pendingExamId.value = detail.examId;
     errors.examForm = '';
@@ -4411,7 +4409,6 @@ onBeforeUnmount(() => {
             <section class="exam-release-section">
               <h3>Exam options</h3>
               <label class="exam-option-line"><input v-model="examForm.autoSubmit" type="checkbox" /><span><strong>Auto-submit when time expires</strong><small>Submit unfinished attempts when the timer ends.</small></span></label>
-              <label class="exam-option-line"><input v-model="examForm.allowReview" type="checkbox" /><span><strong>Allow review</strong><small>Students can review according to the visibility settings.</small></span></label>
             </section>
           </template>
           <template #footer>

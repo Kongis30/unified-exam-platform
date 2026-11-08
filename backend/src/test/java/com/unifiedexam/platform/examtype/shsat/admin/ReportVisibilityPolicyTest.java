@@ -24,4 +24,11 @@ class ReportVisibilityPolicyTest {
         assertFalse(ReportVisibilityPolicy.isVisible("IMMEDIATE", true, true));
         assertFalse(ReportVisibilityPolicy.isVisible(null, true, true));
     }
+
+    @Test
+    void shsatAnswerReviewOpensAfterSubmissionWithoutWaitingForExamClose() {
+        assertTrue(ReportVisibilityPolicy.isReviewVisible(true, true));
+        assertFalse(ReportVisibilityPolicy.isReviewVisible(true, false));
+        assertFalse(ReportVisibilityPolicy.isReviewVisible(false, true));
+    }
 }

@@ -27,7 +27,8 @@ final class StudentReportSanitizer {
             if (!allowReview || !(rawQuestions instanceof List<?>)) {
                 report.put("questions", List.of());
             } else {
-                removeQuestionFields(report, List.of("correctAnswerData", "correctAnswer", "correct", "score"));
+                // 答案可见策略控制逐题对错与得分；允许复习时仍应返回标准答案供学生核对。
+                removeQuestionFields(report, List.of("correct", "score"));
             }
         }
     }

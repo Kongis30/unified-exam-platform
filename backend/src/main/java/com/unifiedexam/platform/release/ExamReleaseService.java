@@ -95,9 +95,11 @@ public class ExamReleaseService {
                 (paper_id, scoring_profile_id, title, description, target_scope, opens_at, closes_at,
                  duration_seconds, attempt_limit, answer_visibility, score_visibility, allow_review, auto_submit, created_by)
             SELECT id, default_scoring_profile_id, ?, ?, ?, ?, ?, ?, ?,
-                   IF(exam_type_code IN ('SAT', 'PSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
                    IF(exam_type_code IN ('SAT', 'PSAT', 'SHSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
-                   COALESCE(?, exam_type_code IN ('SAT', 'PSAT')), COALESCE(?, TRUE), ?
+                   IF(exam_type_code IN ('SAT', 'PSAT', 'SHSAT'), 'AFTER_SUBMIT', 'AFTER_CLOSE'),
+                   CASE WHEN exam_type_code = 'SHSAT' THEN TRUE
+                        ELSE COALESCE(?, exam_type_code IN ('SAT', 'PSAT')) END,
+                   COALESCE(?, TRUE), ?
             FROM papers WHERE id = ?
             """, request.title(), request.description(), targetScope,
             Timestamp.from(request.opensAt().toInstant()), Timestamp.from(request.closesAt().toInstant()),
@@ -132,12 +134,13 @@ public class ExamReleaseService {
         }
         jdbcTemplate.update("""
             UPDATE exams SET title = ?, description = ?, target_scope = ?, opens_at = ?, closes_at = ?,
-                duration_seconds = ?, attempt_limit = ?, allow_review = COALESCE(?, allow_review),
+                duration_seconds = ?, attempt_limit = ?, allow_review = CASE WHEN ? = 'SHSAT' THEN TRUE
+                    ELSE COALESCE(?, allow_review) END,
                 auto_submit = COALESCE(?, auto_submit) WHERE id = ? AND status = 'DRAFT'
             """, request.title(), request.description(), targetScope,
             Timestamp.from(request.opensAt().toInstant()), Timestamp.from(request.closesAt().toInstant()),
             resolveDuration(targetPaperId, request.durationSeconds()), request.attemptLimit(),
-            request.allowReview(), request.autoSubmit(), examId);
+            typeCode(targetPaperId), request.allowReview(), request.autoSubmit(), examId);
         if ("ALL_STUDENTS".equals(targetScope)) {
             jdbcTemplate.update("DELETE FROM exam_target_classes WHERE exam_id = ?", examId);
             jdbcTemplate.update("DELETE FROM exam_target_students WHERE exam_id = ?", examId);

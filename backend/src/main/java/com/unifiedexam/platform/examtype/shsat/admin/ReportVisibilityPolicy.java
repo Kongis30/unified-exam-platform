@@ -12,4 +12,9 @@ final class ReportVisibilityPolicy {
             default -> false;
         };
     }
+
+    /** SHSAT 答案复习由 allow_review 控制，提交后即可开放，不受考试窗口关闭时间限制。 */
+    static boolean isReviewVisible(boolean allowReview, boolean submitted) {
+        return allowReview && submitted;
+    }
 }

@@ -112,6 +112,42 @@ class ShsatAdminReportServiceTest {
     }
 
     @Test
+    void studentOwnAttemptHistoryOpensReviewAfterSubmitBeforeExamCloses() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.query(argThat(sql -> sql != null && sql.contains("e.allow_review")
+                && !sql.contains("e.answer_visibility")), any(RowMapper.class), eq("student")))
+            .thenAnswer(invocation -> {
+                @SuppressWarnings("unchecked")
+                RowMapper<Map<String, Object>> mapper = invocation.getArgument(1);
+                ResultSet row = mock(ResultSet.class);
+                when(row.getLong("question_count")).thenReturn(10L);
+                when(row.getLong("answered_count")).thenReturn(10L);
+                when(row.getLong("correct_count")).thenReturn(8L);
+                when(row.getLong("wrong_count")).thenReturn(2L);
+                when(row.getLong("cleared_count")).thenReturn(0L);
+                when(row.getLong("id")).thenReturn(41L);
+                when(row.getLong("exam_id")).thenReturn(27L);
+                when(row.getLong("paper_id")).thenReturn(12L);
+                when(row.getInt("attempt_no")).thenReturn(1);
+                when(row.getInt("ungraded_count")).thenReturn(0);
+                when(row.getString("status")).thenReturn("SUBMITTED");
+                when(row.getString("score_visibility")).thenReturn("AFTER_SUBMIT");
+                when(row.getString("exam_title")).thenReturn("SHSAT Exam");
+                when(row.getString("paper_name")).thenReturn("SHSAT Paper");
+                when(row.getBoolean("is_practice")).thenReturn(false);
+                when(row.getBoolean("allow_review")).thenReturn(true);
+                when(row.getBoolean("exam_closed")).thenReturn(false);
+                when(row.getObject("shsat_self_practice_source_attempt_id")).thenReturn(null);
+                return List.of(mapper.mapRow(row, 0));
+            });
+
+        Map<String, Object> attempt = new ShsatAdminReportService(jdbc, new ObjectMapper())
+            .studentOwnAttemptHistory("student").get(0);
+
+        assertEquals(true, attempt.get("answersVisible"), "review is available immediately after submission");
+    }
+
+    @Test
     void monitorCountsStudentsOnceWhenTheyHaveMultipleAttempts() throws Exception {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.query(argThat(sql -> sql != null && sql.contains("FROM exams e JOIN papers p")),
