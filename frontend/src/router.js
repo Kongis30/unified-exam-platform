@@ -106,7 +106,7 @@ export const router = createRouter({
       meta: { roles: ['ADMIN'] } },
     { path: '/shsat/admin/papers/:paperId/edit', alias: '/exam-types/SHSAT/admin/papers/:paperId/edit', name: 'admin-paper-edit', component: () => import('@shsat/admin/pages/PaperEditPage.vue'),
       meta: { roles: ['ADMIN'] } },
-    { path: '/shsat/admin/papers/:paperId/preview', alias: '/exam-types/SHSAT/admin/papers/:paperId/preview', name: 'admin-paper-preview', component: () => import('@shsat/admin/pages/PaperPreviewPage.vue'),
+    { path: '/shsat/admin/papers/:paperId/preview', alias: '/exam-types/SHSAT/admin/papers/:paperId/preview', name: 'admin-paper-preview', component: () => import('@shsat/pages/StudentExam.vue'),
       meta: { roles: ['ADMIN'] } },
     { path: '/shsat/admin/papers/:paperId/export', alias: '/exam-types/SHSAT/admin/papers/:paperId/export', name: 'admin-paper-export', component: () => import('@shsat/admin/pages/PaperExportPage.vue'),
       meta: { roles: ['ADMIN'] } },
