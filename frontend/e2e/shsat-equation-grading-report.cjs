@@ -824,7 +824,7 @@ async function main() {
     await student.waitForURL(url => url.pathname === '/student/systems/SHSAT');
 
     const noReviewRelease = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
-      title: `${title} No Review`, description: 'Answer review disabled policy check',
+      title: `${title} Review Opens After Submit`, description: 'SHSAT review opens after submission regardless of legacy request flags',
       opensAt: new Date(Date.now() - 60_000).toISOString(), closesAt: new Date(Date.now() + 60 * 60_000).toISOString(),
       durationSeconds: 1_200, attemptLimit: 1, targetScope: 'SELECTED', autoSubmit: true,
       allowReview: false, scoreVisibility: 'AFTER_SUBMIT', answerVisibility: 'AFTER_SUBMIT',
@@ -836,30 +836,26 @@ async function main() {
     const noReviewAttemptId = Number(noReviewAttempt.id || noReviewAttempt.attemptId);
     const noReviewSubmitted = await api(student, `/api/student/attempts/${noReviewAttemptId}/submit`, 'POST');
     assert.ok(['SUBMITTED', 'COMPLETED'].includes(noReviewSubmitted.status),
-      'a release with answer review disabled still allows the student to submit');
-    const restrictedReport = await api(student, `/api/student/attempts/${noReviewAttemptId}/report`);
-    assert.equal(restrictedReport.scoreVisible, true, 'score visibility remains independent from answer review');
-    assert.equal(restrictedReport.answersVisible, false, 'allowReview false keeps answer details hidden after submission');
-    assert.equal(restrictedReport.reviewAllowed, false, 'the report exposes the disabled answer-review setting');
-    assert.equal(restrictedReport.reviewAvailableAfterClose, false,
-      'a permanently disabled review is not presented as waiting for the exam close time');
-    assert.deepEqual(restrictedReport.questions, [], 'allowReview false omits question content from the report');
-    assert.equal(await apiStatus(student, `/api/student/attempts/${noReviewAttemptId}/wrong-answer-question-numbers`), 403,
-      'wrong-answer review remains unavailable when answer review is disabled');
+      'the student can submit before answer review opens');
+    const reviewReport = await api(student, `/api/student/attempts/${noReviewAttemptId}/report`);
+    assert.equal(reviewReport.scoreVisible, true, 'score visibility remains independently configured');
+    assert.equal(reviewReport.answersVisible, true, 'SHSAT answer review opens after submission despite a legacy false request flag');
+    assert.equal(reviewReport.reviewAllowed, true, 'SHSAT releases always allow answer review');
+    assert.equal(reviewReport.reviewAvailableAfterClose, false, 'review is not delayed until exam close');
+    assert.ok(reviewReport.questions.length > 0, 'submitted question details are available immediately');
+    const remainingWrongAnswers = await api(student, `/api/student/attempts/${noReviewAttemptId}/wrong-answer-question-numbers`);
+    assert.ok(Array.isArray(remainingWrongAnswers), 'wrong-answer review endpoint is available before exam close');
     await student.setViewportSize({ width: 1440, height: 900 });
     await student.goto(`${baseUrl}/student/attempts/${noReviewAttemptId}/report`);
     await student.getByText('Result Summary', { exact: true }).waitFor();
-    await student.locator('.knowledge-card').getByText(
-      'Question review is disabled for this exam, so answer details and skill-level results are unavailable.', { exact: true },
-    ).waitFor();
-    assert.equal(await student.locator('.question-table tbody tr').count(), 0,
-      'the student report UI does not render question rows when answer review is disabled');
-    await student.screenshot({ path: `/tmp/shsat-student-report-review-disabled-${stamp}.png` });
+    assert.ok(await student.locator('.question-table tbody tr').count() > 0,
+      'the student report UI renders question review rows before exam close');
+    await student.screenshot({ path: `/tmp/shsat-student-report-review-open-${stamp}.png` });
     await student.setViewportSize({ width: 390, height: 844 });
-    const restrictedReportMobile = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
-    assert.ok(restrictedReportMobile.page <= restrictedReportMobile.viewport,
-      'the report with question review disabled fits a 390px viewport');
-    await student.screenshot({ path: `/tmp/shsat-student-report-review-disabled-mobile-${stamp}.png` });
+    const openReviewReportMobile = await student.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    assert.ok(openReviewReportMobile.page <= openReviewReportMobile.viewport,
+      'the report with question review open fits a 390px viewport');
+    await student.screenshot({ path: `/tmp/shsat-student-report-review-open-mobile-${stamp}.png` });
 
     const malformedSolutionRelease = await api(admin, `/api/admin/papers/${paperId}/exams`, 'POST', {
       title: `${title} Malformed Solution`, description: 'Invalid solution answer boundary check',
