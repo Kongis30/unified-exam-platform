@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.unifiedexam.platform.attempt.SatAttemptQuestionSnapshots;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -27,10 +28,12 @@ public class SatPaperEditorService {
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    private final SatAttemptQuestionSnapshots attemptSnapshots;
 
     public SatPaperEditorService(JdbcTemplate jdbc, ObjectMapper mapper) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.attemptSnapshots = new SatAttemptQuestionSnapshots(jdbc);
     }
 
     public PaperStructure structure(long paperId) {
@@ -38,7 +41,7 @@ public class SatPaperEditorService {
         PaperRow paper = paper(paperId);
         List<ModuleView> modules = jdbc.query("""
             SELECT id, section_code, title, sort_order, instructions, settings_json
-            FROM paper_sections WHERE paper_id = ? AND parent_section_id IS NULL
+            FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND parent_section_id IS NULL
             ORDER BY sort_order, id
             """, (rs, row) -> {
             JsonNode settings = readJson(rs.getString("settings_json"));
@@ -70,7 +73,7 @@ public class SatPaperEditorService {
             JOIN questions q ON q.id = pi.question_id
             LEFT JOIN sat_question_materials sqm ON sqm.question_id = q.id
             LEFT JOIN sat_materials sm ON sm.id = sqm.material_id
-            WHERE s.paper_id = ? AND q.id = ?
+            WHERE s.paper_id = ? AND s.archived_key = 0 AND pi.is_active = TRUE AND q.id = ?
             """, rs -> {
             if (!rs.next()) throw notFound("SAT question not found.");
             JsonNode render = readJson(rs.getString("render_json"));
@@ -111,7 +114,7 @@ public class SatPaperEditorService {
         SectionRow section = section(paperId, request.moduleId());
         Boolean belongs = jdbc.queryForObject("""
             SELECT EXISTS(SELECT 1 FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-                WHERE ps.paper_id = ? AND pi.question_id = ?)
+                WHERE ps.paper_id = ? AND ps.archived_key = 0 AND pi.is_active = TRUE AND pi.question_id = ?)
             """, Boolean.class, paperId, questionId);
         if (!Boolean.TRUE.equals(belongs)) throw notFound("SAT question not found.");
         jdbc.update("""
@@ -120,19 +123,29 @@ public class SatPaperEditorService {
             """, request.content(), json(questionRender(request, section.settings())),
             json(mapper.createObjectNode().put("correctAnswer", request.correctAnswer())),
             json(mapper.createObjectNode().put("score", request.score())), request.analysis(), questionId);
-        jdbc.update("UPDATE paper_items SET max_points = ?, scoring_section_code = ? WHERE question_id = ?",
-            request.score(), section.code(), questionId);
+        jdbc.update("""
+            UPDATE paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
+            SET pi.max_points = ?, pi.scoring_section_code = ?
+            WHERE ps.paper_id = ? AND ps.archived_key = 0 AND pi.is_active = TRUE AND pi.question_id = ?
+            """, request.score(), section.code(), paperId, questionId);
         updateMaterialLink(questionId, request.materialId(), request.materialRef());
     }
 
     @Transactional
     public void deleteQuestion(long paperId, long questionId) {
         requireEditableSatPaper(paperId);
-        int deleted = jdbc.update("""
-            DELETE pi FROM paper_items pi JOIN paper_sections s ON s.id = pi.section_id
-            WHERE s.paper_id = ? AND pi.question_id = ?
-            """, paperId, questionId);
-        if (deleted == 0) throw notFound("SAT question not found.");
+        Long paperItemId = jdbc.query("""
+            SELECT pi.id FROM paper_items pi JOIN paper_sections section ON section.id = pi.section_id
+            WHERE section.paper_id = ? AND section.archived_key = 0 AND pi.is_active = TRUE AND pi.question_id = ?
+            """, rs -> rs.next() ? rs.getLong(1) : null, paperId, questionId);
+        if (paperItemId == null) throw notFound("SAT question not found.");
+        Boolean usedByAttempt = jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM attempt_items WHERE paper_item_id = ?)", Boolean.class, paperItemId);
+        if (Boolean.TRUE.equals(usedByAttempt)) {
+            jdbc.update("UPDATE paper_items SET is_active = FALSE WHERE id = ?", paperItemId);
+            return;
+        }
+        jdbc.update("DELETE FROM paper_items WHERE id = ?", paperItemId);
         jdbc.update("DELETE FROM questions WHERE id = ? AND NOT EXISTS (SELECT 1 FROM paper_items WHERE question_id = ?)",
             questionId, questionId);
     }
@@ -146,7 +159,7 @@ public class SatPaperEditorService {
         }
         String subjectCode = request.subject().equals("RW") ? "RW" : "MATH";
         String code = subjectCode + request.moduleType();
-        Boolean exists = jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM paper_sections WHERE paper_id = ? AND section_code = ?)",
+        Boolean exists = jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND section_code = ?)",
             Boolean.class, paperId, code);
         if (Boolean.TRUE.equals(exists)) throw new ResponseStatusException(HttpStatus.CONFLICT, "This SAT module already exists.");
         JsonNode settings = mapper.createObjectNode().put("subject", request.subject())
@@ -164,7 +177,7 @@ public class SatPaperEditorService {
     public void reorderQuestions(long paperId, long moduleId, List<Long> questionIds) {
         requireEditableSatPaper(paperId);
         if (section(paperId, moduleId) == null) throw notFound("SAT module not found.");
-        List<Long> current = jdbc.query("SELECT question_id FROM paper_items WHERE section_id = ? ORDER BY sort_order, id",
+        List<Long> current = jdbc.query("SELECT question_id FROM paper_items WHERE section_id = ? AND is_active = TRUE ORDER BY sort_order, id",
             (rs, row) -> rs.getLong(1), moduleId);
         if (current.size() != questionIds.size() || !new java.util.HashSet<>(current).equals(new java.util.HashSet<>(questionIds))) {
             throw badRequest("The question order must include every question in this module exactly once.");
@@ -173,12 +186,12 @@ public class SatPaperEditorService {
 
         // 先将顺序整体移到当前最大值之后，避开唯一索引上的中间态冲突，再写入最终顺序。
         Integer maxOrder = jdbc.queryForObject(
-            "SELECT COALESCE(MAX(sort_order), -1) FROM paper_items WHERE section_id = ?", Integer.class, moduleId);
+            "SELECT COALESCE(MAX(sort_order), -1) FROM paper_items WHERE section_id = ? AND is_active = TRUE", Integer.class, moduleId);
         long temporaryOffset = (maxOrder == null ? -1L : maxOrder.longValue()) + current.size() + 1L;
-        jdbc.update("UPDATE paper_items SET sort_order = sort_order + ? WHERE section_id = ?",
+        jdbc.update("UPDATE paper_items SET sort_order = sort_order + ? WHERE section_id = ? AND is_active = TRUE",
             temporaryOffset, moduleId);
         for (int index = 0; index < questionIds.size(); index++) {
-            jdbc.update("UPDATE paper_items SET sort_order = ?, display_number = ? WHERE section_id = ? AND question_id = ?",
+            jdbc.update("UPDATE paper_items SET sort_order = ?, display_number = ? WHERE section_id = ? AND question_id = ? AND is_active = TRUE",
                 index, index + 1, moduleId, questionIds.get(index));
         }
     }
@@ -190,7 +203,7 @@ public class SatPaperEditorService {
         List<ModuleLayout> modules = jdbc.query("""
             SELECT id, section_code, JSON_UNQUOTE(JSON_EXTRACT(settings_json, '$.subject')) AS subject
             FROM paper_sections
-            WHERE paper_id = ? AND parent_section_id IS NULL ORDER BY sort_order, id
+            WHERE paper_id = ? AND archived_key = 0 AND parent_section_id IS NULL ORDER BY sort_order, id
             """, (rs, row) -> {
             String code = rs.getString("section_code");
             String subject = rs.getString("subject");
@@ -221,7 +234,7 @@ public class SatPaperEditorService {
         List<PaperItemRow> currentItems = jdbc.query("""
             SELECT pi.id, pi.question_id FROM paper_items pi
             JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ? AND ps.parent_section_id IS NULL
+            WHERE ps.paper_id = ? AND ps.archived_key = 0 AND ps.parent_section_id IS NULL AND pi.is_active = TRUE
             ORDER BY ps.sort_order, pi.sort_order, pi.id
             """, (rs, row) -> new PaperItemRow(rs.getLong("id"), rs.getLong("question_id")), paperId);
         java.util.Set<Long> currentQuestionIds = currentItems.stream().map(PaperItemRow::questionId)
@@ -237,12 +250,12 @@ public class SatPaperEditorService {
         Integer maxOrder = jdbc.queryForObject("""
             SELECT COALESCE(MAX(pi.sort_order), -1) FROM paper_items pi
             JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ? AND ps.parent_section_id IS NULL
+            WHERE ps.paper_id = ? AND ps.archived_key = 0 AND ps.parent_section_id IS NULL AND pi.is_active = TRUE
             """, Integer.class, paperId);
         long temporaryOffset = (maxOrder == null ? -1L : maxOrder.longValue()) + currentItems.size() + 1L;
         jdbc.update("""
             UPDATE paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-            SET pi.sort_order = pi.sort_order + ? WHERE ps.paper_id = ? AND ps.parent_section_id IS NULL
+            SET pi.sort_order = pi.sort_order + ? WHERE ps.paper_id = ? AND ps.archived_key = 0 AND ps.parent_section_id IS NULL AND pi.is_active = TRUE
             """, temporaryOffset, paperId);
 
         Map<Long, Long> itemIds = new LinkedHashMap<>();
@@ -274,7 +287,7 @@ public class SatPaperEditorService {
             FROM questions q JOIN paper_items pi ON pi.question_id = q.id
             JOIN paper_sections s ON s.id = pi.section_id
             LEFT JOIN sat_question_materials sqm ON sqm.question_id = q.id
-            WHERE s.paper_id = ? AND q.id = ?
+            WHERE s.paper_id = ? AND s.archived_key = 0 AND pi.is_active = TRUE AND q.id = ?
             """, rs -> {
             if (!rs.next()) throw notFound("SAT question not found.");
             String type = rs.getString("question_type_code").contains("FILL") ? "fill_blank" : "multiple_choice";
@@ -305,7 +318,8 @@ public class SatPaperEditorService {
             FROM sat_materials m JOIN sat_question_materials qm ON qm.material_id = m.id
             JOIN questions q ON q.id = qm.question_id JOIN paper_items pi ON pi.question_id = q.id
             JOIN paper_sections s ON s.id = pi.section_id
-            WHERE s.paper_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(s.settings_json, '$.subject')) = ?
+            WHERE s.paper_id = ? AND s.archived_key = 0 AND pi.is_active = TRUE
+              AND JSON_UNQUOTE(JSON_EXTRACT(s.settings_json, '$.subject')) = ?
             ORDER BY m.id DESC
             """, (rs, row) -> materialView(rs), paperId, subject);
     }
@@ -323,6 +337,14 @@ public class SatPaperEditorService {
     @Transactional
     public void updateMaterial(long paperId, long materialId, MaterialWrite request) {
         requireEditableSatPaper(paperId);
+        // 材料可被多张试卷共用；修改前固定所有引用它的历史答卷。
+        jdbc.queryForList("""
+            SELECT DISTINCT section.paper_id
+            FROM sat_question_materials link
+            JOIN paper_items item ON item.question_id = link.question_id
+            JOIN paper_sections section ON section.id = item.section_id
+            WHERE link.material_id = ?
+            """, Long.class, materialId).forEach(this::requireEditableSatPaper);
         int updated = jdbc.update("""
             UPDATE sat_materials SET title = ?, material_type = ?, content = ?, file_url = ?, source = ? WHERE id = ?
             """, request.title(), request.materialType(), request.content(), request.fileUrl(), request.source(), materialId);
@@ -389,7 +411,7 @@ public class SatPaperEditorService {
             FROM paper_items pi JOIN questions q ON q.id = pi.question_id
             LEFT JOIN sat_question_materials sqm ON sqm.question_id = q.id
             LEFT JOIN sat_materials sm ON sm.id = sqm.material_id
-            WHERE pi.section_id = ? ORDER BY pi.sort_order, pi.id
+            WHERE pi.section_id = ? AND pi.is_active = TRUE ORDER BY pi.sort_order, pi.id
             """, (rs, row) -> {
             JsonNode render = readJson(rs.getString("render_json"));
             JsonNode sat = render.path("sat");
@@ -407,7 +429,8 @@ public class SatPaperEditorService {
 
     private SectionRow section(long paperId, long sectionId) {
         return jdbc.query("""
-            SELECT id, section_code, settings_json FROM paper_sections WHERE id = ? AND paper_id = ?
+            SELECT id, section_code, settings_json FROM paper_sections
+            WHERE id = ? AND paper_id = ? AND archived_key = 0
             """, rs -> rs.next() ? new SectionRow(rs.getLong(1), rs.getString(2), readJson(rs.getString(3))) : null,
             sectionId, paperId);
     }
@@ -425,13 +448,8 @@ public class SatPaperEditorService {
     /** SAT 试卷被考试引用后使用副本编辑，避免改写既有考试。 */
     private void requireEditableSatPaper(long paperId) {
         requireSatPaper(paperId);
-        String status = paper(paperId).status();
-        Boolean usedByExam = jdbc.queryForObject(
-            "SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ?)", Boolean.class, paperId);
-        if ("ARCHIVED".equals(status) || Boolean.TRUE.equals(usedByExam)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "This paper version is locked. Create a new version before changing SAT content.");
-        }
+        // 写入前固定已有作答使用的题目与材料，后续修改只影响试卷当前内容。
+        attemptSnapshots.capturePaper(paperId);
     }
 
     private JsonNode readJson(String value) {

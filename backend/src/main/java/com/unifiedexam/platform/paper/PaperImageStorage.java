@@ -16,7 +16,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
-/** Stores SHSAT editor images under a bounded local upload directory and returns stable relative URLs. */
+/** Stores exam editor images under a bounded local upload directory and returns stable relative URLs. */
 @Service
 public class PaperImageStorage {
 

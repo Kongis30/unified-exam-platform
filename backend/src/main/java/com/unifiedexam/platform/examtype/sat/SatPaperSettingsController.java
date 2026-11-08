@@ -3,6 +3,7 @@ package com.unifiedexam.platform.examtype.sat;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
+import com.unifiedexam.platform.attempt.SatAttemptQuestionSnapshots;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,9 +21,11 @@ import org.springframework.web.server.ResponseStatusException;
 public class SatPaperSettingsController {
 
     private final JdbcTemplate jdbcTemplate;
+    private final SatAttemptQuestionSnapshots attemptSnapshots;
 
     public SatPaperSettingsController(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+        this.attemptSnapshots = new SatAttemptQuestionSnapshots(jdbcTemplate);
     }
 
     @GetMapping
@@ -40,13 +43,7 @@ public class SatPaperSettingsController {
     @Transactional
     public SatPaperSettings update(@PathVariable long paperId, @Valid @RequestBody UpdateRequest request) {
         ensureSatPaper(paperId);
-        String status = paperStatus(paperId);
-        Boolean usedByExam = jdbcTemplate.queryForObject(
-            "SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ?)", Boolean.class, paperId);
-        if ("ARCHIVED".equals(status) || Boolean.TRUE.equals(usedByExam)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "This paper version is locked. Create a new version before changing SAT settings.");
-        }
+        attemptSnapshots.capturePaper(paperId);
         jdbcTemplate.update("""
             INSERT INTO sat_paper_settings (paper_id, scoring_table_code, adaptive_mode, rest_time_seconds)
             VALUES (?, ?, ?, ?)
@@ -65,10 +62,6 @@ public class SatPaperSettingsController {
     private String typeCode(long paperId) {
         return jdbcTemplate.query("SELECT exam_type_code FROM papers WHERE id = ?",
             rs -> rs.next() ? rs.getString(1) : null, paperId);
-    }
-
-    private String paperStatus(long paperId) {
-        return jdbcTemplate.query("SELECT status FROM papers WHERE id = ?", rs -> rs.next() ? rs.getString(1) : null, paperId);
     }
 
     public record SatPaperSettings(String scoringTableCode, boolean adaptiveMode, int restTimeSeconds) { }

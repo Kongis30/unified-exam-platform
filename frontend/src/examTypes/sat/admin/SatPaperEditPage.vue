@@ -208,7 +208,7 @@
                       :auto-upload="false"
                       :show-file-list="false"
                       :disabled="materialImageUploading"
-                      accept="image/*"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
                       :on-change="onMaterialImageChange"
                     >
                       <el-button size="small" :loading="materialImageUploading" :disabled="materialImageUploading">
@@ -283,7 +283,7 @@
                       :auto-upload="false"
                       :show-file-list="false"
                       :disabled="stemImageUploading"
-                      accept="image/*"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
                       :on-change="onStemImageChange"
                     >
                       <el-button size="small" :loading="stemImageUploading" :disabled="stemImageUploading">
@@ -400,7 +400,7 @@
                             :auto-upload="false"
                             :show-file-list="false"
                             :disabled="optionImageUploading"
-                            accept="image/*"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
                             :on-change="file => onOptionImageChange(file, index)"
                           >
                             <el-button size="small" :loading="optionImageUploading && uploadingOptionIndex === index" :disabled="optionImageUploading">
@@ -900,7 +900,7 @@ const uploadEditorImage = async ({ file, textarea, uploadingRef, insertImage, la
     operationToast.success('Image uploaded')
   } catch (error) {
     console.error(`Failed to upload ${label} image:`, error)
-    operationToast.error('Image upload failed')
+    operationToast.error(getApiMessage(error, 'Image upload failed'))
   } finally {
     uploadingRef.value = false
   }
@@ -969,7 +969,7 @@ const uploadOptionImage = async (file, index) => {
     operationToast.success('Image uploaded')
   } catch (error) {
     console.error('Failed to upload option image:', error)
-    operationToast.error('Image upload failed')
+    operationToast.error(getApiMessage(error, 'Image upload failed'))
   } finally {
     optionImageUploading.value = false
     uploadingOptionIndex.value = -1
@@ -1849,7 +1849,7 @@ const deleteQuestion = async () => {
   } catch (error) {
     if (error !== 'cancel') {
       console.error('Error deleting question:', error)
-      operationToast.error('Failed to delete question')
+      operationToast.error(getApiMessage(error, 'Failed to delete question'))
     }
   }
 }

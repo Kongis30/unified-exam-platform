@@ -71,8 +71,8 @@ public class SatStudentAttemptService {
             SELECT p.id, p.title, p.description, p.exam_type_code, p.default_duration_seconds,
                    g.name AS group_name, COUNT(pi.id) AS question_count
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id
-            JOIN paper_sections s ON s.paper_id = p.id
-            LEFT JOIN paper_items pi ON pi.section_id = s.id
+            JOIN paper_sections s ON s.paper_id = p.id AND s.archived_key = 0
+            LEFT JOIN paper_items pi ON pi.section_id = s.id AND pi.is_active = TRUE
             WHERE p.exam_type_code IN ('SAT', 'PSAT') AND (? IS NULL OR p.exam_type_code = ?) AND p.status <> 'ARCHIVED'
               AND (p.status = 'READY' OR EXISTS (SELECT 1 FROM sat_practice_paper_templates template WHERE template.paper_id = p.id)
                    OR EXISTS (SELECT 1 FROM exams published WHERE published.paper_id = p.id
@@ -335,7 +335,9 @@ public class SatStudentAttemptService {
         if (!"SUBMITTED".equalsIgnoreCase(attempt.status())) throw conflict("The exam report is not ready yet.");
         ObjectNode report = mapper.createObjectNode();
         ReportIdentity identity = jdbc.query("""
-            SELECT u.real_name, e.title, p.title AS paper_title, p.id AS paper_id, s.scoring_table_code,
+            SELECT u.real_name, e.title, p.title AS paper_title, p.id AS paper_id,
+                   COALESCE((SELECT JSON_UNQUOTE(JSON_EXTRACT(question_json, '$.scoringTableCode'))
+                       FROM sat_attempt_question_state WHERE attempt_id = a.id LIMIT 1), s.scoring_table_code) AS scoring_table_code,
                    r.algorithm_version, r.max_points AS legacy_max_points, d.source_score_json,
                    d.rw_module1_raw, d.rw_module2_raw, d.math_module1_raw, d.math_module2_raw,
                    d.rw_module1_seconds, d.rw_module2_seconds, d.math_module1_seconds, d.math_module2_seconds,
@@ -373,12 +375,31 @@ public class SatStudentAttemptService {
         Map<String, ModuleReportStats> statsByModule = new LinkedHashMap<>();
         Map<String, SkillReportStats> skills = new LinkedHashMap<>();
         String reportItemsSql = """
-            SELECT pi.id AS item_id, q.id AS question_id, pi.display_number, pi.max_points, q.stem, q.question_type_code,
-                   q.render_json, q.answer_key_json, q.explanation, ps.section_code, ps.title AS module_title,
-                   ps.id AS module_id, ps.settings_json, aa.answer_json, aa.is_correct, aa.time_spent_seconds,
-                   material.content AS material_content, material.file_url AS material_file_url
+            SELECT pi.id AS item_id, q.id AS question_id,
+                   COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.displayNumber')) AS UNSIGNED), pi.display_number) AS display_number,
+                   COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.maxPoints')) AS DECIMAL(8,2)), pi.max_points) AS max_points,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.stem')), q.stem) AS stem,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.questionTypeCode')), q.question_type_code) AS question_type_code,
+                   COALESCE(JSON_EXTRACT(sat_state.question_json, '$.render'), q.render_json) AS render_json,
+                   COALESCE(JSON_EXTRACT(sat_state.question_json, '$.answerKey'), q.answer_key_json) AS answer_key_json,
+                   CASE WHEN sat_state.question_json IS NOT NULL
+                       THEN NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.explanation')), 'null')
+                       ELSE q.explanation END AS explanation,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.sectionCode')), ps.section_code) AS section_code,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.sectionTitle')), ps.title) AS module_title,
+                   ps.id AS module_id,
+                   COALESCE(JSON_EXTRACT(sat_state.question_json, '$.sectionSettings'), ps.settings_json) AS settings_json,
+                   aa.answer_json, aa.is_correct, aa.time_spent_seconds,
+                   CASE WHEN sat_state.question_json IS NOT NULL
+                       THEN NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.display.material.content')), 'null')
+                       ELSE material.content END AS material_content,
+                   CASE WHEN sat_state.question_json IS NOT NULL
+                       THEN NULLIF(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.display.material.assetUrl')), 'null')
+                       ELSE material.file_url END AS material_file_url
             FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
             JOIN paper_sections ps ON ps.id = pi.section_id JOIN questions q ON q.id = pi.question_id
+            LEFT JOIN sat_attempt_question_state sat_state
+                ON sat_state.attempt_id = ai.attempt_id AND sat_state.paper_item_id = ai.paper_item_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
             LEFT JOIN sat_question_materials qm ON qm.question_id = q.id
             LEFT JOIN sat_materials material ON material.id = qm.material_id
@@ -504,7 +525,7 @@ public class SatStudentAttemptService {
         }
         // 到时后的客户端交卷只结束模块，不能用未保存的迟交答案覆盖服务端快照。
         if (remainingSeconds(state) > 0) persistAnswers(attemptId, moduleId, submission.answers());
-        List<ModuleRow> modules = modules(state.paperId());
+        List<ModuleRow> modules = modulesForAttempt(state.attemptId(), state.paperId());
         int index = moduleIndex(modules, moduleId);
         if (index < 0) throw notFound("Module not found in this paper.");
         ArrayNode completed = readArray(state.completedModulesJson());
@@ -540,7 +561,7 @@ public class SatStudentAttemptService {
             forceSubmitAtDeadline(attemptId, username, state.paperId(), state.status());
             return snapshot(attemptId, username);
         }
-        List<ModuleRow> modules = modules(state.paperId());
+        List<ModuleRow> modules = modulesForAttempt(state.attemptId(), state.paperId());
         int index = moduleIndex(modules, state.activeModuleId());
         if (index < 0 || index + 1 >= modules.size()) throw conflict("The next module is unavailable.");
         jdbc.update("""
@@ -562,8 +583,11 @@ public class SatStudentAttemptService {
         if (state.awaitingBreak() || state.activeModuleId() == null) {
             throw conflict("There is no active module to report.");
         }
-        Integer questionCount = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM paper_items WHERE section_id = ?", Integer.class, state.activeModuleId());
+        Integer questionCount = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM attempt_items ai
+            JOIN paper_items pi ON pi.id = ai.paper_item_id
+            WHERE ai.attempt_id = ? AND pi.section_id = ?
+            """, Integer.class, attemptId, state.activeModuleId());
         if (questionCount == null || questionNumber > questionCount) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The current question is not in this module.");
         }
@@ -598,7 +622,7 @@ public class SatStudentAttemptService {
         StudentAttemptService.AttemptView attempt = attempts.get(attemptId, username);
         requireSat(attempt.examTypeCode());
         SatState state = state(attemptId);
-        List<ModuleRow> moduleRows = modules(attempt.paperId());
+        List<ModuleRow> moduleRows = modulesForAttempt(attempt.id(), attempt.paperId());
         List<SatModule> moduleViews = moduleRows.stream().map(module -> new SatModule(module.id(), module.code(),
             module.title(), module.subject(), module.moduleNumber(), module.sortOrder(), module.durationSeconds(), module.questionCount())).toList();
         long activeModuleId = state.activeModuleId() == null ? -1 : state.activeModuleId();
@@ -610,7 +634,17 @@ public class SatStudentAttemptService {
             .filter(question -> sectionBelongsToModule(question.sectionCode(), active.code()) && question.answer() != null)
             .map(question -> savedAnswer(attemptId, question)).toList();
         boolean submitted = "SUBMITTED".equals(attempt.status());
-        int restSeconds = jdbc.queryForObject("SELECT rest_time_seconds FROM sat_paper_settings WHERE paper_id = ?", Integer.class, attempt.paperId());
+        Integer restSnapshot = jdbc.query("""
+            SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(question_json, '$.restTimeSeconds')) AS UNSIGNED)
+            FROM sat_attempt_question_state WHERE attempt_id = ? LIMIT 1
+            """, rs -> {
+                if (!rs.next()) return null;
+                Number value = (Number) rs.getObject(1);
+                return value == null ? null : value.intValue();
+            }, attemptId);
+        int restSeconds = restSnapshot == null
+            ? jdbc.queryForObject("SELECT rest_time_seconds FROM sat_paper_settings WHERE paper_id = ?", Integer.class, attempt.paperId())
+            : restSnapshot;
         return new SatAttemptView(attempt.id(), attempt.examId(), attempt.paperId(), attempt.examTitle(), attempt.examTypeCode(),
             submitted ? "finished" : "ongoing", attempt.practice(), active == null ? null : active.id(), remainingSeconds(state),
             state.awaitingBreak(), restSeconds, state.focusViolationCount(), moduleViews, questions, savedAnswers);
@@ -811,8 +845,8 @@ public class SatStudentAttemptService {
     private List<ModuleRow> modules(long paperId) {
         return jdbc.query("""
             SELECT id, section_code, title, sort_order, settings_json,
-                   (SELECT COUNT(*) FROM paper_items pi WHERE pi.section_id = paper_sections.id) AS question_count
-            FROM paper_sections WHERE paper_id = ? AND parent_section_id IS NULL
+                   (SELECT COUNT(*) FROM paper_items pi WHERE pi.section_id = paper_sections.id AND pi.is_active = TRUE) AS question_count
+            FROM paper_sections WHERE paper_id = ? AND archived_key = 0 AND parent_section_id IS NULL
             ORDER BY sort_order, id
             """, (rs, row) -> {
                 JsonNode settings = readJson(rs.getString("settings_json"));
@@ -824,9 +858,31 @@ public class SatStudentAttemptService {
             }, paperId);
     }
 
+    /** 为正在作答的考试读取它实际获得的分段，支持编辑后同时保留旧版考试。 */
+    private List<ModuleRow> modulesForAttempt(long attemptId, long paperId) {
+        return jdbc.query("""
+            SELECT DISTINCT section.id, section.section_code, section.title, section.sort_order, section.settings_json,
+                   (SELECT COUNT(*) FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+                    WHERE ai.attempt_id = ? AND pi.section_id = section.id) AS question_count
+            FROM attempt_items ai
+            JOIN paper_items item ON item.id = ai.paper_item_id
+            JOIN paper_sections section ON section.id = item.section_id
+            WHERE ai.attempt_id = ? AND section.paper_id = ? AND section.parent_section_id IS NULL
+            ORDER BY section.sort_order, section.id
+            """, (rs, row) -> {
+                JsonNode settings = readJson(rs.getString("settings_json"));
+                String subject = settings.path("subject").asText("RW").toUpperCase();
+                String code = rs.getString("section_code");
+                return new ModuleRow(rs.getLong("id"), code, rs.getString("title"), subject,
+                    settings.path("moduleNumber").asInt(1), rs.getInt("sort_order"),
+                    settings.path("timeLimitSeconds").asInt(1800), rs.getInt("question_count"));
+            }, attemptId, attemptId, paperId);
+    }
+
     private int remainingSeconds(SatState state) {
         if (state.awaitingBreak() || state.moduleStartedAt() == null || state.activeModuleId() == null) return 0;
-        ModuleRow active = modules(state.paperId()).stream().filter(module -> module.id() == state.activeModuleId()).findFirst().orElse(null);
+        ModuleRow active = modulesForAttempt(state.attemptId(), state.paperId()).stream()
+            .filter(module -> module.id() == state.activeModuleId()).findFirst().orElse(null);
         if (active == null) return 0;
         Integer elapsed = jdbc.queryForObject("SELECT GREATEST(0, TIMESTAMPDIFF(SECOND, ?, CURRENT_TIMESTAMP(6)))", Integer.class,
             state.moduleStartedAt());

@@ -64,10 +64,10 @@ public class PaperService {
                    p.title, p.status, p.default_duration_seconds,
                    (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id AND section.archived_key = 0) AS section_count,
                    (SELECT COUNT(*) FROM paper_items item JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS question_count,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0 AND item.is_active = TRUE) AS question_count,
                    (SELECT COALESCE(SUM(item.max_points), 0) FROM paper_items item
                     JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS total_score,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0 AND item.is_active = TRUE) AS total_score,
                    p.created_at, p.updated_at
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id
             WHERE p.exam_type_code = ? ORDER BY p.updated_at DESC, p.id DESC
@@ -416,17 +416,16 @@ public class PaperService {
         List<Long> previousSectionIds = "SHSAT".equals(examTypeCode)
             ? jdbcTemplate.queryForList("SELECT id FROM paper_sections WHERE paper_id = ? AND archived_key = 0", Long.class, paperId)
             : List.of();
-        if ("SHSAT".equals(examTypeCode)) {
-            // 旧分段及题目不可变，历史作答和跨版本题目关联继续使用原 ID。
+        boolean preserveAttemptedRevision = isSatWorkspaceType(examTypeCode)
+            && Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
+                    JOIN paper_sections ps ON ps.id = pi.section_id
+                    WHERE ps.paper_id = ?)
+                """, Boolean.class, paperId));
+        if ("SHSAT".equals(examTypeCode) || preserveAttemptedRevision) {
+            // 有历史作答时保留旧分段和题目 ID；新考试只读取 archived_key 为 0 的结构。
             jdbcTemplate.update("UPDATE paper_sections SET archived_key = id WHERE paper_id = ? AND archived_key = 0", paperId);
         } else {
-            if (Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
-                SELECT EXISTS(SELECT 1 FROM attempt_items ai JOIN paper_items pi ON pi.id = ai.paper_item_id
-                    JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?)
-                """, Boolean.class, paperId))) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "This paper has student attempts. Create a new paper version before changing questions or sections.");
-            }
             List<Long> oldQuestionIds = jdbcTemplate.query("""
                 SELECT DISTINCT pi.question_id FROM paper_items pi
                 JOIN paper_sections ps ON ps.id = pi.section_id WHERE ps.paper_id = ?
@@ -1028,7 +1027,7 @@ public class PaperService {
             LEFT JOIN shsat_paper_materials shpm ON p.exam_type_code = 'SHSAT' AND shsm.id IS NULL
                 AND shpm.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(q.render_json, '$.materialId')) AS UNSIGNED)
                 AND shpm.paper_id = p.id
-            WHERE pi.section_id = ? ORDER BY pi.sort_order, pi.id
+            WHERE pi.section_id = ? AND pi.is_active = TRUE ORDER BY pi.sort_order, pi.id
             """, (rs, rowNum) -> new QuestionView(rs.getLong("question_id"), rs.getLong("paper_item_id"),
                 rs.getString("question_type_code"), rs.getInt("payload_schema_version"), rs.getString("stem"),
                 withShsatMaterial(readJson(rs.getString("render_json")), rs), readJson(rs.getString("answer_key_json")),
@@ -1105,10 +1104,10 @@ public class PaperService {
                    p.title, p.status, p.default_duration_seconds,
                    (SELECT COUNT(*) FROM paper_sections section WHERE section.paper_id = p.id AND section.archived_key = 0) AS section_count,
                    (SELECT COUNT(*) FROM paper_items item JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS question_count,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0 AND item.is_active = TRUE) AS question_count,
                    (SELECT COALESCE(SUM(item.max_points), 0) FROM paper_items item
                     JOIN paper_sections section ON section.id = item.section_id
-                    WHERE section.paper_id = p.id AND section.archived_key = 0) AS total_score,
+                    WHERE section.paper_id = p.id AND section.archived_key = 0 AND item.is_active = TRUE) AS total_score,
                    p.created_at, p.updated_at
             FROM papers p LEFT JOIN paper_groups g ON g.id = p.group_id WHERE p.id = ?
             """, (rs, rowNum) -> new PaperSummary(rs.getLong("id"), rs.getString("exam_type_code"),
@@ -1216,21 +1215,10 @@ public class PaperService {
         if (!"DRAFT".equals(status)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Only draft papers can be changed.");
     }
 
-    /** SHSAT 允许编辑已有试卷；SAT/PSAT 保持现有版本限制。 */
+    /** SAT/PSAT 与 SHSAT 可编辑已关联考试的试卷；其他试卷仍按草稿状态限制。 */
     private void requireEditable(long paperId, String examTypeCode) {
-        if ("SHSAT".equals(examTypeCode)) return;
-        if (!isSatWorkspaceType(examTypeCode)) {
-            requireDraft(paperId);
-            return;
-        }
-        String status = jdbcTemplate.query("SELECT status FROM papers WHERE id = ?",
-            rs -> rs.next() ? rs.getString(1) : null, paperId);
-        Boolean usedByExam = jdbcTemplate.queryForObject(
-            "SELECT EXISTS(SELECT 1 FROM exams WHERE paper_id = ?)", Boolean.class, paperId);
-        if ("ARCHIVED".equals(status) || Boolean.TRUE.equals(usedByExam)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                "This paper version is locked. Create a new version before editing it.");
-        }
+        if ("SHSAT".equals(examTypeCode) || isSatWorkspaceType(examTypeCode)) return;
+        requireDraft(paperId);
     }
 
     private Long nullableLong(java.sql.ResultSet rs, String column) throws java.sql.SQLException {

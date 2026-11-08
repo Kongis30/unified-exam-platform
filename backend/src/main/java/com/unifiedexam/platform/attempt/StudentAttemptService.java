@@ -32,6 +32,7 @@ import java.util.Set;
 public class StudentAttemptService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final SatAttemptQuestionSnapshots satAttemptQuestionSnapshots;
     private final ExamTypeRegistry examTypeRegistry;
     private final ObjectMapper objectMapper;
     private final ShsatScoreScaleService shsatScoreScaleService;
@@ -39,6 +40,7 @@ public class StudentAttemptService {
     public StudentAttemptService(JdbcTemplate jdbcTemplate, ExamTypeRegistry examTypeRegistry,
                                  ObjectMapper objectMapper, ShsatScoreScaleService shsatScoreScaleService) {
         this.jdbcTemplate = jdbcTemplate;
+        this.satAttemptQuestionSnapshots = new SatAttemptQuestionSnapshots(jdbcTemplate);
         this.examTypeRegistry = examTypeRegistry;
         this.objectMapper = objectMapper;
         this.shsatScoreScaleService = shsatScoreScaleService;
@@ -238,7 +240,7 @@ public class StudentAttemptService {
 
         Integer questionCount = jdbcTemplate.queryForObject("""
             SELECT COUNT(*) FROM paper_items pi JOIN paper_sections ps ON ps.id = pi.section_id
-            WHERE ps.paper_id = ? AND ps.archived_key = 0
+            WHERE ps.paper_id = ? AND ps.archived_key = 0 AND pi.is_active = TRUE
             """, Integer.class, exam.paperId());
         if (questionCount == null || questionCount == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This exam does not contain any questions.");
@@ -267,11 +269,13 @@ public class StudentAttemptService {
                 FROM paper_sections child JOIN section_tree parent ON child.parent_section_id = parent.id
             )
             SELECT ?, pi.id, ROW_NUMBER() OVER (ORDER BY st.sort_path, pi.sort_order, pi.id)
-            FROM section_tree st JOIN paper_items pi ON pi.section_id = st.id
+            FROM section_tree st JOIN paper_items pi ON pi.section_id = st.id AND pi.is_active = TRUE
             """, exam.paperId(), attemptId);
         if ("SHSAT".equals(exam.examTypeCode())) {
             captureShsatQuestionState(attemptId);
             initializeShsatAttemptState(attemptId, firstSection);
+        } else if ("SAT".equals(exam.examTypeCode()) || "PSAT".equals(exam.examTypeCode())) {
+            satAttemptQuestionSnapshots.captureAttempt(attemptId);
         }
         return getOwnedAttempt(attemptId, studentId);
     }
@@ -603,19 +607,30 @@ public class StudentAttemptService {
                 SELECT EXISTS(SELECT 1 FROM sat_attempt_state state
                     WHERE state.attempt_id = ? AND state.active_module_section_id IS NULL AND state.awaiting_break = FALSE
                       AND JSON_LENGTH(state.completed_modules_json) >= (SELECT COUNT(*) FROM paper_sections
-                          WHERE paper_id = ? AND parent_section_id IS NULL))
-                """, Boolean.class, attemptId, attempt.paperId());
+                          WHERE paper_id = ? AND parent_section_id IS NULL AND id IN (
+                              SELECT DISTINCT section.id FROM attempt_items ai
+                              JOIN paper_items pi ON pi.id = ai.paper_item_id
+                              JOIN paper_sections section ON section.id = pi.section_id
+                              WHERE ai.attempt_id = ?)))
+                """, Boolean.class, attemptId, attempt.paperId(), attemptId);
             if (!Boolean.TRUE.equals(complete)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Complete every SAT module before submitting the exam.");
             }
         }
         ExamTypeModule module = registeredModule(attempt.examTypeCode());
         List<GradingRow> items = jdbcTemplate.query("""
-            SELECT ai.paper_item_id, pi.section_id, q.question_type_code, q.answer_key_json,
-                   q.render_json, q.grading_json, pi.max_points, aa.answer_json, qm.skill_tag_code
+            SELECT ai.paper_item_id, pi.section_id,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.questionTypeCode')), q.question_type_code) AS question_type_code,
+                   COALESCE(JSON_EXTRACT(sat_state.question_json, '$.answerKey'), q.answer_key_json) AS answer_key_json,
+                   COALESCE(JSON_EXTRACT(sat_state.question_json, '$.render'), q.render_json) AS render_json,
+                   COALESCE(JSON_EXTRACT(sat_state.question_json, '$.grading'), q.grading_json) AS grading_json,
+                   COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.maxPoints')) AS DECIMAL(8,2)), pi.max_points) AS max_points,
+                   aa.answer_json, qm.skill_tag_code
             FROM attempt_items ai
             JOIN paper_items pi ON pi.id = ai.paper_item_id
             JOIN questions q ON q.id = pi.question_id
+            LEFT JOIN sat_attempt_question_state sat_state
+                ON sat_state.attempt_id = ai.attempt_id AND sat_state.paper_item_id = ai.paper_item_id
             LEFT JOIN shsat_question_metadata qm ON qm.question_id = q.id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
             WHERE ai.attempt_id = ? ORDER BY ai.served_order
@@ -625,6 +640,7 @@ public class StudentAttemptService {
                 rs.getBigDecimal("max_points"), parseNullable(rs.getString("answer_json")),
                 rs.getString("skill_tag_code")), attemptId);
         Map<Long, PaperSection> sections = "SHSAT".equals(attempt.examTypeCode())
+                || "SAT".equals(attempt.examTypeCode()) || "PSAT".equals(attempt.examTypeCode())
             ? loadAttemptSections(attemptId) : loadPaperSections(attempt.paperId());
         Map<String, BreakdownAccumulator> resultBreakdowns = new LinkedHashMap<>();
 
@@ -773,10 +789,19 @@ public class StudentAttemptService {
         }
         Set<Long> markedQuestionIds = readMarkedQuestionIds(summary.progressState());
         List<AttemptQuestion> questions = jdbcTemplate.query("""
-            SELECT ai.paper_item_id, q.question_type_code, q.payload_schema_version, q.stem, q.render_json,
-                   pi.display_number, pi.max_points, section.section_code, section.title AS section_title,
-                   parent.section_code AS parent_section_code, parent.title AS parent_section_title,
+            SELECT ai.paper_item_id,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.questionTypeCode')), q.question_type_code) AS question_type_code,
+                   COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.payloadSchemaVersion')) AS UNSIGNED), q.payload_schema_version) AS payload_schema_version,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.stem')), q.stem) AS stem,
+                   COALESCE(JSON_EXTRACT(sat_state.question_json, '$.display'), q.render_json) AS render_json,
+                   COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.displayNumber')) AS UNSIGNED), pi.display_number) AS display_number,
+                   COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.maxPoints')) AS DECIMAL(8,2)), pi.max_points) AS max_points,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.sectionCode')), section.section_code) AS section_code,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.sectionTitle')), section.title) AS section_title,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.parentSectionCode')), parent.section_code) AS parent_section_code,
+                   COALESCE(JSON_UNQUOTE(JSON_EXTRACT(sat_state.question_json, '$.parentSectionTitle')), parent.title) AS parent_section_title,
                    aa.answer_json, COALESCE(aa.is_marked_for_review, FALSE) AS is_marked_for_review,
+                   sat_state.question_json AS sat_question_snapshot,
                    sm.id AS sat_material_id, sm.title AS sat_material_title,
                    sm.material_type AS sat_material_type, sm.content AS sat_material_content,
                    sm.file_url AS sat_material_file_url,
@@ -790,6 +815,8 @@ public class StudentAttemptService {
             JOIN questions q ON q.id = pi.question_id
             JOIN paper_sections section ON section.id = pi.section_id
             JOIN papers p ON p.id = section.paper_id
+            LEFT JOIN sat_attempt_question_state sat_state
+                ON sat_state.attempt_id = ai.attempt_id AND sat_state.paper_item_id = ai.paper_item_id
             LEFT JOIN paper_sections parent ON parent.id = section.parent_section_id
             LEFT JOIN attempt_answers aa ON aa.attempt_id = ai.attempt_id AND aa.paper_item_id = ai.paper_item_id
             LEFT JOIN sat_question_materials sqm ON sqm.question_id = q.id
@@ -803,7 +830,9 @@ public class StudentAttemptService {
             WHERE ai.attempt_id = ? ORDER BY ai.served_order
             """, (rs, rowNum) -> {
                 JsonNode display = parseNullable(rs.getString("render_json"));
-                if (rs.getObject("sat_material_id") != null) {
+                if (rs.getString("sat_question_snapshot") != null) {
+                    // SAT 快照中的展示数据已经包含当时的材料，不再读取可编辑的当前材料库。
+                } else if (rs.getObject("sat_material_id") != null) {
                     ObjectNode enrichedDisplay = display != null && display.isObject()
                         ? ((ObjectNode) display).deepCopy() : objectMapper.createObjectNode();
                     ObjectNode material = objectMapper.createObjectNode();
