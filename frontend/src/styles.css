@@ -337,27 +337,36 @@ td small { margin-top: 4px; color: #8795aa; font-size: 9px; }
 .secondary-button { min-height: 40px; background: #eaf1ff; color: #1f56c7; }
 .sat-exam-releases-card,
 .sat-classes-card { position: relative; min-width: 0; }
-.sat-exam-release-table { min-width: 900px; table-layout: fixed; }
-.sat-exam-release-table__exam-column { width: 20%; }
-.sat-exam-release-table__paper-column { width: 22%; }
-.sat-exam-release-table__type-column { width: 9%; }
-.sat-exam-release-table__availability-column { width: 19%; }
-.sat-exam-release-table__status-column { width: 12%; }
-.sat-exam-release-table__actions-column { width: 18%; }
-.sat-exam-release-table-wrap { max-height: 1000px; overflow: auto; overscroll-behavior: contain; }
-.sat-exam-release-table-wrap .sat-exam-release-table thead th { position: sticky; top: 0; z-index: 2; }
+.sat-exam-releases-card .exam-release-table { min-width: 960px; table-layout: fixed; }
+.sat-exam-releases-card .exam-release-table-wrap { max-height: none; overflow: visible; }
+.sat-exam-releases-card .exam-release-table__title-column { width: 30%; }
+.sat-exam-releases-card .exam-release-table__time-column { width: 23%; }
+.sat-exam-releases-card .exam-release-table__target-column { width: 11%; }
+.sat-exam-releases-card .exam-release-table__submission-column { width: 9%; }
+.sat-exam-releases-card .exam-release-table__access-column { width: 13%; }
+.sat-exam-releases-card .exam-release-table__actions-column { width: 14%; }
+.sat-exam-releases-card .exam-release-table th,
+.sat-exam-releases-card .exam-release-table td { text-align: center; }
+.sat-exam-releases-card .exam-release-table td:first-child { text-align: left; }
+.sat-exam-releases-card .exam-release-table th:last-child,
+.sat-exam-releases-card .exam-release-table td:last-child { padding-inline: 8px; text-align: center; }
+.exam-release-table__title-cell strong,
+.exam-release-table__title-cell small,
+.exam-release-table__target-cell span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.45; overflow-wrap: anywhere; }
+.exam-release-table__title-cell small { color: var(--color-muted); font-size: 13px; }
+.exam-release-table__time-cell { font-size: 13px !important; }
+.exam-release-table__time-cell span { display: block; }
+.exam-release-table__target-cell { font-size: 14px !important; }
+.exam-release-table__submission-cell,
+.exam-release-table__access-cell { white-space: nowrap; }
+.sat-exam-releases-card .access-pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 999px; padding: 4px 9px; font-size: 13px; font-weight: 800; line-height: 1; white-space: nowrap; }
+.sat-exam-releases-card .access-pill::before { width: 6px; height: 6px; border-radius: 999px; background: currentColor; content: ''; }
+.sat-exam-releases-card .access-pill--open { border-color: #bfe9d8; color: #16794c; background: #f0fbf6; }
+.sat-exam-releases-card .access-pill--scheduled { border-color: #cfe0ff; color: var(--color-primary-strong); background: #f5f8ff; }
+.sat-exam-releases-card .access-pill--hidden,
+.sat-exam-releases-card .access-pill--closed { border-color: #d9e1ec; color: #64748b; background: #f8fafc; }
 .exam-release-load-more { margin: 0; border-top: 1px solid var(--color-border); padding: 12px; color: var(--color-muted); font-size: 12px; text-align: center; }
-.sat-exam-release-table__title-cell strong,
-.sat-exam-release-table__paper-cell span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.45; overflow-wrap: anywhere; }
-.sat-exam-release-table__paper-cell { color: var(--color-muted); }
-.sat-exam-release-table__availability-cell { font-size: 14px; white-space: nowrap; }
-.sat-exam-release-table__availability-cell span { display: block; }
-.sat-exam-release-table__availability-cell .exam-window-line { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: baseline; gap: 8px; }
-.sat-exam-release-table__availability-cell .exam-window-line small { color: var(--color-muted); font-size: 11px; font-weight: 650; }
-.sat-exam-release-table__availability-cell .exam-window-line time { font: inherit; }
-.sat-exam-release-table__type-cell,
-.sat-exam-release-table__status-cell { white-space: nowrap; }
-@media (max-width: 920px) { .sat-exam-release-table-wrap { max-height: min(1000px, 65vh); } }
+@media (max-width: 980px) { .sat-exam-releases-card .exam-release-table-wrap { overflow-x: auto; } }
 .card-top-actions { position: absolute; top: 22px; right: clamp(20px, 3vw, 28px); display: inline-flex; align-items: center; gap: 8px; }
 .card-top-actions__primary { min-height: 34px; padding: 0 14px; font-size: 13px; }
 .admin-refresh-button { display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center; border: 1px solid #cfe0ff; border-radius: 999px; color: var(--color-primary-strong); background: var(--color-primary-soft); cursor: pointer; }

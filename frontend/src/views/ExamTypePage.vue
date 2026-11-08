@@ -129,13 +129,17 @@ let notificationTimer = null
 let examReleaseRefreshTimer = null
 const EXAM_DELETE_COOLDOWN_SECONDS = 5
 const examKeyword = ref(typeof route.query.examSearch === 'string' ? route.query.examSearch : '')
+const examReleaseFilters = reactive({
+  published: typeof route.query.releasePublished === 'string' ? route.query.releasePublished : '',
+  timeStatus: typeof route.query.releaseTimeStatus === 'string' ? route.query.releaseTimeStatus : '',
+  targetType: typeof route.query.releaseTargetType === 'string' ? route.query.releaseTargetType : '',
+})
 const initialExamPageSize = Number(route.query.examPageSize)
 const examPageSize = ref([10, 20, 50].includes(initialExamPageSize) ? initialExamPageSize : 10)
 const currentExamPage = ref(Math.max(1, Number(route.query.currentExamPage) || 1))
 const historicalExamPage = ref(Math.max(1, Number(route.query.historicalExamPage) || 1))
 const editorOpen = ref(false)
 const releaseOpen = ref(false)
-const draftListOpen = ref(false)
 const draftPaperTitle = ref('')
 const draftHadTargets = ref(false)
 const draftExamId = ref(null)
@@ -163,13 +167,19 @@ const latestPaperVersions = computed(() => {
 const availablePapers = computed(() => latestPaperVersions.value.filter((paper) => paper.status !== 'ARCHIVED'))
 const filteredExams = computed(() => {
   const keyword = examKeyword.value.trim().toLocaleLowerCase()
-  if (!keyword) return exams.value
-  return exams.value.filter((exam) => [exam.title, exam.paperTitle, exam.examTypeCode]
-    .some((value) => String(value || '').toLocaleLowerCase().includes(keyword)))
+  return exams.value.filter((exam) => {
+    const published = exam.status === 'PUBLISHED'
+    if (examReleaseFilters.published === 'published' && !published) return false
+    if (examReleaseFilters.published === 'unpublished' && published) return false
+    if (examReleaseFilters.timeStatus && getExamTimeStatus(exam).key !== examReleaseFilters.timeStatus) return false
+    if (examReleaseFilters.targetType && !matchesExamTargetType(exam, examReleaseFilters.targetType)) return false
+    if (!keyword) return true
+    return [exam.title, exam.paperTitle, exam.targetSummary, exam.targetScope]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(keyword))
+  })
 })
-const draftExams = computed(() => exams.value.filter((exam) => exam.status === 'DRAFT'))
-const currentExams = computed(() => filteredExams.value.filter((exam) => exam.status === 'PUBLISHED'
-  && new Date(exam.closesAt).getTime() > Date.now()))
+const currentExams = computed(() => filteredExams.value.filter((exam) => exam.status === 'DRAFT'
+  || (exam.status === 'PUBLISHED' && new Date(exam.closesAt).getTime() > Date.now())))
 const historicalExams = computed(() => filteredExams.value.filter((exam) =>
   ['CLOSED', 'CANCELLED'].includes(exam.status)
   || (exam.status === 'PUBLISHED' && new Date(exam.closesAt).getTime() <= Date.now())))
@@ -923,19 +933,24 @@ async function loadWorkspaceExams(force = false) {
   } finally { staffExamsLoading.value = false }
 }
 
-watch([examKeyword, examPageSize], () => {
+watch([examKeyword, examPageSize, () => examReleaseFilters.published, () => examReleaseFilters.timeStatus,
+  () => examReleaseFilters.targetType], () => {
   currentExamPage.value = 1
   historicalExamPage.value = 1
 })
 
 // SAT 列表状态写进路由，离开查看结果/监考后可从原筛选和页码继续操作。
 watch([activeTab, examKeyword, examPageSize, currentExamPage, historicalExamPage,
+  () => examReleaseFilters.published, () => examReleaseFilters.timeStatus, () => examReleaseFilters.targetType,
   () => paperFilters.groupId, appliedPaperKeyword], () => {
   if (!isSatWorkspace.value || !isStaff.value || route.name !== adminRouteName.value) return
 
   const query = { ...route.query, tab: activeTab.value }
   const state = {
     examSearch: examKeyword.value || undefined,
+    releasePublished: examReleaseFilters.published || undefined,
+    releaseTimeStatus: examReleaseFilters.timeStatus || undefined,
+    releaseTargetType: examReleaseFilters.targetType || undefined,
     examPageSize: examPageSize.value === 10 ? undefined : String(examPageSize.value),
     currentExamPage: currentExamPage.value === 1 ? undefined : String(currentExamPage.value),
     historicalExamPage: historicalExamPage.value === 1 ? undefined : String(historicalExamPage.value),
@@ -1368,11 +1383,6 @@ function defaultReleaseDurationMinutes(paper) {
     : defaultPaperDurationMinutes(paper?.examTypeCode || props.code)
 }
 
-function openDraftList() {
-  error.value = ''
-  draftListOpen.value = true
-}
-
 async function resumeDraft(exam) {
   error.value = ''; notice.value = ''; isSaving.value = true
   try {
@@ -1395,7 +1405,6 @@ async function resumeDraft(exam) {
       attemptLimit: summary.attemptLimit || 1,
       targetScope: summary.targetScope || 'SELECTED',
     })
-    draftListOpen.value = false
     releaseOpen.value = true
   } catch (requestError) {
     error.value = requestError.message || 'Unable to open this draft.'
@@ -1501,6 +1510,35 @@ function examAvailability(exam) {
   if (new Date(exam.opensAt).getTime() > now) return 'Upcoming'
   if (new Date(exam.closesAt).getTime() <= now) return 'Closed'
   return 'Available'
+}
+
+function getExamTimeStatus(exam) {
+  const now = Date.now()
+  if (new Date(exam.opensAt).getTime() > now) return { key: 'upcoming', label: 'Upcoming' }
+  if (new Date(exam.closesAt).getTime() <= now) return { key: 'ended', label: 'Ended' }
+  return { key: 'live', label: 'Live' }
+}
+
+function formatExamTarget(exam) {
+  if (exam.targetSummary) return exam.targetSummary
+  if (exam.targetScope === 'ALL_STUDENTS') return 'All students'
+  return exam.targetScope === 'SPECIFIC_CLASSES' ? 'Specific classes' : 'Specific students'
+}
+
+function matchesExamTargetType(exam, selectedType) {
+  if (selectedType === 'ALL_STUDENTS') return exam.targetScope === 'ALL_STUDENTS'
+  const summary = String(exam.targetSummary || '')
+  if (selectedType === 'SPECIFIC_CLASSES') return summary.includes('Classes:')
+  if (selectedType === 'SPECIFIC_STUDENTS') return summary.includes('Students:')
+  return false
+}
+
+function getExamAccessState(exam) {
+  if (exam.status !== 'PUBLISHED') return { label: 'Not published', className: 'access-pill--hidden', detail: 'Students cannot see or start this release.' }
+  const timeStatus = getExamTimeStatus(exam)
+  if (timeStatus.key === 'upcoming') return { label: 'Scheduled', className: 'access-pill--scheduled', detail: 'Visible to students, but not open yet.' }
+  if (timeStatus.key === 'ended') return { label: 'Closed', className: 'access-pill--closed', detail: 'The exam window has ended.' }
+  return { label: 'Open', className: 'access-pill--open', detail: 'Students can see and start this release.' }
 }
 
 function formatExamDate(value) {
@@ -1905,9 +1943,8 @@ watch(() => props.code, (code) => {
         </dl>
       </AppModal>
 
-      <AppCard v-if="activeTab === 'exams'" class="sat-exam-releases-card" title="Exam Releases" subtitle="Review exam releases and their availability windows.">
+      <AppCard v-if="activeTab === 'exams'" class="sat-exam-releases-card exam-releases-card" title="Exam Releases" subtitle="Find a release, check its audience and window, then publish or unpublish it.">
         <div class="card-top-actions">
-          <AppButton variant="secondary" @click="openDraftList">Drafts <span class="draft-count">{{ draftExams.length }}</span></AppButton>
           <AppButton class="card-top-actions__primary" :disabled="!availablePapers.length" @click="openRelease">Create Exam</AppButton>
           <button class="admin-refresh-button" :class="{ 'admin-refresh-button--loading': staffExamsLoading }" type="button" :disabled="staffExamsLoading" aria-label="Refresh releases" title="Refresh releases" @click="loadWorkspaceExams(true)">
             <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a7 7 0 0 0 6.32-4Z" /></svg>
@@ -1919,7 +1956,16 @@ watch(() => props.code, (code) => {
         <template v-if="!examReleasesCollapsed">
         <div class="admin-toolbar release-toolbar">
           <div class="admin-toolbar__filters">
-            <input v-model="examKeyword" class="form-input release-search-input" placeholder="Search title or paper" />
+            <input v-model="examKeyword" class="form-input release-search-input" placeholder="Search title, paper, target" />
+            <select v-model="examReleaseFilters.published" class="form-input form-input--compact" aria-label="Visibility filter">
+              <option value="">All visibility</option><option value="published">Published releases</option><option value="unpublished">Unpublished releases</option>
+            </select>
+            <select v-model="examReleaseFilters.timeStatus" class="form-input form-input--compact" aria-label="Time status">
+              <option value="">All time windows</option><option value="upcoming">Upcoming</option><option value="live">Live</option>
+            </select>
+            <select v-model="examReleaseFilters.targetType" class="form-input form-input--compact" aria-label="Target type">
+              <option value="">All audiences</option><option value="ALL_STUDENTS">All students</option><option value="SPECIFIC_CLASSES">Specific classes</option><option value="SPECIFIC_STUDENTS">Specific students</option>
+            </select>
           </div>
         </div>
         <div v-if="staffExamsLoading && !exams.length" class="admin-state">Loading exams...</div>
@@ -1931,29 +1977,33 @@ watch(() => props.code, (code) => {
           tabindex="0"
         >
           <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
-          <AdminDataTable class="sat-exam-release-table">
+          <AdminDataTable class="exam-release-table">
             <colgroup>
-              <col class="sat-exam-release-table__exam-column" />
-              <col class="sat-exam-release-table__paper-column" />
-              <col class="sat-exam-release-table__type-column" />
-              <col class="sat-exam-release-table__availability-column" />
-              <col class="sat-exam-release-table__status-column" />
-              <col class="sat-exam-release-table__actions-column" />
+              <col class="exam-release-table__title-column" />
+              <col class="exam-release-table__time-column" />
+              <col class="exam-release-table__target-column" />
+              <col class="exam-release-table__submission-column" />
+              <col class="exam-release-table__access-column" />
+              <col class="exam-release-table__actions-column" />
             </colgroup>
-            <thead><tr><th>Exam</th><th>Paper</th><th>Type</th><th>Exam Window</th><th>Duration</th><th class="action-column-header">Actions</th></tr></thead>
+            <thead><tr><th>Exam / Paper</th><th>Time Window</th><th>Assigned To</th><th>Submission</th><th>Student Access</th><th class="action-column-header">Actions</th></tr></thead>
             <tbody>
               <tr v-for="exam in visibleExams" :key="exam.id">
-                <td class="sat-exam-release-table__title-cell"><strong :title="exam.title">{{ exam.title }}</strong></td>
-                <td class="sat-exam-release-table__paper-cell" :title="exam.paperTitle || '—'"><span>{{ exam.paperTitle || '—' }}</span></td>
-                <td class="sat-exam-release-table__type-cell"><span class="program-badge">{{ exam.examTypeCode }}</span></td>
-                <td class="sat-exam-release-table__availability-cell" :title="`Opens ${formatExamDate(exam.opensAt)} · Closes ${formatExamDate(exam.closesAt)}`">
-                  <span class="exam-window-line"><small>Opens</small><time>{{ formatExamDate(exam.opensAt) }}</time></span>
-                  <span class="exam-window-line"><small>Closes</small><time>{{ formatExamDate(exam.closesAt) }}</time></span>
+                <td class="exam-release-table__title-cell">
+                  <strong :title="exam.title">{{ exam.title }}</strong>
+                  <small :title="exam.paperTitle">{{ exam.paperTitle }}</small>
+                  <small v-if="exam.description">{{ exam.description }}</small>
                 </td>
-                <td class="sat-exam-release-table__status-cell">{{ exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : '—' }}</td>
-                <td class="action-column-cell">
-                  <ResponsiveActionGroup v-if="getExamActions(exam).length" align="center" :actions="getExamActions(exam)" :label="`Actions for ${exam.title}`" />
-                  <span v-else>—</span>
+                <td class="exam-release-table__time-cell" :title="`${formatExamDate(exam.opensAt)} – ${formatExamDate(exam.closesAt)}`">
+                  <span>{{ formatExamDate(exam.opensAt) }}</span><span>{{ formatExamDate(exam.closesAt) }}</span>
+                </td>
+                <td class="exam-release-table__target-cell" :title="formatExamTarget(exam)"><span>{{ formatExamTarget(exam) }}</span></td>
+                <td class="exam-release-table__submission-cell">{{ exam.attemptLimit === 1 ? 'One result' : `${exam.attemptLimit} attempts` }}</td>
+                <td class="exam-release-table__access-cell">
+                  <span class="access-pill" :class="getExamAccessState(exam).className" :title="getExamAccessState(exam).detail">{{ getExamAccessState(exam).label }}</span>
+                </td>
+                <td class="exam-release-table__actions-cell action-column-cell">
+                  <ResponsiveActionGroup align="center" :actions="getExamActions(exam)" :label="`Actions for ${exam.title}`" />
                 </td>
               </tr>
             </tbody>
@@ -1982,25 +2032,34 @@ watch(() => props.code, (code) => {
             <svg class="collapse-arrow-button__icon" :class="{ 'collapse-arrow-button__icon--collapsed': historicalExamsCollapsed }" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m7.4 14.6 4.6-4.6 4.6 4.6L18 13.2l-6-6-6 6 1.4 1.4Z" /></svg>
           </button>
         </div>
-        <div v-if="!historicalExamsCollapsed && (!staffExamsLoading || exams.length) && historicalExams.length" class="table-wrap sat-exam-release-table-wrap" role="region" aria-label="Historical exams" tabindex="0">
-          <AdminDataTable class="sat-exam-release-table">
+        <div v-if="!historicalExamsCollapsed && (!staffExamsLoading || exams.length) && historicalExams.length" class="table-wrap sat-exam-release-table-wrap exam-release-table-wrap" role="region" aria-label="Historical exams" tabindex="0">
+          <p class="mobile-table-scroll-hint">Swipe horizontally to view all columns.</p>
+          <AdminDataTable class="exam-release-table exam-release-table--history">
             <colgroup>
-              <col class="sat-exam-release-table__exam-column" />
-              <col class="sat-exam-release-table__paper-column" />
-              <col class="sat-exam-release-table__type-column" />
-              <col class="sat-exam-release-table__availability-column" />
-              <col class="sat-exam-release-table__status-column" />
-              <col class="sat-exam-release-table__actions-column" />
+              <col class="exam-release-table__title-column" />
+              <col class="exam-release-table__time-column" />
+              <col class="exam-release-table__target-column" />
+              <col class="exam-release-table__submission-column" />
+              <col class="exam-release-table__access-column" />
+              <col class="exam-release-table__actions-column" />
             </colgroup>
-            <thead><tr><th>Exam</th><th>Paper</th><th>Type</th><th>Ended</th><th>Status</th><th class="action-column-header">Actions</th></tr></thead>
+            <thead><tr><th>Exam / Paper</th><th>Ended At</th><th>Assigned To</th><th>Submission</th><th>Visibility</th><th class="action-column-header">Actions</th></tr></thead>
             <tbody>
               <tr v-for="exam in visibleHistoricalExams" :key="exam.id">
-                <td class="sat-exam-release-table__title-cell"><strong :title="exam.title">{{ exam.title }}</strong></td>
-                <td class="sat-exam-release-table__paper-cell" :title="exam.paperTitle || '—'"><span>{{ exam.paperTitle || '—' }}</span></td>
-                <td class="sat-exam-release-table__type-cell"><span class="program-badge">{{ exam.examTypeCode }}</span></td>
-                <td class="sat-exam-release-table__availability-cell"><time>{{ formatExamDate(exam.updatedAt || exam.closesAt) }}</time></td>
-                <td class="sat-exam-release-table__status-cell"><span class="status-pill">{{ exam.status === 'CANCELLED' ? 'Cancelled' : 'Ended' }}</span></td>
-                <td class="action-column-cell"><ResponsiveActionGroup align="center" :actions="getExamActions(exam)" :label="`Actions for ${exam.title}`" /></td>
+                <td class="exam-release-table__title-cell">
+                  <strong :title="exam.title">{{ exam.title }}</strong>
+                  <small :title="exam.paperTitle">{{ exam.paperTitle || 'Paper unavailable' }}</small>
+                  <small v-if="exam.description">{{ exam.description }}</small>
+                </td>
+                <td class="exam-release-table__time-cell" :title="formatExamDate(exam.closesAt)">{{ formatExamDate(exam.closesAt) }}</td>
+                <td class="exam-release-table__target-cell" :title="formatExamTarget(exam)"><span>{{ formatExamTarget(exam) }}</span></td>
+                <td class="exam-release-table__submission-cell">{{ exam.attemptLimit === 1 ? 'One result' : `${exam.attemptLimit} attempts` }}</td>
+                <td class="exam-release-table__access-cell">
+                  <span class="access-pill" :class="exam.status === 'PUBLISHED' ? 'access-pill--scheduled' : 'access-pill--hidden'">
+                    {{ exam.status === 'PUBLISHED' ? 'Published' : 'Unpublished' }}
+                  </span>
+                </td>
+                <td class="exam-release-table__actions-cell action-column-cell"><ResponsiveActionGroup align="center" :actions="getExamActions(exam)" :label="`Actions for ${exam.title}`" /></td>
               </tr>
             </tbody>
           </AdminDataTable>
@@ -2017,31 +2076,6 @@ watch(() => props.code, (code) => {
         <p v-else-if="!historicalExamsCollapsed && staffExamsLoading && !exams.length" class="admin-state">Loading historical exams…</p>
         <p v-else-if="!historicalExamsCollapsed" class="admin-state">{{ exams.length && !historicalExams.length ? 'No historical exams match your search.' : 'No historical exams yet.' }}</p>
       </AppCard>
-
-      <AppModal v-if="draftListOpen" title="Exam Drafts" description="Continue editing a draft, publish it, or remove it." :busy="isSaving" @close="draftListOpen = false">
-        <p v-if="error" class="error-text" role="alert">{{ error }}</p>
-        <div v-if="draftExams.length" class="draft-list">
-          <article v-for="draft in draftExams" :key="draft.id" class="draft-list__row">
-            <div class="draft-list__identity">
-              <strong>{{ draft.title }}</strong>
-              <span>{{ draft.paperTitle || 'Paper unavailable' }}</span>
-            </div>
-            <div class="draft-list__meta">
-              <span>Updated</span>
-              <time>{{ formatExamDate(draft.updatedAt || draft.createdAt) }}</time>
-            </div>
-            <ResponsiveActionGroup
-              align="center"
-              :actions="[
-                { label: 'Edit draft', onSelect: () => resumeDraft(draft) },
-                { label: 'Delete', danger: true, onSelect: () => { draftListOpen = false; openDeleteExamConfirm(draft) } },
-              ]"
-              :label="`Actions for ${draft.title}`"
-            />
-          </article>
-        </div>
-        <p v-else class="draft-list__empty">No exam drafts yet. Save an exam as a draft to continue later.</p>
-      </AppModal>
 
       <AppModal
         v-if="examCloseTarget"
