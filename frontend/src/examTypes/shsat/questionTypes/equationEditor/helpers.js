@@ -95,11 +95,21 @@ export function normalizeEquationAnswerData(rawData) {
   const data = parseJson(rawData, rawData);
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     if (data.value !== undefined) {
-      return String(data.value ?? '');
+      return normalizeAnswerToken(data.value);
     }
-    if (Array.isArray(data.answers) && data.answers.length) {
-      return String(data.answers[0] ?? '');
+    const acceptedAnswers = data.acceptedAnswers ?? data.answers ?? data.values;
+    if (acceptedAnswers !== undefined) {
+      const answers = (Array.isArray(acceptedAnswers) ? acceptedAnswers : [acceptedAnswers])
+        .map((item) => normalizeAnswerToken(item?.value ?? item?.text ?? item))
+        .filter(Boolean);
+      return answers.join(' / ');
     }
+  }
+  if (Array.isArray(data)) {
+    return data
+      .map((item) => normalizeAnswerToken(item?.value ?? item?.text ?? item))
+      .filter(Boolean)
+      .join(' / ');
   }
   return String(data ?? '');
 }

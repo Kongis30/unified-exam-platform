@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:answer-formatting": "node --test src/examTypes/shsat/questionTypes/answerFormatting.test.js",
     "test:e2e:sat": "node e2e/sat-formal-exam.cjs",
     "test:e2e:sat:accounts": "node e2e/sat-account-management.cjs",
     "test:e2e:shsat:paper-filters": "node e2e/shsat-paper-filters.cjs",

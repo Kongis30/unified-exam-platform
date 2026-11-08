@@ -32,7 +32,11 @@ function validIdSet(items) {
 
 export function normalizeTableGridColumnIds(value, columns = []) {
   const validColumns = validIdSet(columns);
-  const rawValues = Array.isArray(value) ? value : String(value ?? '').split(/[;,|]/);
+  const rawValues = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? [value]
+      : String(value ?? '').split(/[;,|]/);
 
   return rawValues
     .map(normalizeAnswerToken)

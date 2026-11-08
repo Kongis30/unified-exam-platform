@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiRequest } from '@/api/platform'
+import { answerDisplayText } from '@/utils/answerDisplay.js'
 import { renderMarkdown } from './markdown'
 
 const route = useRoute()
@@ -30,6 +31,7 @@ const currentModule = computed(() => modules.value.find((module) => String(modul
 const currentQuestions = computed(() => currentModule.value?.questions || [])
 const currentQuestion = computed(() => currentQuestions.value[questionIndex.value])
 const sectionNames = { RW: 'Reading and Writing', MATH: 'Math' }
+const correctAnswerText = (question) => answerDisplayText(question?.correctAnswer, '—')
 
 // 编辑接口返回的选项可能是对象、JSON 字符串或历史数组格式。
 function questionOptions(raw) {
@@ -144,7 +146,7 @@ onBeforeUnmount(() => { document.title = previousTitle })
               <p v-if="!questionOptions(question.options).length">Answer: __________________________</p>
             </template>
             <template v-else>
-              <p>Answer: {{ question.correctAnswer || '—' }}</p>
+              <p>Answer: {{ correctAnswerText(question) }}</p>
               <div v-if="question.analysis" v-math class="sat-rich-text" v-html="renderMarkdown(question.analysis)"></div>
             </template>
           </article>

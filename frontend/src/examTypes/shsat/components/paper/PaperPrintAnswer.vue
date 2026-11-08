@@ -4,6 +4,7 @@ import { computed } from 'vue';
 import FormulaText from '@shsat/components/FormulaText.vue';
 import { getQuestionTypeDefinition, normalizeQuestionType, parseJson, parseJsonObject, parseOptions } from '@shsat/questionTypes';
 import { extractShsatSkillTag, shsatSkillTagLabel } from '@shsat/utils/shsatSkillTags';
+import { answerDisplayText } from '@/utils/answerDisplay.js';
 
 const props = defineProps({
   question: { type: Object, required: true },
@@ -32,7 +33,7 @@ const answer = computed(() => {
     selectedAnswer: question.correctAnswer,
     emptyText: '',
   });
-  return String(formatted || question.correctAnswer || '—');
+  return answerDisplayText(formatted || question.correctAnswer, '—');
 });
 const skillTag = computed(() => extractShsatSkillTag(normalizedQuestion.value.questionConfig));
 const topic = computed(() => shsatSkillTagLabel(skillTag.value).replace(' · ', ' - '));

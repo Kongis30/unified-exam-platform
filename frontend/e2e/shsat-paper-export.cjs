@@ -66,6 +66,8 @@ async function main() {
     assert.equal(await page.title(), `${title} - English Language Arts - Solutions`, 'document title follows selected answer key section');
     assert.equal(await page.locator('.answer-key').count(), 1, 'ELA answer key has one section');
     assert.match(await page.locator('.answer-key').innerText(), /A/);
+    assert.doesNotMatch(await page.locator('.answer-key').innerText(), /\[object Object\]/,
+      'structured answer-key values are rendered as readable answer text');
     const elaAnswerPdf = await printPdf(page, 'Print or save answer key PDF');
 
     await sectionGroup.getByRole('button', { name: 'MATH', exact: true }).click();
@@ -142,7 +144,7 @@ function sections() {
         sectionCode: 'ELA_READING', sectionKind: 'SUBTYPE', title: 'Reading', sortOrder: 0,
         instructions: null, settings: {}, children: [],
         questions: [
-          question('Choose the ELA answer.', 'A', 1, 'ELA'),
+          question('Choose the ELA answer.', { value: 'A' }, 1, 'ELA'),
           question('Use the passage to answer the question.', 'B', 2, 'ELA', {
             type: 'TEXT', title: 'Export Passage Check', category: 'Reading Passage',
           content: `\n\n| Year | Students |\n| --- | --- |\n| 2024 | 120 |\n\nThis passage verifies real print layout. Inline formula $x^2 + 3x + 2 = 0$ stays with the sentence.\n\n$$x^2 + 3x + 2 = 0$$\n\n${Array.from({ length: 36 }, (_, index) => `Long passage paragraph ${index + 1}: The material should flow onto the next printed page without clipping or disappearing. It includes enough ordinary prose to exercise page breaks in the generated student paper.`).join('\n\n')}\n\n[[MATERIAL_IMAGE:${materialImageUrl()}]]`,
@@ -163,10 +165,11 @@ function sections() {
 }
 
 function question(stem, correctAnswer, displayNumber, scoringSectionCode, material, sortOrder = 0) {
+  const answers = Array.isArray(correctAnswer) ? correctAnswer : [correctAnswer]
   return {
     questionTypeCode: 'MULTIPLE_CHOICE', payloadSchemaVersion: 1, stem,
     render: { options: [{ key: 'A', text: 'Option A' }, { key: 'B', text: 'Option B' }], questionConfig: {}, validationRules: {}, ...(material ? { material } : {}) },
-    answerKey: { answers: [correctAnswer] }, grading: {}, explanation: `The answer is ${correctAnswer}.`,
+    answerKey: { answers }, grading: {}, explanation: `The answer is ${answers.map(answer => typeof answer === 'object' ? answer.value : answer).join(', ')}.`,
     categoryId: null, sortOrder, displayNumber, maxPoints: 1, scoringSectionCode,
   };
 }

@@ -1,3 +1,5 @@
+import { answerDisplayText } from '../../../utils/answerDisplay.js'
+
 const MULTI_SELECT_TYPES = new Set([
   'MULTI_SELECT',
   'MULTISELECT',
@@ -126,12 +128,11 @@ export function normalizeAnswerList(value) {
   }
 
   if (parsed && typeof parsed === 'object') {
-    const answers = parsed.answers || parsed.selectedAnswers || parsed.selectedIds || parsed.regions;
-    if (Array.isArray(answers)) {
-      return answers.map(normalizeAnswerToken).filter(Boolean);
-    }
-    if (parsed.value !== undefined) {
-      return [normalizeAnswerToken(parsed.value)].filter(Boolean);
+    const answers = parsed.answers ?? parsed.selectedAnswers ?? parsed.selectedIds ?? parsed.regions
+      ?? parsed.acceptedAnswers ?? parsed.correctAnswer ?? parsed.answer ?? parsed.values ?? parsed.value;
+    if (answers !== undefined) {
+      const values = Array.isArray(answers) ? answers : [answers];
+      return values.map(normalizeAnswerToken).filter(Boolean);
     }
     return [];
   }
@@ -143,7 +144,7 @@ export function normalizeAnswerList(value) {
 }
 
 export function normalizeAnswerToken(value) {
-  return String(value ?? '').trim();
+  return answerDisplayText(value);
 }
 
 export function normalizeMap(rawMap) {

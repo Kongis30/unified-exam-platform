@@ -1,6 +1,7 @@
 import {
   isMultiSelectType,
   normalizeAnswerList,
+  normalizeAnswerToken,
   normalizeQuestionType,
   parseJsonObject,
   parseOptions,
@@ -40,9 +41,9 @@ function formatAnswerValue(value, emptyText) {
       return answers.join(', ');
     }
     if (parsedObject.value !== undefined) {
-      return String(parsedObject.value || '').trim() || emptyText;
+      return normalizeAnswerToken(parsedObject.value) || emptyText;
     }
-    return JSON.stringify(parsedObject);
+    return normalizeAnswerToken(parsedObject) || emptyText;
   }
 
   return String(value).trim() || emptyText;
