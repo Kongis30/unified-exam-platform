@@ -1,12 +1,15 @@
 <template>
-  <div class="exam-container" :class="{ 'highlight-mode': highlightMode, 'review-mode': isReviewMode }">
-    <div v-if="!isReviewMode && !isOnline" class="exam-network-alert" role="status" aria-live="polite">
+  <div class="exam-container" :class="{ 'highlight-mode': highlightMode, 'review-mode': isReviewMode, 'preview-mode': isPreviewMode }">
+    <div v-if="!isReviewMode && !isPreviewMode && !isOnline" class="exam-network-alert" role="status" aria-live="polite">
       You are offline. Your progress will sync when your connection is restored.
     </div>
     <!-- 顶部导航栏 -->
     <ExamHeader 
       :exam-title="examTitle"
       :module-name="examTitle"
+      :preview-mode="isPreviewMode"
+      :preview-modules="previewModules"
+      :selected-preview-module="selectedPreviewModule"
       :current-question="currentQuestion"
       :total-questions="totalQuestions"
       :time-remaining="timeRemaining"
@@ -18,6 +21,7 @@
       @open-calculator="handleOpenCalculator"
       :font-scale="fontScale"
       @change-font-scale="handleChangeFontScale"
+      @select-preview-module="selectPreviewModule"
     />
     
     <!-- 主要内容区域：支持左右面板拖拽分割 -->
@@ -74,11 +78,12 @@
       :total-questions="totalQuestions"
       :question-status="questionStatus"
       :review-mode="isReviewMode"
+      :preview-mode="isPreviewMode"
       @question-navigate="navigateToQuestion"
       @previous-question="previousQuestion"
       @next-question="nextQuestion"
       @submit-exam="openSubmitModal"
-      @close-review="returnToReport"
+      @close-review="isPreviewMode ? returnToPaperManagement() : returnToReport()"
     />
 
     <!-- 可拖拽的 Desmos 计算器 -->
@@ -88,7 +93,7 @@
     />
     
     <!-- 防作弊：切屏违规提示弹窗（需点击确认才消失） -->
-    <div v-if="showViolationModal && !isReviewMode" class="modal-overlay violation-modal-overlay">
+    <div v-if="showViolationModal && !isReviewMode && !isPreviewMode" class="modal-overlay violation-modal-overlay">
       <div class="modal-content violation-dialog" @click.stop>
         <div class="modal-header">
           <h3>You Left the Exam Page</h3>
@@ -103,7 +108,7 @@
     </div>
 
     <!-- 防作弊：全屏强制遮罩 -->
-    <div v-if="fullscreenRequiredOverlay && !isReviewMode" class="fullscreen-overlay">
+    <div v-if="fullscreenRequiredOverlay && !isReviewMode && !isPreviewMode" class="fullscreen-overlay">
       <div class="fullscreen-dialog">
         <span class="fullscreen-dialog__icon">⛶</span>
         <h3>Fullscreen Required</h3>
@@ -202,6 +207,10 @@ export default {
     const flow = useExamFlowStore()
     // 响应式数据
     const examTitle = computed(() => flow.currentTitle)
+    const isPreviewMode = computed(() => ['sat-paper-preview', 'psat-paper-preview'].includes(router.currentRoute.value.name)
+      || router.currentRoute.value.query.preview === '1')
+    const previewModules = computed(() => flow.order.map((id) => ({ id, title: flow.modulesMeta[id]?.title || 'SAT Module' })))
+    const selectedPreviewModule = computed(() => flow.currentModuleId)
     const currentQuestion = ref(1)
     const totalQuestions = ref(0)
     const timeRemaining = ref(flow.currentDurationMinutes * 60)
@@ -664,6 +673,10 @@ export default {
     }
     
     const handleExitExam = () => {
+      if (isPreviewMode.value) {
+        returnToPaperManagement()
+        return
+      }
       if (isReviewMode.value) {
         returnToReport()
         return
@@ -822,6 +835,36 @@ export default {
       })
     }
 
+    // 预览共享正式考试的题目布局，仅切换本地模块状态，不创建答题记录。
+    const selectPreviewModule = async (moduleId) => {
+      const index = flow.order.findIndex((id) => String(id) === String(moduleId))
+      if (index < 0 || index === flow.index) return
+      flow.index = index
+      currentQuestion.value = 1
+      selectedAnswers.value = []
+      questionStatus.value = []
+      await flow.loadQuestionsForCurrentModule()
+      totalQuestions.value = flow.currentQuestions.length
+      selectedAnswers.value = Array(totalQuestions.value).fill(null)
+      questionStatus.value = Array(totalQuestions.value).fill(null).map((_, questionIndex) => ({
+        current: questionIndex === 0,
+        answered: false,
+        reviewed: false
+      }))
+    }
+
+    const returnToPaperManagement = () => {
+      const currentRoute = router.currentRoute.value
+      const fallback = {
+        name: currentRoute.name === 'psat-paper-preview' ? 'psat-admin' : 'sat-admin',
+        query: { tab: 'papers' }
+      }
+      const returnTo = typeof currentRoute.query.returnTo === 'string'
+        && /^\/(?:sat|psat|exam-types\/(?:SAT|PSAT)\/admin)(?:[/?]|$)/.test(currentRoute.query.returnTo)
+        ? currentRoute.query.returnTo : fallback
+      router.push(returnTo)
+    }
+
     const initializeReviewMode = async () => {
       const q = router.currentRoute.value.query || {}
       const paperId = q.paperId ? Number(q.paperId) : null
@@ -922,6 +965,24 @@ export default {
         return
       }
       const q = router.currentRoute.value.query
+      if (isPreviewMode.value) {
+        const paperId = Number(q.paperId || router.currentRoute.value.params.paperId)
+        if (!paperId) {
+          returnToPaperManagement()
+          return
+        }
+        await flow.initReviewMode(paperId)
+        await flow.loadQuestionsForCurrentModule()
+        totalQuestions.value = flow.currentQuestions.length
+        selectedAnswers.value = Array(totalQuestions.value).fill(null)
+        questionStatus.value = Array(totalQuestions.value).fill(null).map((_, index) => ({
+          current: index === 0,
+          answered: false,
+          reviewed: false
+        }))
+        timeRemaining.value = flow.currentDurationMinutes * 60
+        return
+      }
       const mode = q.mode || 'exam'
       const examIdParam = q.examId ? Number(q.examId) : Number(router.currentRoute.value.params.examId) || null
       const recordIdParam = q.recordId ? Number(q.recordId) : null
@@ -1034,6 +1095,9 @@ export default {
     
     return {
       examTitle,
+      isPreviewMode,
+      previewModules,
+      selectedPreviewModule,
       currentQuestion,
       isOnline,
       isReviewMode,
@@ -1069,6 +1133,7 @@ export default {
       handleOpenCalculator,
       fontScale,
       handleChangeFontScale,
+      selectPreviewModule,
       openImagePreview,
       closeImagePreview,
       closeHelpModal,

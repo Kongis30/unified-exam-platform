@@ -1,11 +1,18 @@
 <template>
   <div class="exam-header">
     <div class="header-left">
-      <div class="section-title">{{ moduleName || 'Section 1: Reading and Writing' }}</div>
+      <label v-if="previewMode && previewModules.length > 1" class="preview-module-select">
+        <span>Module preview</span>
+        <select :value="selectedPreviewModule" @change="$emit('select-preview-module', $event.target.value)">
+          <option v-for="module in previewModules" :key="module.id" :value="module.id">{{ module.title }}</option>
+        </select>
+      </label>
+      <div v-else class="section-title">{{ moduleName || 'Section 1: Reading and Writing' }}</div>
     </div>
     
     <div class="header-center">
       <div v-if="reviewMode" class="review-mode-badge">Review Mode</div>
+      <div v-else-if="previewMode" class="review-mode-badge">Paper Preview</div>
       <div v-else class="timer-container">
         <div class="timer" v-if="!isTimeHidden">
           <span class="time-text">{{ formattedTime }}</span>
@@ -93,7 +100,7 @@
               <polyline points="16,17 21,12 16,7" stroke="currentColor" stroke-width="2" fill="none"/>
               <line x1="21" y1="12" x2="9" y2="12" stroke="currentColor" stroke-width="2"/>
             </svg>
-            {{ reviewMode ? 'Back to Report' : 'Exit Exam' }}
+            {{ reviewMode ? 'Back to Report' : previewMode ? 'Back to Paper Management' : 'Exit Exam' }}
           </button>
         </div>
       </div>
@@ -135,12 +142,24 @@ export default {
       type: Boolean,
       default: false
     },
+    previewMode: {
+      type: Boolean,
+      default: false
+    },
+    previewModules: {
+      type: Array,
+      default: () => []
+    },
+    selectedPreviewModule: {
+      type: [String, Number],
+      default: ''
+    },
     fontScale: {
       type: Number,
       default: 1
     }
   },
-  emits: ['toggle-highlight-mode', 'show-help', 'exit-exam', 'open-calculator', 'change-font-scale'],
+  emits: ['toggle-highlight-mode', 'show-help', 'exit-exam', 'open-calculator', 'change-font-scale', 'select-preview-module'],
   setup(props, { emit }) {
     const isTimeHidden = ref(false)
     // 由父组件控制高亮模式，header仅展示状态并发送切换事件
@@ -291,6 +310,29 @@ export default {
   font-size: 16px;
   font-weight: 600;
   color: white;
+}
+
+.preview-module-select {
+  display: grid;
+  gap: 3px;
+  color: rgb(255 255 255 / 76%);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.preview-module-select select {
+  max-width: 260px;
+  border: 0;
+  padding: 0;
+  color: white;
+  background: transparent;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.preview-module-select option {
+  color: #202938;
 }
 
 .header-center {

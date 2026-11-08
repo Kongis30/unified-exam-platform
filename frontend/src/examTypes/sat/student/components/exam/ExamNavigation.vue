@@ -31,6 +31,13 @@
         >
           Back to Report
         </button>
+        <button
+          v-else-if="previewMode"
+          class="nav-button review-back-button"
+          @click="$emit('close-review')"
+        >
+          Back to Paper Management
+        </button>
         <button 
           v-else
           class="nav-button submit-button"
@@ -86,8 +93,8 @@
       </div>
       
       <div class="panel-footer">
-        <button class="submit-btn" @click="reviewMode ? closeReview() : submitExam()">
-          {{ reviewMode ? 'Back to Report' : 'Submit' }}
+        <button class="submit-btn" @click="reviewMode || previewMode ? closeReview() : submitExam()">
+          {{ reviewMode ? 'Back to Report' : previewMode ? 'Back to Paper Management' : 'Submit' }}
         </button>
       </div>
     </div>
@@ -114,6 +121,10 @@ export default {
       required: true
     },
     reviewMode: {
+      type: Boolean,
+      default: false
+    },
+    previewMode: {
       type: Boolean,
       default: false
     }
