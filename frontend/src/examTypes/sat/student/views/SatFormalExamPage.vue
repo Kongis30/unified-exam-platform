@@ -87,9 +87,11 @@
       :question-status="questionStatus"
       :review-mode="isReviewMode"
       :preview-mode="isPreviewMode"
+      :has-next-preview-module="hasNextPreviewModule"
       @question-navigate="navigateToQuestion"
       @previous-question="previousQuestion"
       @next-question="nextQuestion"
+      @next-preview-module="nextPreviewModule"
       @submit-exam="openSubmitModal"
       @close-review="isPreviewMode ? returnToPaperManagement() : returnToReport()"
     />
@@ -221,6 +223,7 @@ export default {
       || router.currentRoute.value.query.preview === '1')
     const previewModules = computed(() => flow.order.map((id) => ({ id, title: flow.modulesMeta[id]?.title || 'SAT Module' })))
     const selectedPreviewModule = computed(() => flow.currentModuleId)
+    const hasNextPreviewModule = computed(() => flow.index < flow.order.length - 1)
     const previewLoading = ref(false)
     const previewError = ref('')
     const currentQuestion = ref(1)
@@ -921,6 +924,12 @@ export default {
       }))
     }
 
+    // 预览在模块末题继续点击 Next 时，衔接下一个模块并从第 1 题开始。
+    const nextPreviewModule = () => {
+      if (!isPreviewMode.value || !hasNextPreviewModule.value) return
+      selectPreviewModule(flow.order[flow.index + 1])
+    }
+
     const returnToPaperManagement = () => {
       const currentRoute = router.currentRoute.value
       const fallback = {
@@ -1152,6 +1161,7 @@ export default {
       isPreviewMode,
       previewModules,
       selectedPreviewModule,
+      hasNextPreviewModule,
       previewLoading,
       previewError,
       loadPaperPreview,
@@ -1191,6 +1201,7 @@ export default {
       fontScale,
       handleChangeFontScale,
       selectPreviewModule,
+      nextPreviewModule,
       returnToPaperManagement,
       openImagePreview,
       closeImagePreview,

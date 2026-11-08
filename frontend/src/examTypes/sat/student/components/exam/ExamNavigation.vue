@@ -25,6 +25,13 @@
           Next
         </button>
         <button
+          v-else-if="previewMode && hasNextPreviewModule"
+          class="nav-button next-button"
+          @click="nextPreviewModule"
+        >
+          Next
+        </button>
+        <button
           v-else-if="reviewMode"
           class="nav-button review-back-button"
           @click="$emit('close-review')"
@@ -127,12 +134,17 @@ export default {
     previewMode: {
       type: Boolean,
       default: false
+    },
+    hasNextPreviewModule: {
+      type: Boolean,
+      default: false
     }
   },
   emits: [
     'question-navigate', 
     'previous-question', 
     'next-question', 
+    'next-preview-module',
     'toggle-review',
     'submit-exam',
     'close-review'
@@ -148,6 +160,11 @@ export default {
     const navigateToQuestion = (questionNumber) => {
       emit('question-navigate', questionNumber)
       // 选择后关闭面板，避免干扰
+      showQuestionPanel.value = false
+    }
+
+    const nextPreviewModule = () => {
+      emit('next-preview-module')
       showQuestionPanel.value = false
     }
     
@@ -167,6 +184,7 @@ export default {
       studentName,
       toggleQuestionPanel,
       navigateToQuestion,
+      nextPreviewModule,
       submitExam,
       closeReview
     }
