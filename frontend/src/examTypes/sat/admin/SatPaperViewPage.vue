@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { apiRequest } from '@/api/platform'
 import { answerDisplayText } from '@/utils/answerDisplay.js'
-import { renderMarkdown } from './markdown'
+import { renderMarkdown } from '../utils/markdown.js'
 
 const route = useRoute()
 const isExport = computed(() => ['sat-paper-export', 'psat-paper-export'].includes(route.name))
@@ -139,7 +139,7 @@ onBeforeUnmount(() => { document.title = previousTitle })
           <article v-for="(question, index) in module.questions" :key="`${module.moduleId}-${question.questionId}-${index}`" class="sat-print-question">
             <strong>Question {{ index + 1 }}</strong>
             <template v-if="documentMode === 'STUDENT'">
-              <div v-if="question.material?.content" v-math class="sat-rich-text" v-html="renderMarkdown(question.material.content)"></div>
+              <div v-if="question.material?.content" v-math class="sat-rich-text sat-print-material" v-html="renderMarkdown(question.material.content)"></div>
               <img v-if="question.material?.fileUrl" :src="imageUrl(question.material.fileUrl)" alt="Question material">
               <div v-math class="sat-rich-text" v-html="renderMarkdown(question.content)"></div>
               <div v-for="option in questionOptions(question.options)" :key="option.label" class="sat-print-option"><strong>{{ option.label }}.</strong><div v-math class="sat-rich-text" v-html="renderMarkdown(option.text)"></div></div>
@@ -177,6 +177,7 @@ onBeforeUnmount(() => { document.title = previousTitle })
 .sat-print-module { margin-top: 32px; }
 .sat-print-question { margin: 22px 0; break-inside: avoid; }
 .sat-print-option { display: flex; gap: 10px; align-items: baseline; }
+.sat-print-material { font-size: 17px; line-height: 1.6; white-space: pre-wrap; }
 .sat-rich-text :deep(img) { max-width: 100%; height: auto; }
 .sat-rich-text :deep(table) { border-collapse: collapse; }
 .sat-rich-text :deep(th), .sat-rich-text :deep(td) { border: 1px solid #aaa; padding: 4px; }

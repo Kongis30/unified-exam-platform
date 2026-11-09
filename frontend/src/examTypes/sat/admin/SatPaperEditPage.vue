@@ -483,7 +483,7 @@ import 'element-plus/dist/index.css'
 import { RouterLink } from 'vue-router'
 import { readEditorSelection, writeEditorSelection } from '@/utils/editorSelectionStorage'
 import { notifyOperation } from '@/utils/operationNotification'
-import { renderMarkdown } from './markdown.js'
+import { renderMarkdown } from '../utils/markdown.js'
 import { paperEditApi } from './satEditorApi.js'
 
 const operationToast = {
@@ -2487,6 +2487,7 @@ onMounted(async () => {
 .passage-content {
   font-size: 17px;
   line-height: 1.6;
+  white-space: pre-wrap;
   color: #333;
   text-align: left;
 }

@@ -1,37 +1,17 @@
 // 仅在打印显示层按明确的列分隔重建表格，不改材料原文。
 export function formatMaterialBodyForPrint(items = []) {
   const result = [];
-  let paragraphLines = [];
   let index = 0;
-
-  const flushParagraph = () => {
-    if (!paragraphLines.length) return;
-    result.push({
-      type: 'text',
-      key: `print-paragraph-${index++}`,
-      text: paragraphLines.join(' '),
-      isEmpty: false,
-    });
-    paragraphLines = [];
-  };
 
   for (let cursor = 0; cursor < items.length;) {
     const item = items[cursor];
     if (item.type === 'image') {
-      flushParagraph();
       result.push(item);
       cursor += 1;
       continue;
     }
 
-    if (!item.text.trim()) {
-      flushParagraph();
-      cursor += 1;
-      continue;
-    }
-
-    if (/\$\$/.test(item.text)) {
-      flushParagraph();
+    if (item.type !== 'text' || !item.text.trim() || /\$\$/.test(item.text)) {
       result.push(item);
       cursor += 1;
       continue;
@@ -39,7 +19,6 @@ export function formatMaterialBodyForPrint(items = []) {
 
     const table = readAlignedTable(items, cursor);
     if (table) {
-      flushParagraph();
       result.push({
         type: 'table',
         key: `print-table-${index++}`,
@@ -50,11 +29,11 @@ export function formatMaterialBodyForPrint(items = []) {
       continue;
     }
 
-    paragraphLines.push(item.text.trim());
+    // 材料模型已按考试界面的规则处理软换行；这里保留剩余的原始行边界。
+    result.push(item);
     cursor += 1;
   }
 
-  flushParagraph();
   return result;
 }
 

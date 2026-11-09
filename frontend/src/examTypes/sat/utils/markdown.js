@@ -1,10 +1,12 @@
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 
+// SAT/PSAT 试题、材料和导出共用的 Markdown 渲染器。
 const md = new MarkdownIt({
   html: true,
   linkify: true,
-  breaks: false
+  // 材料编辑器中的每个换行都代表原文排版，考试界面和 PDF 均保留为换行。
+  breaks: true,
 })
 
 const underlineRule = (state, silent) => {
@@ -29,6 +31,43 @@ const underlineRule = (state, silent) => {
 }
 
 md.inline.ruler.before('emphasis', 'underline', underlineRule)
+
+// 代码块内的 ++...++ 是应用自己的下划线标记；其余内容仍按代码文本转义输出。
+function renderCodeText(source) {
+  const markerPattern = /\+\+([^\n]+?)\+\+/g
+  let output = ''
+  let cursor = 0
+  let match
+
+  while ((match = markerPattern.exec(source))) {
+    output += md.utils.escapeHtml(source.slice(cursor, match.index))
+    output += `<u>${md.utils.escapeHtml(match[1])}</u>`
+    cursor = markerPattern.lastIndex
+  }
+
+  return output + md.utils.escapeHtml(source.slice(cursor))
+}
+
+// markdown-it 默认会转义整个代码块；覆盖输出只为识别应用的下划线标记，并保留代码块布局。
+md.renderer.rules.code_block = (tokens, index, options, env, renderer) => {
+  const token = tokens[index]
+  return `<pre${renderer.renderAttrs(token)}><code>${renderCodeText(token.content)}</code></pre>\n`
+}
+md.renderer.rules.fence = (tokens, index, options, env, renderer) => {
+  const token = tokens[index]
+  const info = token.info ? md.utils.unescapeAll(token.info).trim() : ''
+  const language = info ? info.split(/(\s+)/g)[0] : ''
+  const attributes = token.attrs ? token.attrs.slice() : []
+
+  if (info) {
+    const classIndex = attributes.findIndex(([name]) => name === 'class')
+    if (classIndex < 0) attributes.push(['class', `${options.langPrefix}${language}`])
+    else attributes[classIndex] = [attributes[classIndex][0], `${attributes[classIndex][1]} ${options.langPrefix}${language}`]
+  }
+
+  const codeToken = { attrs: attributes }
+  return `<pre><code${renderer.renderAttrs(codeToken)}>${renderCodeText(token.content)}</code></pre>\n`
+}
 
 function normalizeMarkdownSource(source) {
   let normalized = String(source).replace(/\r\n?/g, '\n')
@@ -56,15 +95,14 @@ function normalizeMarkdownSource(source) {
   return result.join('\n')
 }
 
+// 由考试材料、答案选项和纸卷导出页调用；输出经过白名单净化的 HTML。
 export function renderMarkdown(source) {
   if (!source) return ''
-  // Keep the editor syntax small and predictable: ____ renders a visible blank.
   const preprocessed = normalizeMarkdownSource(source)
     .replace(/____+/g, '<span class="blank-space">&nbsp;</span>')
-  // 使用块级渲染，确保标题、段落、列表和 Markdown 表格不会退化成普通文本。
   const rendered = md.render(preprocessed)
   return DOMPurify.sanitize(rendered, {
-    ALLOWED_TAGS: ['p','br','strong','em','u','ul','ol','li','table','thead','tbody','tr','th','td','img','span','code','pre','h1','h2','h3','h4','h5','h6'],
-    ALLOWED_ATTR: ['src','alt','class','align']
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'span', 'code', 'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+    ALLOWED_ATTR: ['src', 'alt', 'class', 'align'],
   })
 }

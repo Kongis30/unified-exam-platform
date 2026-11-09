@@ -319,7 +319,9 @@ onBeforeUnmount(() => {
                           </tr>
                         </tbody>
                       </table>
-                      <p v-else-if="bodyItem.text.trim()" class="print-material__paragraph"><FormulaText :content="bodyItem.text" /></p>
+                      <p v-else-if="bodyItem.type === 'text'" class="print-material__line" :class="{ 'print-material__line--empty': bodyItem.isEmpty }">
+                        <FormulaText v-if="!bodyItem.isEmpty" :content="bodyItem.text" />
+                      </p>
                     </template>
                   </div>
                 </template>
@@ -489,7 +491,8 @@ onBeforeUnmount(() => {
 .print-material__title { font-size: 13pt; }
 .print-material__author { font-size: 11pt; font-weight: 400; }
 .print-material__intro { margin: 0 0 18px; font-style: italic; }
-.print-material__paragraph { margin: 0 0 8px; text-indent: .2in; white-space: pre-wrap; }
+.print-material__line { min-height: 1.6em; margin: 0; white-space: pre-wrap; }
+.print-material__line--empty { min-height: 1.4em; }
 .print-material img { display: block; max-width: 100%; max-height: 6in; margin: 10px auto; object-fit: contain; }
 .print-material__table { width: 100%; margin: 8px 0 12px; border-collapse: collapse; table-layout: auto; font-size: .96em; line-height: 1.25; }
 .print-material__table th, .print-material__table td { padding: 3px 5px; border-bottom: 1px solid #858b92; text-align: left; vertical-align: top; overflow-wrap: anywhere; }

@@ -36,7 +36,7 @@
 
 <script>
 import { computed, ref, watch } from 'vue'
-import { renderMarkdown } from '../../utils/markdown.js'
+import { renderMarkdown } from '../../../utils/markdown.js'
 import { paperEditApi } from '../../api/exam.js'
 
 export default {
@@ -318,6 +318,7 @@ export default {
 .passage-content {
   font-size: calc(17px * var(--exam-font-scale, 1));
   line-height: 1.6;
+  white-space: pre-wrap;
   color: #333;
   text-align: left;
   overflow-y: auto; /* 图片或文本过长时，垂直滚动 */

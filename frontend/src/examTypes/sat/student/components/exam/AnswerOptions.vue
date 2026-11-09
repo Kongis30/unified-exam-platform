@@ -97,7 +97,7 @@
 import { ref, computed, watch } from 'vue'
 import { ElInput } from 'element-plus'
 import 'element-plus/theme-chalk/el-input.css'
-import { renderMarkdown } from '../../utils/markdown.js'
+import { renderMarkdown } from '../../../utils/markdown.js'
 
 export default {
   name: 'AnswerOptions',
