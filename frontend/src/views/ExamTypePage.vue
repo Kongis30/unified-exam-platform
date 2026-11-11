@@ -2367,7 +2367,7 @@ watch(() => props.code, (code) => {
               <div v-if="activeHistoryTab === 'history' && props.code === 'SHSAT'" class="shsat-history-list">
                 <article v-for="item in shsatFormalHistory" :key="item.attemptId" class="shsat-history-row">
                   <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>Attempt #{{ item.attemptNumber }} · {{ formatExamDate(item.submittedAt || item.startedAt) }}</small></div>
-                  <div class="shsat-history-score"><strong>{{ item.scoreVisible ? (item.totalScore ?? '—') : 'Not available yet' }}</strong><small>Raw score</small></div>
+                  <div class="shsat-history-score"><strong>{{ item.scoreVisible ? (item.totalScaledScore ?? item.totalScore ?? '—') : 'Not available yet' }}</strong><small>{{ item.totalScaledScore != null ? 'Scaled score' : 'Raw score' }}</small></div>
                   <AppButton variant="secondary" @click="viewShsatAttempt(item)">View report</AppButton>
                 </article>
                 <p v-if="!shsatFormalHistory.length" class="table-empty">No completed SHSAT exams yet.</p>
