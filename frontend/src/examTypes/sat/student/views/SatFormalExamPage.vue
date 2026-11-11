@@ -81,7 +81,8 @@
     </div>
     
     <!-- 底部导航 -->
-    <ExamNavigation 
+    <ExamNavigation
+      :module-name="examTitle"
       :current-question="currentQuestion"
       :total-questions="totalQuestions"
       :question-status="questionStatus"

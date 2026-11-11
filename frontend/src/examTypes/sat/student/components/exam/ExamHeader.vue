@@ -7,7 +7,7 @@
           <option v-for="module in previewModules" :key="module.id" :value="module.id">{{ module.title }}</option>
         </select>
       </label>
-      <div v-else class="section-title">{{ moduleName || 'Section 1: Reading and Writing' }}</div>
+      <div v-else class="section-title">{{ moduleName }}</div>
     </div>
     
     <div class="header-center">

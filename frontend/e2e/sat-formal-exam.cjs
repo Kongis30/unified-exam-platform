@@ -280,6 +280,14 @@ async function main() {
     if (await student.locator('.question-status-panel .question-status-btn').count() < 2) {
       await questionSelector.click();
     }
+    // 面板标题必须跟随当前模块，而不是固定的 "Section 1"。
+    const panelTitle = () => student.locator('.question-status-panel .panel-title').textContent();
+    const openState = await api(student, `/api/student/sat-attempts/${attemptId}`);
+    const openModule = openState.modules.find(module => Number(module.id) === Number(openState.currentModuleId));
+    assert.equal((await panelTitle()).trim(), openModule.moduleName,
+      'the question panel titles the active module rather than a hardcoded section');
+    assert.doesNotMatch(await panelTitle(), /Section 1/,
+      'the question panel no longer shows the stale Section 1 title');
     const questionButtons = student.locator('.question-status-panel .question-status-btn');
     if (await questionButtons.count() > 1) {
       await questionButtons.nth(1).click();

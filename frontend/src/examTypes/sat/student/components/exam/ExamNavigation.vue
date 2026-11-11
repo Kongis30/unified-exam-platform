@@ -58,7 +58,7 @@
     <!-- 题目状态面板（居中小弹窗） -->
     <div v-if="showQuestionPanel" class="question-status-panel">
       <div class="panel-header">
-        <h3 class="panel-title">Section 1: Reading and Writing Questions</h3>
+        <h3 class="panel-title">{{ moduleName }}</h3>
         <button class="close-panel-btn" @click="showQuestionPanel = false">
           <svg viewBox="0 0 24 24" width="16" height="16">
             <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2"/>
@@ -115,6 +115,11 @@ import { authState } from '@/auth'
 export default {
   name: 'ExamNavigation',
   props: {
+    // 当前模块名，由父组件传入 flow.currentTitle；面板标题随模块切换更新。
+    moduleName: {
+      type: String,
+      default: ''
+    },
     currentQuestion: {
       type: Number,
       required: true
