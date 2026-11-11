@@ -74,7 +74,7 @@ class ExamReleaseServiceTest {
         when(jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class)).thenReturn(44L);
         var summary = new ExamReleaseService.ExamSummary(44L, "SAT", 12L, "Paper", "Exam", description,
             "DRAFT", "ALL_STUDENTS", "2026-10-28T09:00:00Z", "2026-10-28T12:00:00Z", 7200,
-            1, false, true, true, "2026-10-20T09:00:00Z", "2026-10-20T09:00:00Z", null, "All students");
+            1, false, true, true, "2026-10-20T09:00:00Z", "2026-10-20T09:00:00Z", null, "All students", "GROUP");
         when(jdbc.query(anyString(), any(RowMapper.class), eq(44L))).thenAnswer(invocation ->
             invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
         var request = new ExamReleaseService.ExamRequest("Exam", description,
@@ -136,7 +136,7 @@ class ExamReleaseServiceTest {
         ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(44L, "SHSAT", 12L,
             "Paper", "Exam", null, "DRAFT", "ALL_STUDENTS", "2026-10-24T09:00:00Z",
             "2026-10-24T12:00:00Z", 7200, 1, false, true, true,
-            "2026-10-20T09:00:00Z", "2026-10-20T09:00:00Z", null, "All students");
+            "2026-10-20T09:00:00Z", "2026-10-20T09:00:00Z", null, "All students", "GROUP");
         when(jdbc.query(anyString(), any(RowMapper.class), eq(44L))).thenAnswer(invocation ->
             invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
 
@@ -165,6 +165,45 @@ class ExamReleaseServiceTest {
                 && sql.contains("exam_target_students")), any(RowMapper.class), eq("SAT"));
     }
 
+    /** 管理端 Available Exams 需要区分整班派发与个人派发，SQL 必须投影 assignment_kind。 */
+    @Test
+    void examListExposesAssignmentKindForAdminGrouping() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+
+        service.list("SHSAT");
+
+        verify(jdbc).query(argThat(sql -> sql.contains("AS assignment_kind")
+                && sql.contains("WHEN e.target_scope = 'ALL_STUDENTS' THEN 'GROUP'")
+                && sql.contains("FROM exam_target_classes atc WHERE atc.exam_id = e.id) THEN 'GROUP'")
+                && sql.contains("ELSE 'ONE_ON_ONE' END AS assignment_kind")
+                // 管理端判定看考试本身的目标，不能退化成学生端的冻结资格表
+                && !sql.contains("exam_participant_classes")),
+            any(RowMapper.class), eq("SHSAT"));
+    }
+
+    /** 单场考试的详情查询同样带上 assignment_kind，避免列表与详情口径不一致。 */
+    @Test
+    void examDetailQueryAlsoProjectsAssignmentKind() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(41L, "SHSAT", 12L,
+            "Practice Paper", "Saturday Test", null, "DRAFT", "SELECTED", "2026-10-24T09:00:00Z",
+            "2026-10-24T12:00:00Z", 7200, 1, false, true, true,
+            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z", null, "No students selected", "ONE_ON_ONE");
+        when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
+            invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), any(Object[].class)))
+            .thenReturn("DRAFT");
+
+        ExamReleaseService.ExamDetail detail = service.get(41L);
+
+        assertEquals("ONE_ON_ONE", detail.summary().assignmentKind());
+        verify(jdbc).query(org.mockito.ArgumentMatchers.<String>argThat(
+            sql -> sql.contains("AS assignment_kind") && sql.contains("WHERE e.id = ?")),
+            any(RowMapper.class), eq(41L));
+    }
+
     @Test
     void examDetailsReadReviewSettingsAfterCreation() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
@@ -172,7 +211,7 @@ class ExamReleaseServiceTest {
         ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(41L, "SHSAT", 12L,
             "Practice Paper", "Saturday Test", null, "DRAFT", "SELECTED", "2026-10-24T09:00:00Z",
             "2026-10-24T12:00:00Z", 7200, 1, false, true, true,
-            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z", null, "No students selected");
+            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z", null, "No students selected", "ONE_ON_ONE");
         when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
             invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
 
@@ -321,7 +360,7 @@ class ExamReleaseServiceTest {
             "Practice Paper", "Saturday Test", null, "CLOSED", "SELECTED", "2026-10-24T09:00:00Z",
             "2026-10-24T12:00:00Z", 7200, 1, false, false, true,
             "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z",
-            "2026-10-20T09:00:00Z", "No students selected");
+            "2026-10-20T09:00:00Z", "No students selected", "ONE_ON_ONE");
 
         when(jdbc.queryForObject(any(String.class), eq(Boolean.class), eq(41L), eq(41L))).thenReturn(false);
         when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq(41L))).thenReturn("PUBLISHED");
@@ -358,7 +397,7 @@ class ExamReleaseServiceTest {
         ExamReleaseService.ExamSummary summary = new ExamReleaseService.ExamSummary(41L, "SHSAT", 12L,
             "Practice Paper", "Saturday Test", null, "DRAFT", "SELECTED", "2026-10-24T09:00:00Z",
             "2026-10-24T12:00:00Z", 7200, 1, true, true, true,
-            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z", null, "No students selected");
+            "2026-10-20T09:00:00Z", "2026-10-24T10:00:00Z", null, "No students selected", "ONE_ON_ONE");
         when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class))).thenAnswer(invocation ->
             invocation.<String>getArgument(0).contains("FROM exams e JOIN papers p") ? List.of(summary) : List.of());
 

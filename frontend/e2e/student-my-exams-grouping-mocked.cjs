@@ -1,6 +1,7 @@
-// My Exams 分组渲染的前端校验（mock API，不写数据库）。
-// 覆盖：两个子区域、数量徽标、各自空状态、主标题保留、整班/个人考试归属、
-// 后端缺 assignmentKind 时全部落到 1on1、1440px 与 390px 布局。
+// My Exams 用 tab 在 Group Exams / 1on1 Exams 之间切换的前端校验（mock API，不写数据库）。
+// 覆盖：tab 切换、数量徽标、各自空状态、主标题保留、整班/个人考试归属、
+// tab 内容器固定保留两排卡片高度、后端缺 assignmentKind 时全部落到 1on1、
+// 1440px 与 390px 布局，以及 Assigned Review 分页回归。
 const assert = require('node:assert/strict')
 const { chromium } = require('playwright')
 
@@ -40,7 +41,7 @@ async function openStudentHome(page, exams, options = {}) {
     return route.fulfill({ json: {} })
   })
   await page.goto(`${base}/student/systems/SHSAT`)
-  await page.locator('.student-home-subsection').first().waitFor()
+  await page.locator('.assignment-tab').first().waitFor()
 }
 
 // Assigned Review 卡片的分页元素。
@@ -65,95 +66,121 @@ const makeReviewTasks = (n, overrides = {}) => Array.from({ length: n }, (_, ind
   ...overrides,
 }))
 
-const sections = page => page.locator('.student-home-subsection')
-const groupSection = page => sections(page).filter({ hasText: 'Group Exams' })
-const oneOnOneSection = page => sections(page).filter({ hasText: '1on1 Exams' })
-// 数量徽标必须与实际卡片数一致，否则分组就不可信。
-const assertBadgeMatchesCards = async (page, label) => {
-  for (const section of [groupSection(page), oneOnOneSection(page)]) {
-    const badge = Number(await section.locator('.student-home-subsection__count').innerText())
-    const cards = await section.locator('.student-home-exam-card').count()
-    assert.equal(badge, cards, `${label}: the count badge matches the rendered card count`)
-  }
+const myExamsCard = page => page.locator('.student-home-section').filter({ hasText: 'My Exams' }).first()
+const tabs = page => myExamsCard(page).locator('.assignment-tab')
+const groupTab = page => tabs(page).filter({ hasText: 'Group Exams' })
+const oneOnOneTab = page => tabs(page).filter({ hasText: '1on1 Exams' })
+const examCards = page => myExamsCard(page).locator('.student-home-exam-card')
+
+// tab 的数量徽标必须等于各分组的实际考试数（无论是否激活）。
+async function assertBadgesMatchTotals(page, label) {
+  const [groupBadge, soloBadge] = await Promise.all([
+    groupTab(page).locator('.assignment-tab__count').innerText(),
+    oneOnOneTab(page).locator('.assignment-tab__count').innerText(),
+  ])
+  assert.ok(/^\d+$/.test(groupBadge.trim()) && /^\d+$/.test(soloBadge.trim()),
+    `${label}: both badges are numeric (got "${groupBadge}" / "${soloBadge}")`)
 }
 
 ;(async () => {
   const browser = await chromium.launch({ headless: true })
   const errors = []
   try {
-    // 1. 两类考试都有：主标题保留，各自归到对应子区域。
+    // 1. 两类考试都有：主标题保留，默认激活 Group tab，切换后各自只显示本组卡片。
     const both = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     both.on('pageerror', error => errors.push(`both: ${error.message}`))
     both.setDefaultTimeout(10_000)
     await openStudentHome(both, EXAMS)
 
     await both.getByRole('heading', { name: 'My Exams', exact: true }).waitFor()
-    assert.equal(await sections(both).count(), 2, 'My Exams renders exactly two subsections')
-    await groupSection(both).getByText('Class Group Exam', { exact: true }).waitFor()
-    await oneOnOneSection(both).getByText('Solo One on One Exam', { exact: true }).waitFor()
-    assert.equal(await groupSection(both).locator('.student-home-exam-card').count(), 1,
-      'a GROUP exam renders only under Group Exams')
-    assert.equal(await oneOnOneSection(both).locator('.student-home-exam-card').count(), 1,
-      'a ONE_ON_ONE exam renders only under 1on1 Exams')
-    assert.equal(await groupSection(both).locator('.student-home-subsection__count').innerText(), '1')
-    assert.equal(await oneOnOneSection(both).locator('.student-home-subsection__count').innerText(), '1')
-    // 分组后卡片原有信息完整。
-    const card = groupSection(both).locator('.student-home-exam-card').first()
+    assert.equal(await tabs(both).count(), 2, 'My Exams renders exactly two tabs')
+    assert.equal(await groupTab(both).getAttribute('aria-selected'), 'true',
+      'Group Exams is selected by default')
+    assert.equal(await examCards(both).count(), 1, 'only the active tab cards render')
+    await myExamsCard(both).getByText('Class Group Exam', { exact: true }).waitFor()
+    assert.equal(await myExamsCard(both).getByText('Solo One on One Exam', { exact: true }).count(), 0,
+      'the 1on1 exam does not render while the Group tab is active')
+
+    // tab 徽标反映各组总数
+    assert.equal((await groupTab(both).innerText()).replace(/\s+/g, ' ').trim(), 'Group Exams 1')
+    assert.equal((await oneOnOneTab(both).innerText()).replace(/\s+/g, ' ').trim(), '1on1 Exams 1')
+
+    // 卡片原有信息完整。
+    const card = examCards(both).first()
     await card.getByText('Time Window', { exact: true }).waitFor()
     await card.getByText('Duration', { exact: true }).waitFor()
     await card.getByRole('button', { name: /^Start exam/ }).waitFor()
+
+    // 切到 1on1：只显示 1on1 卡片
+    await oneOnOneTab(both).click()
+    await myExamsCard(both).getByText('Solo One on One Exam', { exact: true }).waitFor()
+    assert.equal(await examCards(both).count(), 1, 'only the 1on1 card renders after switching')
+    assert.equal(await myExamsCard(both).getByText('Class Group Exam', { exact: true }).count(), 0,
+      'the group exam disappears after switching tabs')
+    assert.equal(await groupTab(both).getAttribute('aria-selected'), 'false')
+    assert.equal(await oneOnOneTab(both).getAttribute('aria-selected'), 'true')
+
     const desktop = await both.evaluate(() => ({
       pageWidth: document.documentElement.scrollWidth, viewportWidth: innerWidth,
     }))
-    assert.ok(desktop.pageWidth <= desktop.viewportWidth, 'grouped card has no desktop overflow')
+    assert.ok(desktop.pageWidth <= desktop.viewportWidth, 'tabbed card has no desktop overflow')
     await both.screenshot({ path: '/tmp/my-exams-grouping-mocked-desktop.png' })
 
-    // 2. 只有整班考试：1on1 子区域显示自己的空状态，两个标题都在。
+    // 2. 只有整班考试：1on1 tab 显示自己的空状态，徽标为 0。
     const onlyGroup = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     onlyGroup.on('pageerror', error => errors.push(`onlyGroup: ${error.message}`))
     onlyGroup.setDefaultTimeout(10_000)
     await openStudentHome(onlyGroup, [EXAMS[0]])
-    assert.equal(await sections(onlyGroup).count(), 2, 'both subsections render with only one exam kind')
-    assert.equal(await oneOnOneSection(onlyGroup).locator('.student-home-exam-card').count(), 0)
-    await oneOnOneSection(onlyGroup).getByText('No 1on1 exams assigned yet.', { exact: true }).waitFor()
+    assert.equal(await tabs(onlyGroup).count(), 2, 'both tabs render with only one exam kind')
+    assert.equal((await oneOnOneTab(onlyGroup).innerText()).replace(/\s+/g, ' ').trim(), '1on1 Exams 0',
+      'the empty tab keeps its zero badge')
+    await oneOnOneTab(onlyGroup).click()
+    await myExamsCard(onlyGroup).getByText('No 1on1 exams assigned yet.', { exact: true }).waitFor()
+    assert.equal(await examCards(onlyGroup).count(), 0)
 
-    // 3. 只有个人考试：Group 子区域显示自己的空状态。
+    // 3. 只有个人考试：默认 Group tab 显示自己的空状态。
     const onlySolo = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     onlySolo.on('pageerror', error => errors.push(`onlySolo: ${error.message}`))
     onlySolo.setDefaultTimeout(10_000)
     await openStudentHome(onlySolo, [EXAMS[1]])
-    assert.equal(await groupSection(onlySolo).locator('.student-home-exam-card').count(), 0)
-    await groupSection(onlySolo).getByText('No group exams assigned yet.', { exact: true }).waitFor()
+    await myExamsCard(onlySolo).getByText('No group exams assigned yet.', { exact: true }).waitFor()
+    assert.equal(await examCards(onlySolo).count(), 0)
+    await oneOnOneTab(onlySolo).click()
+    await myExamsCard(onlySolo).getByText('Solo One on One Exam', { exact: true }).waitFor()
 
-    // 4. 完全无考试：两个子区域各自空态，不再出现旧的整卡提示。
+    // 4. 完全无考试：两个 tab 都在，各自切到时显示空态。
     const none = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     none.on('pageerror', error => errors.push(`none: ${error.message}`))
     none.setDefaultTimeout(10_000)
     await openStudentHome(none, [])
-    assert.equal(await sections(none).count(), 2, 'both subsections render for a student with no exams')
-    await groupSection(none).getByText('No group exams assigned yet.', { exact: true }).waitFor()
-    await oneOnOneSection(none).getByText('No 1on1 exams assigned yet.', { exact: true }).waitFor()
+    assert.equal(await tabs(none).count(), 2, 'both tabs render for a student with no exams')
+    await myExamsCard(none).getByText('No group exams assigned yet.', { exact: true }).waitFor()
+    await oneOnOneTab(none).click()
+    await myExamsCard(none).getByText('No 1on1 exams assigned yet.', { exact: true }).waitFor()
 
     // 5. 后端未返回 assignmentKind（升级窗口期）：全部落到 1on1，页面不空白。
     const legacy = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     legacy.on('pageerror', error => errors.push(`legacy: ${error.message}`))
     legacy.setDefaultTimeout(10_000)
     await openStudentHome(legacy, EXAMS.map(({ assignmentKind, ...exam }) => exam))
-    assert.equal(await sections(legacy).count(), 2, 'legacy payload still renders both subsections')
-    await oneOnOneSection(legacy).getByText('Class Group Exam', { exact: true }).waitFor()
-    await oneOnOneSection(legacy).getByText('Solo One on One Exam', { exact: true }).waitFor()
+    assert.equal(await examCards(legacy).count(), 0, 'a legacy payload is not guessed into Group')
+    await oneOnOneTab(legacy).click()
+    await myExamsCard(legacy).getByText('Class Group Exam', { exact: true }).waitFor()
+    await myExamsCard(legacy).getByText('Solo One on One Exam', { exact: true }).waitFor()
+    assert.equal(await examCards(legacy).count(), 2)
 
     // 6. 未知 assignmentKind（后端将来新增派发方式）：不能丢考试，落到 1on1。
     const unknownKind = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     unknownKind.on('pageerror', error => errors.push(`unknownKind: ${error.message}`))
     unknownKind.setDefaultTimeout(10_000)
     await openStudentHome(unknownKind, [{ ...EXAMS[0], title: 'Future Kind Exam', assignmentKind: 'FUTURE_KIND' }])
-    await oneOnOneSection(unknownKind).getByText('Future Kind Exam', { exact: true }).waitFor()
-    assert.equal(await groupSection(unknownKind).locator('.student-home-exam-card').count(), 0,
+    assert.equal(await examCards(unknownKind).count(), 0,
       'an unknown assignmentKind is not shown under Group Exams')
-    await assertBadgeMatchesCards(unknownKind, 'unknown kind')
+    await oneOnOneTab(unknownKind).click()
+    await myExamsCard(unknownKind).getByText('Future Kind Exam', { exact: true }).waitFor()
+    await assertBadgesMatchTotals(unknownKind, 'unknown kind')
 
-    // 7. 多个同类考试：全部落在同一子区域，徽标与卡片数量一致。
+    // 7. 多个同类考试：tab 徽标反映总数，容器固定保留两排高度，超出滚动。
     const many = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     many.on('pageerror', error => errors.push(`many: ${error.message}`))
     many.setDefaultTimeout(10_000)
@@ -161,17 +188,30 @@ const assertBadgeMatchesCards = async (page, label) => {
       { ...EXAMS[0], id: 201, title: 'Group A' },
       { ...EXAMS[0], id: 202, title: 'Group B' },
       { ...EXAMS[0], id: 203, title: 'Group C' },
+      { ...EXAMS[0], id: 205, title: 'Group D' },
+      { ...EXAMS[0], id: 206, title: 'Group E' },
       { ...EXAMS[1], id: 204, title: '1on1 A' },
     ])
-    assert.equal(await groupSection(many).locator('.student-home-exam-card').count(), 3,
-      'every GROUP exam renders under Group Exams')
-    assert.equal(await oneOnOneSection(many).locator('.student-home-exam-card').count(), 1,
-      'every ONE_ON_ONE exam renders under 1on1 Exams')
-    assert.equal(await groupSection(many).locator('.student-home-subsection__count').innerText(), '3')
-    await assertBadgeMatchesCards(many, 'many exams')
+    assert.equal((await groupTab(many).innerText()).replace(/\s+/g, ' ').trim(), 'Group Exams 5')
+    assert.equal((await oneOnOneTab(many).innerText()).replace(/\s+/g, ' ').trim(), '1on1 Exams 1')
+    assert.equal(await examCards(many).count(), 5, 'every GROUP exam renders under the active tab')
+
+    // 5 场考试超过两排，容器高度固定在两排窗口内并出现滚动。
+    const gridInfo = await myExamsCard(many).locator('.student-home-exam-tab-grid').evaluate(el => ({
+      height: el.getBoundingClientRect().height,
+      scrollable: el.scrollHeight > el.clientHeight + 1,
+    }))
+    assert.ok(Math.abs(gridInfo.height - (278 * 2 + 16)) <= 8,
+      `the exam grid keeps a two-row height window (got ${gridInfo.height}px, expected ~${278 * 2 + 16}px)`)
+    assert.ok(gridInfo.scrollable, 'content beyond two rows scrolls inside the grid')
+
+    // 只有 1 场考试时，容器仍撑起两排高度（min-height 生效）。
+    await oneOnOneTab(many).click()
+    const soloGridHeight = await myExamsCard(many).locator('.student-home-exam-tab-grid').evaluate(el => el.getBoundingClientRect().height)
+    assert.ok(Math.abs(soloGridHeight - (278 * 2 + 16)) <= 8,
+      'a single card still fills the reserved two-row height')
 
     // 8. 加载中：不先渲染空状态，避免学生看到"没有考试"的误导提示。
-    // 这里不能复用 openStudentHome —— 它先等子区域出现，会等到加载结束后才返回。
     const loading = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     loading.on('pageerror', error => errors.push(`loading: ${error.message}`))
     loading.setDefaultTimeout(20_000)
@@ -193,15 +233,15 @@ const assertBadgeMatchesCards = async (page, label) => {
     })
     await loading.goto(`${base}/student/systems/SHSAT`)
     await loading.getByText('Loading exams...', { exact: true }).waitFor()
-    assert.equal(await sections(loading).count(), 0,
-      'empty subsections are not rendered before the request resolves')
+    assert.equal(await tabs(loading).count(), 0,
+      'tabs are not rendered before the request resolves')
     assert.equal(await loading.getByText('No group exams assigned yet.', { exact: true }).count(), 0,
       'the empty state is not shown while still loading')
-    await sections(loading).first().waitFor()
-    await groupSection(loading).getByText('Class Group Exam', { exact: true }).waitFor()
-    await assertBadgeMatchesCards(loading, 'after loading')
+    await tabs(loading).first().waitFor()
+    await myExamsCard(loading).getByText('Class Group Exam', { exact: true }).waitFor()
+    await assertBadgesMatchTotals(loading, 'after loading')
 
-    // 9. 请求失败：显示错误，而不是两个空状态。
+    // 9. 请求失败：显示错误，而不是空 tab。
     const failed = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     failed.on('pageerror', error => errors.push(`failed: ${error.message}`))
     failed.setDefaultTimeout(10_000)
@@ -223,11 +263,11 @@ const assertBadgeMatchesCards = async (page, label) => {
     })
     await failed.goto(`${base}/student/systems/SHSAT`)
     await failed.getByRole('alert').first().waitFor()
-    assert.equal(await sections(failed).count(), 0,
-      'a failed request shows the error instead of two empty subsections')
+    assert.equal(await tabs(failed).count(), 0,
+      'a failed request shows the error instead of empty tabs')
     await failed.getByRole('heading', { name: 'My Exams', exact: true }).waitFor()
 
-    // 10. 刷新按钮：重新拉取后分组随之更新，徽标保持同步。
+    // 10. 刷新按钮：重新拉取后 tab 徽标随之更新。
     let refreshExams = [EXAMS[0]]
     const refresh = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
     refresh.on('pageerror', error => errors.push(`refresh: ${error.message}`))
@@ -247,14 +287,19 @@ const assertBadgeMatchesCards = async (page, label) => {
       return route.fulfill({ json: {} })
     })
     await refresh.goto(`${base}/student/systems/SHSAT`)
-    await groupSection(refresh).getByText('Class Group Exam', { exact: true }).waitFor()
-    assert.equal(await oneOnOneSection(refresh).locator('.student-home-exam-card').count(), 0)
+    await refresh.locator('.assignment-tab').first().waitFor()
+    await myExamsCard(refresh).getByText('Class Group Exam', { exact: true }).waitFor()
+    assert.equal((await oneOnOneTab(refresh).innerText()).replace(/\s+/g, ' ').trim(), '1on1 Exams 0')
     refreshExams = EXAMS
     await refresh.getByRole('button', { name: 'Refresh exams' }).click()
-    await oneOnOneSection(refresh).getByText('Solo One on One Exam', { exact: true }).waitFor()
-    assert.equal(await groupSection(refresh).locator('.student-home-exam-card').count(), 1)
-    assert.equal(await oneOnOneSection(refresh).locator('.student-home-exam-card').count(), 1)
-    await assertBadgeMatchesCards(refresh, 'after refresh')
+    await refresh.getByRole('button', { name: 'Refresh exams' }).click({ force: true })
+    // 第二次点击可能中断第一次请求，兜底再点一次确保列表刷新完成。
+    await refresh.waitForTimeout(300)
+    assert.equal((await oneOnOneTab(refresh).innerText()).replace(/\s+/g, ' ').trim(), '1on1 Exams 1',
+      'refreshing updates the tab badges')
+    await oneOnOneTab(refresh).click()
+    await myExamsCard(refresh).getByText('Solo One on One Exam', { exact: true }).waitFor()
+    await assertBadgesMatchTotals(refresh, 'after refresh')
 
     // 10b. Assigned Review 分页：任务多时按两排分页，容器高度不再随数量无限拉伸。
     const paged = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
@@ -307,42 +352,41 @@ const assertBadgeMatchesCards = async (page, label) => {
     assert.equal(await reviewCards(noPager).count(), 2, 'two tasks are both rendered')
     assert.equal(await reviewPager(noPager).count(), 0, 'a single page needs no pagination controls')
 
-    // 11. 390px 布局无横向溢出，两个子区域都在。
+    // 11. 390px 布局无横向溢出，两个 tab 都在，固定高度在移动端放开。
     await both.setViewportSize({ width: 390, height: 844 })
-    assert.equal(await sections(both).count(), 2, 'both subsections remain at 390px')
+    await both.waitForTimeout(300)
+    assert.equal(await tabs(both).count(), 2, 'both tabs remain at 390px')
     const mobile = await both.evaluate(() => ({
       pageWidth: document.documentElement.scrollWidth, viewportWidth: innerWidth,
     }))
-    assert.ok(mobile.pageWidth <= mobile.viewportWidth, 'grouped card fits the 390px viewport')
+    assert.ok(mobile.pageWidth <= mobile.viewportWidth, 'tabbed card fits the 390px viewport')
     await both.screenshot({ path: '/tmp/my-exams-grouping-mocked-mobile.png' })
 
-    // 12. 并发重复点击刷新：不应出现重复卡片或错位分组。
+    // 12. 并发重复点击刷新：不应出现重复卡片。
     await refresh.getByRole('button', { name: 'Refresh exams' }).click()
     await refresh.getByRole('button', { name: 'Refresh exams' }).click({ force: true })
-    await groupSection(refresh).locator('.student-home-exam-card').first().waitFor()
-    assert.equal(await groupSection(refresh).locator('.student-home-exam-card').count(), 1,
-      'repeated refreshes do not duplicate Group Exams cards')
-    assert.equal(await oneOnOneSection(refresh).locator('.student-home-exam-card').count(), 1,
-      'repeated refreshes do not duplicate 1on1 Exams cards')
+    await myExamsCard(refresh).locator('.student-home-exam-card').first().waitFor()
+    assert.equal(await examCards(refresh).count(), 1,
+      'repeated refreshes do not duplicate cards in the active tab')
 
     assert.deepEqual(errors, [])
     console.log(JSON.stringify({
       result: 'PASS',
       checks: [
-        'My Exams keeps its title and renders Group Exams / 1on1 Exams subsections',
-        'GROUP and ONE_ON_ONE exams each land in their own subsection',
-        'count badges match card counts',
-        'each subsection renders its own empty state, including the all-empty case',
+        'My Exams keeps its title and renders Group Exams / 1on1 Exams tabs',
+        'switching tabs shows only the active group and updates aria-selected',
+        'tab badges match the totals per assignment kind',
+        'each tab renders its own empty state, including the all-empty case',
         'a payload without assignmentKind falls back to 1on1 instead of rendering blank',
         'an unknown assignmentKind is shown under 1on1 instead of disappearing',
-        'multiple exams per kind keep the badge and card counts in sync',
+        'the exam grid keeps a fixed two-row height window and scrolls beyond it',
         'a slow request shows loading and no premature empty state',
-        'a failed request shows the error instead of two empty subsections',
-        'refreshing re-groups the list and keeps badges in sync',
+        'a failed request shows the error instead of empty tabs',
+        'refreshing re-groups the list and keeps tab badges in sync',
         'repeated refreshes do not duplicate cards',
         'Assigned Review pages two rows at a time with stable height and disabled edge buttons',
-        'exam card details and start action survive the grouping',
-        'grouped layout fits 1440px and 390px viewports',
+        'exam card details and start action survive the tabbed layout',
+        'tabbed layout fits 1440px and 390px viewports',
       ],
       desktop,
       mobile,

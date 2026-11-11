@@ -448,6 +448,11 @@ const visibleReviewTasks = computed(() => {
 // 学生首页按派发方式分组：整班派发为 Group Exams，其余（个人派发）归入 1on1 Exams。
 // 分组规则与文案集中在 utils/studentExamGrouping.js，便于单测覆盖。
 const groupedStudentExams = computed(() => groupStudentExams(studentExams.value))
+
+// My Exams 当前激活的派发方式 tab；默认 Group Exams
+const activeStudentExamTab = ref('GROUP')
+const activeStudentExamGroup = computed(() =>
+  groupedStudentExams.value.find((group) => group.key === activeStudentExamTab.value) || groupedStudentExams.value[0])
 const completedReviewTasks = computed(() => studentReviewTasks.value
   .filter((task) => task.status === 'COMPLETED' && task.practiceAttemptId))
 const studentHomeHistoryLoading = computed(() => props.code === 'SHSAT'
@@ -2276,28 +2281,39 @@ watch(() => props.code, (code) => {
             <div v-if="studentExamsLoading && !studentExams.length" class="student-home-state">Loading exams...</div>
             <p v-else-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
             <template v-else>
-              <section v-for="group in groupedStudentExams" :key="group.key" class="student-home-subsection">
-                <h3 class="student-home-subsection__title">{{ group.title }} <span class="student-home-subsection__count">{{ group.exams.length }}</span></h3>
-                <div v-if="group.exams.length" class="student-home-grid">
-                  <article v-for="exam in group.exams" :key="exam.id" class="student-home-exam-card">
-                    <header class="student-home-exam-card__header">
-                      <div><span class="student-home-eyebrow">Exam #{{ exam.id }}</span><h3>{{ exam.title }}</h3></div>
-                      <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).canViewAttempt && !getStudentExamState(exam).canStart ? 'Completed' : getStudentExamState(exam).label }}</span>
-                    </header>
-                    <p class="student-home-exam-card__description">{{ exam.paperTitle || 'Assigned exam' }}</p>
-                    <dl class="student-home-meta">
-                      <div class="student-home-meta__wide"><dt>Time Window</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
-                      <div><dt>Submission</dt><dd>{{ getStudentExamState(exam).canViewAttempt ? 'Final result recorded' : getStudentExamState(exam).label }}</dd></div>
-                      <div><dt>Duration</dt><dd>{{ exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' }}</dd></div>
-                    </dl>
-                    <AppButton v-if="getStudentExamState(exam).canStart" class="student-home-card-action" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
-                      {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
-                    </AppButton>
-                    <AppButton v-else class="student-home-card-action" disabled>{{ getStudentExamState(exam).canViewAttempt ? 'Completed' : getStudentExamState(exam).label }}</AppButton>
-                  </article>
-                </div>
-                <p v-else class="student-home-state">{{ group.empty }}</p>
-              </section>
+              <nav class="assignment-tabs" role="tablist" aria-label="My exams by assignment kind">
+                <button
+                  v-for="group in groupedStudentExams"
+                  :key="group.key"
+                  class="assignment-tab"
+                  :class="{ 'assignment-tab--active': activeStudentExamTab === group.key }"
+                  role="tab"
+                  :aria-selected="activeStudentExamTab === group.key"
+                  type="button"
+                  @click="activeStudentExamTab = group.key"
+                >
+                  {{ group.title }} <span class="assignment-tab__count">{{ group.exams.length }}</span>
+                </button>
+              </nav>
+              <div v-if="activeStudentExamGroup.exams.length" class="student-home-grid student-home-exam-tab-grid">
+                <article v-for="exam in activeStudentExamGroup.exams" :key="exam.id" class="student-home-exam-card">
+                  <header class="student-home-exam-card__header">
+                    <div><span class="student-home-eyebrow">Exam #{{ exam.id }}</span><h3>{{ exam.title }}</h3></div>
+                    <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).canViewAttempt && !getStudentExamState(exam).canStart ? 'Completed' : getStudentExamState(exam).label }}</span>
+                  </header>
+                  <p class="student-home-exam-card__description">{{ exam.paperTitle || 'Assigned exam' }}</p>
+                  <dl class="student-home-meta">
+                    <div class="student-home-meta__wide"><dt>Time Window</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
+                    <div><dt>Submission</dt><dd>{{ getStudentExamState(exam).canViewAttempt ? 'Final result recorded' : getStudentExamState(exam).label }}</dd></div>
+                    <div><dt>Duration</dt><dd>{{ exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' }}</dd></div>
+                  </dl>
+                  <AppButton v-if="getStudentExamState(exam).canStart" class="student-home-card-action" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
+                    {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
+                  </AppButton>
+                  <AppButton v-else class="student-home-card-action" disabled>{{ getStudentExamState(exam).canViewAttempt ? 'Completed' : getStudentExamState(exam).label }}</AppButton>
+                </article>
+              </div>
+              <p v-else class="student-home-state">{{ activeStudentExamGroup.empty }}</p>
             </template>
           </AppCard>
 
@@ -2425,9 +2441,21 @@ watch(() => props.code, (code) => {
 .student-home-refresh svg { width: 16px; height: 16px; }
 .student-home-refresh:disabled { cursor: wait; opacity: .55; }
 .student-home-state { margin: 0; padding: 12px 2px; color: #667b9e; font-size: 14px; }
-.student-home-subsection + .student-home-subsection { margin-top: 24px; }
-.student-home-subsection__title { margin: 0 0 14px; color: #202b40; font-size: 15px; font-weight: 700; }
-.student-home-subsection__count { display: inline-flex; margin-left: 6px; border-radius: 999px; padding: 2px 8px; background: #edf3ff; color: #2563eb; font-size: 11px; font-weight: 750; vertical-align: middle; }
+/* My Exams 的 Group Exams / 1on1 Exams 切换 tab；与管理端共用视觉语气。
+   tab 内的卡片容器固定保留两排卡片（278px × 2 + 16px 间距），超出后容器内滚动。 */
+.assignment-tabs { display: flex; gap: 8px; margin: 0 0 14px; }
+.assignment-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d7e4fb; border-radius: 999px; padding: 6px 14px; background: #fff; color: #3c4a63; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+.assignment-tab:hover { background: #edf3ff; }
+.assignment-tab--active { border-color: #2563eb; background: #edf3ff; color: #2563eb; }
+.assignment-tab__count { display: inline-flex; border-radius: 999px; padding: 1px 7px; background: #edf3ff; color: #2563eb; font-size: 11px; font-weight: 750; }
+.assignment-tab--active .assignment-tab__count { background: #fff; }
+
+.student-home-exam-tab-grid {
+  min-height: calc(278px * 2 + 16px);
+  max-height: calc(278px * 2 + 16px);
+  align-content: start;
+  overflow-y: auto;
+}
 .student-home-history-note { margin: 0; color: #667b9e; font-size: 13px; }
 .student-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); align-items: stretch; gap: 16px; padding: 0 4px 2px; }
 .student-home-exam-card, .student-home-review-card { display: flex; min-width: 0; flex-direction: column; gap: 12px; border: 1px solid #d7e4fb; border-radius: 16px; padding: 14px; background: #fff; box-shadow: 0 10px 26px rgb(31 75 135 / 6%); }
@@ -2480,6 +2508,9 @@ watch(() => props.code, (code) => {
 .student-home-wrong-book__status { color: #16804a; font-size: 11px; font-weight: 750; }
 .student-home-wrong-book__body :deep(.app-button) { width: 100%; min-height: 38px; }
 @media (max-width: 700px) {
+  /* 移动端：考试卡片改单列，两排固定高度失效，避免空容器撑高页面 */
+  .assignment-tabs { flex-wrap: wrap; }
+  .student-home-exam-tab-grid { min-height: 0; max-height: none; }
   .student-dashboard-workspace { padding-top: 18px; }
   .student-home-refresh { top: 16px; right: 16px; }
   .student-home-section :deep(.app-card__header) { padding-right: 40px; }

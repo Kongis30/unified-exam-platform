@@ -225,3 +225,44 @@ const groupedStudentExams = computed(() => [
 - `mvn test -Dtest=ExamReleaseServiceTest`：19/19 通过（需 JDK 17；JDK 24 下 Mockito 无法 mock `JdbcTemplate`，属环境问题，与本次改动无关）。
 - `node e2e/student-my-exams-grouping-mocked.cjs`：PASS，7 项检查通过，`errors: 0`，桌面 1440px、移动 390px 均无横向溢出。
 - 真实数据 e2e `student-my-exams-grouping.cjs` 未在本机执行：本地未配置 `DB_URL` / `DB_USERNAME` / `DB_PASSWORD`，无可用数据库实例。脚本已通过 `node --check` 语法校验，需在有数据库的环境按 README 步骤执行。
+
+## 11. 展示方式变更：纵向子区域改为 tab（2026-11-11）
+
+> 需求原文：「学生登录页面的 group exams 和 1on1 exams 也要用 tab 来切换，然后 tab 内的卡片容器要设置好最小最大高度，保留两个卡片的高度」
+
+### 11.1 变更内容
+
+两个纵向子区域改为**药丸式 tab 切换**（与管理端 Available Exams 同期改为 tab 保持一致）：
+
+- 新增 `activeStudentExamTab`（`ref`，默认 `'GROUP'`）与 `activeStudentExamGroup`（`computed`，当前激活分组）
+- 模板用 `role="tablist"` / `role="tab"` / `aria-selected` 渲染两个带数量徽标的 tab，**只显示当前激活 tab 的卡片或空状态**
+- tab 徽标始终反映各组总数，与激活与否无关
+
+### 11.2 卡片容器固定两排高度
+
+学生考试卡片基础高度 278px、网格行间距 16px：
+
+```css
+.student-home-exam-tab-grid {
+  min-height: calc(278px * 2 + 16px);   /* 不足两排也保留两排高度 */
+  max-height: calc(278px * 2 + 16px);  /* 超出两排容器内滚动，不再拉伸页面 */
+  align-content: start;
+  overflow-y: auto;
+}
+```
+
+移动端（≤700px）单列展示时放开固定高度（`min-height: 0; max-height: none`），避免空容器撑高页面。
+
+### 11.3 验收标准（增量）
+
+1. 默认激活 Group Exams tab；点击 1on1 Exams 切换，`aria-selected` 随之更新
+2. 任一时刻只渲染当前 tab 的卡片；另一组的考试不出现
+3. tab 徽标等于各组考试总数，与激活状态无关
+4. 考试超过两排时容器高度固定在两排窗口内并滚动；只有一张卡片时容器仍撑起两排高度
+5. 加载中 / 请求失败时不渲染 tab；Assigned Review 分页行为无回归
+
+### 11.4 验证结果
+
+- `npm run build`：通过
+- 前端单测 30/30 通过（examAssignmentGrouping + studentExamGrouping）
+- `node e2e/student-my-exams-grouping-mocked.cjs`：PASS，14 项检查，含 tab 切换、固定两排高度、滚动、Assigned Review 分页回归，`errors: 0`

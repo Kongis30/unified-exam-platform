@@ -18,6 +18,7 @@ import { adminApi } from '@shsat/admin/services/adminApi';
 import { studentApi } from '@shsat/admin/services/studentApi';
 import { getUserRole } from '@shsat/admin/authBridge';
 import { listExams } from '@/api/platform';
+import { groupExamsByAssignment } from '@/utils/examAssignmentGrouping.js';
 
 const router = useRouter();
 const route = useRoute();
@@ -452,6 +453,18 @@ const adminExamCards = computed(() => {
     })
     .sort((a, b) => getTimeValue(a.startTime) - getTimeValue(b.startTime));
 });
+
+// Available Exams 按派发方式拆成 Group Exams / 1on1 Exams 两个 tab，与学生端口径一致：
+// 整班派发（含 target_scope = ALL_STUDENTS）归 Group Exams，其余归 1on1 Exams。
+const groupedAdminExamCards = computed(() => groupExamsByAssignment(adminExamCards.value, {
+  GROUP: 'No group exams right now.',
+  ONE_ON_ONE: 'No 1on1 exams right now.',
+}));
+
+// 当前激活的派发方式 tab；默认 Group Exams
+const activeAssignmentTab = ref('GROUP');
+const activeAdminExamGroup = computed(() =>
+  groupedAdminExamCards.value.find((group) => group.key === activeAssignmentTab.value) || groupedAdminExamCards.value[0]);
 
 /** 判断复习任务是否已结束；服务端会在截止时间到达时动态返回 ENDED。 */
 function isReviewAssignmentEnded(task) {
@@ -3298,27 +3311,44 @@ onBeforeUnmount(() => {
           <div v-if="loading.adminExams && !adminExams.length" class="admin-state">Loading exams...</div>
           <div v-else-if="errors.adminExams && !adminExams.length" class="admin-state admin-state--error">{{ errors.adminExams }}</div>
           <div v-else-if="adminExamCards.length === 0" class="admin-state">No available exams right now.</div>
-          <div v-else class="admin-exam-grid">
-          <AdminExamCard
-            v-for="exam in adminExamCards"
-            :key="exam.id"
-            :title="exam.title"
-            :status-label="exam.status.label"
-            :status-tone="exam.status.key"
-            :description="exam.description"
-            :metadata="[
-              { label: 'Available', value: `${formatDateTime(exam.startTime)} - ${formatDateTime(exam.endTime)}`, wide: true },
-              { label: 'Submission', value: getAttemptText(exam) },
-              { label: 'Duration', value: exam.duration ? `${exam.duration} min` : 'Not set' },
-            ]"
-          >
-            <template #actions>
-              <AppButton class="admin-exam-card__action" :disabled="exam.status.disabled" @click="enterAdminExam(exam)">
-                {{ exam.status.actionText }}
-              </AppButton>
-            </template>
-          </AdminExamCard>
-          </div>
+          <template v-else>
+            <nav class="assignment-tabs" role="tablist" aria-label="Available exams by assignment kind">
+              <button
+                v-for="group in groupedAdminExamCards"
+                :key="group.key"
+                class="assignment-tab"
+                :class="{ 'assignment-tab--active': activeAssignmentTab === group.key }"
+                role="tab"
+                :aria-selected="activeAssignmentTab === group.key"
+                type="button"
+                @click="activeAssignmentTab = group.key"
+              >
+                {{ group.title }} <span class="assignment-tab__count">{{ group.exams.length }}</span>
+              </button>
+            </nav>
+            <div v-if="activeAdminExamGroup.exams.length" class="admin-exam-grid admin-exam-grid--assignment-tab">
+              <AdminExamCard
+                v-for="exam in activeAdminExamGroup.exams"
+                :key="exam.id"
+                :title="exam.title"
+                :status-label="exam.status.label"
+                :status-tone="exam.status.key"
+                :description="exam.description"
+                :metadata="[
+                  { label: 'Available', value: `${formatDateTime(exam.startTime)} - ${formatDateTime(exam.endTime)}`, wide: true },
+                  { label: 'Submission', value: getAttemptText(exam) },
+                  { label: 'Duration', value: exam.duration ? `${exam.duration} min` : 'Not set' },
+                ]"
+              >
+                <template #actions>
+                  <AppButton class="admin-exam-card__action" :disabled="exam.status.disabled" @click="enterAdminExam(exam)">
+                    {{ exam.status.actionText }}
+                  </AppButton>
+                </template>
+              </AdminExamCard>
+            </div>
+            <p v-else class="admin-state">{{ activeAdminExamGroup.empty }}</p>
+          </template>
         </template>
       </AppCard>
 
@@ -5223,6 +5253,60 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
+/* Available Exams 的 Group Exams / 1on1 Exams 切换 tab（药丸式，与 AdminTabs 一致的语气）。
+   tab 内的卡片容器固定保留两排卡片（286px × 2 + 16px 间距），超出后容器内滚动，不再拉伸页面。 */
+.assignment-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.assignment-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: #fff;
+  color: #3c4a63;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.assignment-tab:hover {
+  background: var(--color-primary-soft);
+}
+
+.assignment-tab--active {
+  border-color: var(--color-primary-strong);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+}
+
+.assignment-tab__count {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: #edf3ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.assignment-tab--active .assignment-tab__count {
+  background: #fff;
+}
+
+/* 只作用于 SHSAT 首页这张卡片：覆盖全局 .admin-exam-grid 的 max-height，
+   固定为两排管理端卡片（286px 基础高度）的高度窗口。 */
+.admin-exam-grid--assignment-tab {
+  min-height: calc(286px * 2 + 16px);
+  max-height: calc(286px * 2 + 16px);
+}
+
 .admin-state {
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-md);
@@ -6324,6 +6408,18 @@ onBeforeUnmount(() => {
     color: var(--color-muted);
     font-size: 13px;
     text-align: left;
+  }
+}
+
+/* 移动端：管理端卡片改单列，两排的固定高度改为 auto，避免空容器占满整屏 */
+@media (max-width: 780px) {
+  .assignment-tabs {
+    flex-wrap: wrap;
+  }
+
+  .admin-exam-grid--assignment-tab {
+    min-height: 0;
+    max-height: none;
   }
 }
 

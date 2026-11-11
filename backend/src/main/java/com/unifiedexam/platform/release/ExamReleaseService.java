@@ -34,6 +34,18 @@ public class ExamReleaseService {
              ), ''), 'No students selected') END AS target_summary
         """;
 
+    /**
+     * 管理端「这场考试是整班派发还是个人派发」的判定，用于 Available Exams 分组。
+     * 与学生端的 listForStudent 不同：这里看考试本身的目标，不看具体学生的资格冻结记录。
+     * 沿用与学生端一致的口径——只看 exam_target_classes 是否存在，不看 classes.class_type，
+     * 因为历史班级的 class_type 不可靠，且「是否通过班级派发」才是业务本义。
+     */
+    private static final String ASSIGNMENT_KIND_PROJECTION = """
+        CASE WHEN e.target_scope = 'ALL_STUDENTS' THEN 'GROUP'
+             WHEN EXISTS (SELECT 1 FROM exam_target_classes atc WHERE atc.exam_id = e.id) THEN 'GROUP'
+             ELSE 'ONE_ON_ONE' END AS assignment_kind
+        """;
+
     private final JdbcTemplate jdbcTemplate;
     private final ExamTypeRegistry examTypeRegistry;
 
@@ -52,6 +64,7 @@ public class ExamReleaseService {
                    e.attempt_limit, e.allow_review, e.auto_submit,
                    EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
                    e.created_at, e.updated_at, e.published_at,
+                   %s,
                    %s
             FROM exams e JOIN papers p ON p.id = e.paper_id
             WHERE p.exam_type_code = ? AND e.release_hidden_at IS NULL AND NOT EXISTS (
@@ -59,7 +72,7 @@ public class ExamReleaseService {
             ) AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id
             ) ORDER BY e.created_at DESC, e.id DESC
-            """.formatted(TARGET_SUMMARY_PROJECTION), (rs, rowNum) -> mapSummary(rs), examTypeCode);
+            """.formatted(TARGET_SUMMARY_PROJECTION, ASSIGNMENT_KIND_PROJECTION), (rs, rowNum) -> mapSummary(rs), examTypeCode);
     }
 
     /** 定时关闭已过结束时间的发布，避免历史考试继续显示为已发布。 */
@@ -508,13 +521,14 @@ public class ExamReleaseService {
                    e.attempt_limit, e.allow_review, e.auto_submit,
                    EXISTS(SELECT 1 FROM attempts a WHERE a.exam_id = e.id AND a.is_practice = FALSE) AS has_student_attempts,
                    e.created_at, e.updated_at, e.published_at,
+                   %s,
                    %s
             FROM exams e JOIN papers p ON p.id = e.paper_id WHERE e.id = ? AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_papers spp WHERE spp.practice_exam_id = e.id
             ) AND NOT EXISTS (
                 SELECT 1 FROM sat_practice_paper_templates spt WHERE spt.practice_exam_id = e.id
             )
-            """.formatted(TARGET_SUMMARY_PROJECTION), (rs, rowNum) -> mapSummary(rs), examId);
+            """.formatted(TARGET_SUMMARY_PROJECTION, ASSIGNMENT_KIND_PROJECTION), (rs, rowNum) -> mapSummary(rs), examId);
         if (result.isEmpty()) throw notFound();
         return result.get(0);
     }
@@ -528,7 +542,8 @@ public class ExamReleaseService {
             rs.getInt("attempt_limit"), rs.getBoolean("has_student_attempts"), rs.getBoolean("allow_review"),
             rs.getBoolean("auto_submit"), rs.getTimestamp("created_at").toInstant().toString(),
             rs.getTimestamp("updated_at").toInstant().toString(),
-            publishedAt == null ? null : publishedAt.toInstant().toString(), rs.getString("target_summary"));
+            publishedAt == null ? null : publishedAt.toInstant().toString(), rs.getString("target_summary"),
+            rs.getString("assignment_kind"));
     }
 
     private void ensurePaperExists(long paperId) {
@@ -643,7 +658,8 @@ public class ExamReleaseService {
                               String description, String status, String targetScope, String opensAt,
                               String closesAt, Integer durationSeconds, int attemptLimit, boolean hasStudentAttempts,
                               boolean allowReview, boolean autoSubmit,
-                              String createdAt, String updatedAt, String publishedAt, String targetSummary) { }
+                              String createdAt, String updatedAt, String publishedAt, String targetSummary,
+                              String assignmentKind) { }
     public record ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds,
                              List<StudentClassTarget> studentTargets) {
         public ExamDetail(ExamSummary summary, List<Long> classIds, List<Long> studentUserIds) { this(summary, classIds, studentUserIds, List.of()); }

@@ -66,6 +66,10 @@ This test creates one temporary class, two temporary students, one class-targete
 
 For a database-free check of the same grouping rules, run `node e2e/student-my-exams-grouping-mocked.cjs` (or `npm run test:e2e:shsat:my-exams-grouping-mocked`) against a running Vite server. It mocks `/api/student/exams`, covers the both-kinds, group-only, 1on1-only and no-exams empty states, and verifies that a payload without `assignmentKind` falls back to 1on1 instead of rendering blank.
 
+The admin console splits the same way, switched by tabs. Run `node e2e/admin-available-exams-grouping.cjs` (or `npm run test:e2e:shsat:admin-available-exams-grouping`) against a running Vite server. It needs no database: it mocks `/api/admin/exam-types/SHSAT/exams` and opens `/shsat`, then checks that `Group Exams` and `1on1 Exams` render as pill tabs with count badges matching each group's total, that switching tabs shows only the active group's cards or its own empty state, that a completely empty list still shows the single overall empty state instead of empty tabs, that a response without `assignmentKind` (or with an unknown value) falls back to 1on1 without losing the exam, that the card grid keeps a fixed two-row height and scrolls inside the container, that loading, error and collapsed states render no tabs, and that the layout fits 1440px and 390px.
+
+The student My Exams card also uses the same tabs. The mocked check `node e2e/student-my-exams-grouping-mocked.cjs` verifies tab switching, badges, per-tab empty states, the fixed two-row grid height with internal scrolling, plus the Assigned Review pagination regression.
+
 To verify the SHSAT Unassigned Students bulk assignment flow, run:
 
 ```sh
