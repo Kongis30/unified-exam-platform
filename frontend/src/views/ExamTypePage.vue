@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AppButton from '@/components/AppButton.vue'
 import AppCard from '@/components/AppCard.vue'
 import AppModal from '@/components/AppModal.vue'
+import ScoreTrendCard from '@/components/ScoreTrendCard.vue'
 import CreatePaperDialog from '@/components/admin/CreatePaperDialog.vue'
 import ExamReleaseDialog from '@/components/admin/ExamReleaseDialog.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
@@ -55,9 +56,7 @@ const activeHistoryTab = ref(localStorage.getItem(`student-history-tab.${props.c
 const wrongAnswerBookGrid = ref(null)
 const wrongAnswerBookColumns = ref(3)
 const wrongAnswerBookPage = ref(1)
-const reviewTaskGrid = ref(null)
 let wrongAnswerBookResizeObserver = null
-let reviewTaskResizeObserver = null
 const startingWrongAnswerAttemptId = ref(null)
 const startingReviewTaskId = ref(null)
 const classes = ref([])
@@ -109,6 +108,18 @@ const deleteFolderTarget = ref(null)
 const availableExamsCollapsed = ref(localStorage.getItem(`admin.available-exams-collapsed.${props.code}`) === 'true')
 const examReleasesCollapsed = ref(localStorage.getItem(`admin.exam-releases-collapsed.${props.code}`) === 'true')
 const historicalExamsCollapsed = ref(localStorage.getItem(`admin.historical-exams-collapsed.${props.code}`) === 'true')
+// 学生首页各卡片的折叠状态，按考试类型分别持久化
+const studentCardCollapsed = reactive({
+  myExams: localStorage.getItem(`student.card-collapsed.myExams.${props.code}`) === 'true',
+  scoreTrend: localStorage.getItem(`student.card-collapsed.scoreTrend.${props.code}`) === 'true',
+  assignedReview: localStorage.getItem(`student.card-collapsed.assignedReview.${props.code}`) === 'true',
+  scoreHistory: localStorage.getItem(`student.card-collapsed.scoreHistory.${props.code}`) === 'true',
+})
+// 切换学生首页卡片折叠并写入 localStorage
+function toggleStudentCard(key) {
+  studentCardCollapsed[key] = !studentCardCollapsed[key]
+  localStorage.setItem(`student.card-collapsed.${key}.${props.code}`, String(studentCardCollapsed[key]))
+}
 const paperFolderExpanded = reactive({})
 const draggingPaperFolderKey = ref('')
 const paperFolderDragMoved = ref(false)
@@ -437,13 +448,13 @@ const visibleWrongAnswerBooks = computed(() => {
 })
 const activeReviewTasks = computed(() => studentReviewTasks.value.filter((task) => task.status !== 'COMPLETED'))
 // Assigned Review 卡片同样按网格实际列数分页，每页固定两排，避免卡片越多容器被无限拉高。
-const reviewTaskColumns = ref(3)
+// Assigned Review 分页：每页固定 6 个任务，容器限高，避免任务越多被无限拉高。
+const STUDENT_REVIEW_PAGE_SIZE = 6
 const reviewTaskPage = ref(1)
-const reviewTaskPageSize = computed(() => reviewTaskColumns.value * 2)
-const reviewTaskPageCount = computed(() => Math.max(1, Math.ceil(activeReviewTasks.value.length / reviewTaskPageSize.value)))
+const reviewTaskPageCount = computed(() => Math.max(1, Math.ceil(activeReviewTasks.value.length / STUDENT_REVIEW_PAGE_SIZE)))
 const visibleReviewTasks = computed(() => {
-  const start = (reviewTaskPage.value - 1) * reviewTaskPageSize.value
-  return activeReviewTasks.value.slice(start, start + reviewTaskPageSize.value)
+  const start = (reviewTaskPage.value - 1) * STUDENT_REVIEW_PAGE_SIZE
+  return activeReviewTasks.value.slice(start, start + STUDENT_REVIEW_PAGE_SIZE)
 })
 // 学生首页按派发方式分组：整班派发为 Group Exams，其余（个人派发）归入 1on1 Exams。
 // 分组规则与文案集中在 utils/studentExamGrouping.js，便于单测覆盖。
@@ -453,6 +464,23 @@ const groupedStudentExams = computed(() => groupStudentExams(studentExams.value)
 const activeStudentExamTab = ref('GROUP')
 const activeStudentExamGroup = computed(() =>
   groupedStudentExams.value.find((group) => group.key === activeStudentExamTab.value) || groupedStudentExams.value[0])
+// My Exams 子 tab 分页：每页固定 6 张考试卡，容器限高，避免考试越多卡片被无限拉高。
+const STUDENT_EXAM_PAGE_SIZE = 6
+const studentExamPage = ref(1)
+const studentExamPageCount = computed(() =>
+  Math.max(1, Math.ceil(activeStudentExamGroup.value.exams.length / STUDENT_EXAM_PAGE_SIZE)))
+const visibleStudentExams = computed(() => {
+  const start = (studentExamPage.value - 1) * STUDENT_EXAM_PAGE_SIZE
+  return activeStudentExamGroup.value.exams.slice(start, start + STUDENT_EXAM_PAGE_SIZE)
+})
+// 切换子 tab 时回到第一页；总页数变化时夹紧当前页码，避免停留在不存在的页。
+watch(activeStudentExamTab, () => { studentExamPage.value = 1 })
+watch(studentExamPageCount, (pageCount) => {
+  if (studentExamPage.value > pageCount) studentExamPage.value = pageCount
+})
+function changeStudentExamPage(page) {
+  studentExamPage.value = Math.min(Math.max(page, 1), studentExamPageCount.value)
+}
 const completedReviewTasks = computed(() => studentReviewTasks.value
   .filter((task) => task.status === 'COMPLETED' && task.practiceAttemptId))
 const studentHomeHistoryLoading = computed(() => props.code === 'SHSAT'
@@ -502,35 +530,12 @@ function changeWrongAnswerBookPage(page) {
   wrongAnswerBookPage.value = Math.min(Math.max(page, 1), wrongAnswerBookPageCount.value)
 }
 
-// Assigned Review 与错题本使用同一套「按实际列数、每页两排」规则。
-function updateReviewTaskPagination() {
-  const grid = reviewTaskGrid.value
-  if (!grid) return
-
-  const columns = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length || 1
-  if (columns !== reviewTaskColumns.value) {
-    reviewTaskColumns.value = columns
-    reviewTaskPage.value = 1
-  }
-}
-
-async function observeReviewTaskGrid() {
-  await nextTick()
-  reviewTaskResizeObserver?.disconnect()
-  reviewTaskResizeObserver = null
-  updateReviewTaskPagination()
-
-  if (reviewTaskGrid.value && typeof ResizeObserver !== 'undefined') {
-    reviewTaskResizeObserver = new ResizeObserver(updateReviewTaskPagination)
-    reviewTaskResizeObserver.observe(reviewTaskGrid.value)
-  }
-}
-
 function changeReviewTaskPage(page) {
   reviewTaskPage.value = Math.min(Math.max(page, 1), reviewTaskPageCount.value)
 }
 
-watch([activeReviewTasks, () => props.code], observeReviewTaskGrid, { flush: 'post' })
+// 分页不再依赖网格尺寸；切换考试类型时回到第一页。
+watch(() => props.code, () => { reviewTaskPage.value = 1 })
 watch(reviewTaskPageCount, (pageCount) => {
   if (reviewTaskPage.value > pageCount) reviewTaskPage.value = pageCount
 })
@@ -1146,7 +1151,6 @@ async function confirmDeleteExam() {
 
 onBeforeUnmount(() => {
   wrongAnswerBookResizeObserver?.disconnect()
-  reviewTaskResizeObserver?.disconnect()
   clearExamDeleteCooldown()
   dismissNotification()
   document.removeEventListener('visibilitychange', refreshOnVisibility)
@@ -1682,6 +1686,10 @@ watch(activeTab, (tab) => {
 })
 watch(() => props.code, (code) => {
   availableExamsCollapsed.value = localStorage.getItem(`admin.available-exams-collapsed.${code}`) === 'true'
+  // 学生端卡片折叠状态也随考试类型切换重载
+  for (const key of Object.keys(studentCardCollapsed)) {
+    studentCardCollapsed[key] = localStorage.getItem(`student.card-collapsed.${key}.${code}`) === 'true'
+  }
   loadPage()
   syncExamReleaseRefresh()
 })
@@ -1735,7 +1743,6 @@ watch(() => props.code, (code) => {
               :title="exam.title"
               :status-label="examAvailability(exam) === 'Upcoming' ? 'Scheduled' : exam.status"
               :status-tone="examAvailability(exam) === 'Upcoming' ? 'pending' : 'active'"
-              :description="exam.description || exam.paperTitle"
               :metadata="[
                 { label: 'Available', value: `${formatExamDate(exam.opensAt)} - ${formatExamDate(exam.closesAt)}`, wide: true },
                 { label: 'Program', value: exam.examTypeCode || props.code },
@@ -2275,9 +2282,15 @@ watch(() => props.code, (code) => {
     <template v-else-if="selectedType">
         <div class="student-home">
           <AppCard class="management-card student-home-section" title="My Exams" subtitle="Only exams published to your account are shown.">
-            <button class="student-home-refresh" type="button" aria-label="Refresh exams" title="Refresh exams" :disabled="studentExamsLoading" @click="loadStudentExams(true)">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
-            </button>
+            <div class="student-home-header-actions">
+              <button class="student-home-refresh" type="button" aria-label="Refresh exams" title="Refresh exams" :disabled="studentExamsLoading" @click="loadStudentExams(true)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
+              </button>
+              <button class="collapse-arrow-button" type="button" :aria-label="studentCardCollapsed.myExams ? 'Expand my exams' : 'Collapse my exams'" :aria-expanded="!studentCardCollapsed.myExams" :title="studentCardCollapsed.myExams ? 'Expand' : 'Collapse'" @click="toggleStudentCard('myExams')">
+                <svg class="collapse-arrow-button__icon" :class="{ 'collapse-arrow-button__icon--collapsed': studentCardCollapsed.myExams }" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m7.4 14.6 4.6-4.6 4.6 4.6L18 13.2l-6-6-6 6 1.4 1.4Z" /></svg>
+              </button>
+            </div>
+            <div v-if="!studentCardCollapsed.myExams">
             <div v-if="studentExamsLoading && !studentExams.length" class="student-home-state">Loading exams...</div>
             <p v-else-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
             <template v-else>
@@ -2296,12 +2309,11 @@ watch(() => props.code, (code) => {
                 </button>
               </nav>
               <div v-if="activeStudentExamGroup.exams.length" class="student-home-grid student-home-exam-tab-grid">
-                <article v-for="exam in activeStudentExamGroup.exams" :key="exam.id" class="student-home-exam-card">
+                <article v-for="exam in visibleStudentExams" :key="exam.id" class="student-home-exam-card">
                   <header class="student-home-exam-card__header">
                     <div><span class="student-home-eyebrow">Exam #{{ exam.id }}</span><h3>{{ exam.title }}</h3></div>
                     <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).canViewAttempt && !getStudentExamState(exam).canStart ? 'Completed' : getStudentExamState(exam).label }}</span>
                   </header>
-                  <p class="student-home-exam-card__description">{{ exam.paperTitle || 'Assigned exam' }}</p>
                   <dl class="student-home-meta">
                     <div class="student-home-meta__wide"><dt>Time Window</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
                     <div><dt>Submission</dt><dd>{{ getStudentExamState(exam).canViewAttempt ? 'Final result recorded' : getStudentExamState(exam).label }}</dd></div>
@@ -2314,18 +2326,33 @@ watch(() => props.code, (code) => {
                 </article>
               </div>
               <p v-else class="student-home-state">{{ activeStudentExamGroup.empty }}</p>
+              <div v-if="studentExamPageCount > 1" class="student-home-pagination" aria-label="My exams pages">
+                <button type="button" :disabled="studentExamPage <= 1" @click="changeStudentExamPage(studentExamPage - 1)">Previous</button>
+                <span>Page {{ studentExamPage }} of {{ studentExamPageCount }}</span>
+                <button type="button" :disabled="studentExamPage >= studentExamPageCount" @click="changeStudentExamPage(studentExamPage + 1)">Next</button>
+              </div>
             </template>
+            </div>
           </AppCard>
 
+          <!-- 学生本人的考试里程曲线；数据与班级无关，只含本人正式考试。 -->
+          <ScoreTrendCard class="student-home-section" :exam-type-code="selectedType.code" :collapsed="studentCardCollapsed.scoreTrend" @toggle-collapse="toggleStudentCard('scoreTrend')" />
+
           <AppCard class="management-card student-home-section" title="Assigned Review" subtitle="Redo incorrect and unanswered questions assigned by your teacher. Your original exam result stays unchanged.">
-            <button class="student-home-refresh" type="button" aria-label="Refresh assigned reviews" title="Refresh assigned reviews" :disabled="studentHomeHistoryLoading" @click="loadStudentExams(true)">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
-            </button>
+            <div class="student-home-header-actions">
+              <button class="student-home-refresh" type="button" aria-label="Refresh assigned reviews" title="Refresh assigned reviews" :disabled="studentHomeHistoryLoading" @click="loadStudentExams(true)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
+              </button>
+              <button class="collapse-arrow-button" type="button" :aria-label="studentCardCollapsed.assignedReview ? 'Expand assigned review' : 'Collapse assigned review'" :aria-expanded="!studentCardCollapsed.assignedReview" :title="studentCardCollapsed.assignedReview ? 'Expand' : 'Collapse'" @click="toggleStudentCard('assignedReview')">
+                <svg class="collapse-arrow-button__icon" :class="{ 'collapse-arrow-button__icon--collapsed': studentCardCollapsed.assignedReview }" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m7.4 14.6 4.6-4.6 4.6 4.6L18 13.2l-6-6-6 6 1.4 1.4Z" /></svg>
+              </button>
+            </div>
+            <div v-if="!studentCardCollapsed.assignedReview">
             <p v-if="studentHomeHistoryError" class="error-text" role="alert">{{ studentHomeHistoryError }}</p>
             <p v-else-if="(props.code === 'SHSAT' ? historyLoading : studentReviewLoading) && !studentReviewTasks.length" class="student-home-state">Loading assigned reviews...</p>
             <p v-else-if="!activeReviewTasks.length" class="student-home-state">No review assignments to complete.</p>
             <template v-else>
-              <div ref="reviewTaskGrid" class="student-home-grid student-home-review-grid">
+              <div class="student-home-grid student-home-review-grid">
                 <article v-for="task in visibleReviewTasks" :key="task.assignmentId" class="student-home-review-card">
                   <header class="student-home-exam-card__header">
                     <div><span class="student-home-eyebrow">Exam Review Practice</span><h3>{{ task.title }}</h3></div>
@@ -2349,12 +2376,19 @@ watch(() => props.code, (code) => {
                 <button type="button" :disabled="reviewTaskPage >= reviewTaskPageCount" @click="changeReviewTaskPage(reviewTaskPage + 1)">Next</button>
               </div>
             </template>
+            </div>
           </AppCard>
 
           <AppCard class="management-card student-home-section" title="Score History and Explanations" subtitle="Scores and answers follow the visibility policy set by your teacher.">
-            <button class="student-home-refresh" type="button" aria-label="Refresh score history" title="Refresh score history" :disabled="studentHomeHistoryLoading" @click="loadStudentExams(true)">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
-            </button>
+            <div class="student-home-header-actions">
+              <button class="student-home-refresh" type="button" aria-label="Refresh score history" title="Refresh score history" :disabled="studentHomeHistoryLoading" @click="loadStudentExams(true)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 0-6.32 4H3.5A9 9 0 0 1 19 6.64V4h2v6h-6V8h2.7A6.98 6.98 0 0 0 12 5Zm6.32 10H20.5A9 9 0 0 1 5 17.36V20H3v-6h6v2H6.3A6.98 6.98 0 0 0 12 19a6.98 6.98 0 0 0 6.32-4Z" /></svg>
+              </button>
+              <button class="collapse-arrow-button" type="button" :aria-label="studentCardCollapsed.scoreHistory ? 'Expand score history' : 'Collapse score history'" :aria-expanded="!studentCardCollapsed.scoreHistory" :title="studentCardCollapsed.scoreHistory ? 'Expand' : 'Collapse'" @click="toggleStudentCard('scoreHistory')">
+                <svg class="collapse-arrow-button__icon" :class="{ 'collapse-arrow-button__icon--collapsed': studentCardCollapsed.scoreHistory }" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m7.4 14.6 4.6-4.6 4.6 4.6L18 13.2l-6-6-6 6 1.4 1.4Z" /></svg>
+              </button>
+            </div>
+            <div v-if="!studentCardCollapsed.scoreHistory">
             <p class="student-home-history-note">Completed attempts appear here when scores or explanations are available.</p>
             <p v-if="studentHomeHistoryError" class="error-text" role="alert">{{ studentHomeHistoryError }}</p>
             <p v-else-if="studentHomeHistoryLoading && !(props.code === 'SHSAT' ? studentAttemptHistory.length : studentPracticeHistory.length)" class="student-home-state">Loading score history...</p>
@@ -2367,16 +2401,23 @@ watch(() => props.code, (code) => {
               <div v-if="activeHistoryTab === 'history' && props.code === 'SHSAT'" class="shsat-history-list">
                 <article v-for="item in shsatFormalHistory" :key="item.attemptId" class="shsat-history-row">
                   <div class="paper-copy"><strong>{{ item.examTitle }}</strong><small>Attempt #{{ item.attemptNumber }} · {{ formatExamDate(item.submittedAt || item.startedAt) }}</small></div>
-                  <div class="shsat-history-score"><strong>{{ item.scoreVisible ? (item.totalScaledScore ?? item.totalScore ?? '—') : 'Not available yet' }}</strong><small>{{ item.totalScaledScore != null ? 'Scaled score' : 'Raw score' }}</small></div>
-                  <AppButton variant="secondary" @click="viewShsatAttempt(item)">View report</AppButton>
+                  <div class="shsat-history-metrics">
+                    <div class="shsat-history-metric"><small>{{ item.scoreVisible ? (item.totalScaledScore != null ? 'Scaled Score' : 'Raw Score') : 'Score' }}</small><strong>{{ item.scoreVisible ? (item.totalScaledScore ?? item.totalScore ?? '—') : '—' }}</strong></div>
+                    <div class="shsat-history-metric"><small>Accuracy</small><strong>{{ item.scoreVisible && item.accuracy != null ? `${item.accuracy}%` : '—' }}</strong></div>
+                    <div class="shsat-history-metric"><small>Explanations</small><strong>{{ item.answersVisible ? 'Available' : '—' }}</strong></div>
+                  </div>
+                  <AppButton variant="secondary" @click="viewShsatAttempt(item)">View Details</AppButton>
                 </article>
                 <p v-if="!shsatFormalHistory.length" class="table-empty">No completed SHSAT exams yet.</p>
               </div>
               <div v-else-if="activeHistoryTab === 'history'" class="shsat-history-list">
                 <article v-for="record in studentPracticeHistory" :key="record.attemptId" class="shsat-history-row">
                   <div class="paper-copy"><strong>{{ record.paperTitle }}</strong><small>{{ formatExamDate(record.submittedAt) }} · {{ Math.round(record.timeSpentSeconds / 60) }} min</small></div>
-                  <div class="shsat-history-score"><strong>{{ record.rawScore ?? '—' }}<span v-if="record.rawMaximum"> / {{ record.rawMaximum }}</span></strong><small>Raw score</small></div>
-                  <AppButton variant="secondary" @click="viewPracticeReport(record)">View report</AppButton>
+                  <div class="shsat-history-metrics">
+                    <div class="shsat-history-metric"><small>Raw Score</small><strong>{{ record.rawScore ?? '—' }}<span v-if="record.rawMaximum"> / {{ record.rawMaximum }}</span></strong></div>
+                    <div class="shsat-history-metric"><small>Explanations</small><strong>{{ record.answersVisible !== false ? 'Available' : '—' }}</strong></div>
+                  </div>
+                  <AppButton variant="secondary" @click="viewPracticeReport(record)">View Details</AppButton>
                 </article>
                 <div v-if="practiceHistoryTotal > 10" class="practice-history-pagination">
                   <button class="secondary-button compact-button" :disabled="practiceHistoryPage <= 1" @click="changePracticeHistoryPage(practiceHistoryPage - 1)">Previous</button>
@@ -2388,8 +2429,10 @@ watch(() => props.code, (code) => {
               <div v-else-if="activeHistoryTab === 'review-tasks'" class="shsat-history-list">
                 <article v-for="task in completedReviewTasks" :key="task.assignmentId" class="shsat-history-row">
                   <div class="paper-copy"><strong>{{ task.title }}</strong><small>{{ task.examTitle }} · {{ task.clearedQuestionCount }} / {{ task.totalQuestions }} questions cleared</small></div>
-                  <span class="status-pill is-active">Completed</span>
-                  <AppButton variant="secondary" @click="viewCompletedReviewReport(task)">View report</AppButton>
+                  <div class="shsat-history-metrics">
+                    <div class="shsat-history-metric"><small>Status</small><strong>Completed</strong></div>
+                  </div>
+                  <AppButton variant="secondary" @click="viewCompletedReviewReport(task)">View Details</AppButton>
                 </article>
                 <p v-if="!completedReviewTasks.length" class="table-empty">No completed review assignments yet.</p>
               </div>
@@ -2423,6 +2466,7 @@ watch(() => props.code, (code) => {
               </template>
               <p v-else class="table-empty">No completed review assignments yet.</p>
             </div>
+            </div>
           </AppCard>
         </div>
     </template>
@@ -2434,6 +2478,9 @@ watch(() => props.code, (code) => {
 .student-dashboard-workspace { max-width: 1200px; padding-top: 36px; }
 .student-home { display: grid; gap: 22px; }
 .student-home-section { position: relative; margin: 0; }
+/* 卡片右上角操作区：刷新按钮 + 折叠箭头并排 */
+.student-home-header-actions { position: absolute; top: 20px; right: 22px; display: flex; gap: 8px; }
+.student-home-header-actions .student-home-refresh { position: static; }
 .student-home-section :deep(.app-card__header) { margin-bottom: 20px; }
 .student-home-section :deep(.app-card__title) { color: #202b40; font-size: 20px; font-weight: 700; }
 .student-home-section :deep(.app-card__subtitle) { color: #667b9e; line-height: 1.5; }
@@ -2450,11 +2497,10 @@ watch(() => props.code, (code) => {
 .assignment-tab__count { display: inline-flex; border-radius: 999px; padding: 1px 7px; background: #edf3ff; color: #2563eb; font-size: 11px; font-weight: 750; }
 .assignment-tab--active .assignment-tab__count { background: #fff; }
 
+/* 每页固定 6 张（约两排）：不写死 max-height，避免卡片内容变高时第二排被裁切；
+   分页已控制数量，min-height 保证翻页时高度稳定。 */
 .student-home-exam-tab-grid {
   min-height: calc(278px * 2 + 16px);
-  max-height: calc(278px * 2 + 16px);
-  align-content: start;
-  overflow-y: auto;
 }
 .student-home-history-note { margin: 0; color: #667b9e; font-size: 13px; }
 .student-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); align-items: stretch; gap: 16px; padding: 0 4px 2px; }
@@ -2467,7 +2513,6 @@ watch(() => props.code, (code) => {
 .student-home-status { flex: 0 0 auto; max-width: 115px; border-radius: 999px; padding: 5px 9px; background: #edf3f8; color: #63758f; font-size: 11px; font-weight: 750; line-height: 1.2; text-align: center; }
 .student-home-status--is-active, .student-home-status--is-progress { background: #eaf1ff; color: #245dd8; }
 .student-home-status--is-upcoming { background: #f1f6ff; color: #52627a; }
-.student-home-exam-card__description { min-height: 34px; margin: 0; color: #667b9e; font-size: 13px; line-height: 1.4; }
 .student-home-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; }
 .student-home-meta > div { min-width: 0; border: 1px solid #d7e4fb; border-radius: 12px; padding: 8px; background: #fbfdff; }
 .student-home-meta__wide { grid-column: 1 / -1; }
@@ -2478,6 +2523,7 @@ watch(() => props.code, (code) => {
 .student-home-review-card { min-height: 338px; padding: 16px; background: linear-gradient(145deg, #fff, #f7faff); }
 /* Assigned Review 分页后固定展示两排：容器最小高度按两张卡片高度预留，
    不再随任务数量无限拉高，翻页时高度保持稳定。 */
+/* Assigned Review 同理：每页固定 6 个（约两排），去掉写死限高，卡片完整显示。 */
 .student-home-review-grid { min-height: calc(338px * 2 + 16px); align-content: start; }
 .student-home-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-top: 14px; color: #667b9e; font-size: 13px; }
 .student-home-pagination button { min-height: 34px; border: 1px solid #d4e2ff; border-radius: 999px; padding: 0 14px; background: #f5f8ff; color: #245dd8; cursor: pointer; font: inherit; font-weight: 650; }
@@ -2513,11 +2559,12 @@ watch(() => props.code, (code) => {
   .student-home-exam-tab-grid { min-height: 0; max-height: none; }
   .student-dashboard-workspace { padding-top: 18px; }
   .student-home-refresh { top: 16px; right: 16px; }
-  .student-home-section :deep(.app-card__header) { padding-right: 40px; }
+  .student-home-header-actions { top: 16px; right: 16px; }
+  .student-home-section :deep(.app-card__header) { padding-right: 90px; }
   .student-home-grid, .student-home-wrong-answer-grid { grid-template-columns: minmax(0, 1fr); }
   .student-home-wrong-answer-grid { min-height: 420px; max-height: min(1000px, calc(100vh - 220px)); }
   .student-home-exam-card, .student-home-review-card { min-height: 0; }
-  /* 窄屏为单列，最小高度按两排卡片计算，保持分页后的稳定高度。 */
+  /* 窄屏为单列，按两排卡片预留最小高度，翻页高度稳定，不裁切内容。 */
   .student-home-review-grid { min-height: calc(310px * 2 + 16px); }
 }
 .exam-delete-warning {
@@ -2533,15 +2580,15 @@ watch(() => props.code, (code) => {
 .history-tab { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; padding: 0 12px; background: transparent; color: var(--color-muted); cursor: pointer; font: inherit; font-weight: 650; }
 .history-tab--active { border-bottom-color: var(--color-primary); color: var(--color-primary-strong); }
 .history-tab__count { display: inline-grid; min-width: 20px; height: 20px; place-items: center; border-radius: 999px; padding: 0 5px; background: #edf3ff; color: var(--color-primary-strong); font-size: 12px; }
-.shsat-history-list { display: grid; }
-.shsat-history-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(110px, auto) auto; align-items: center; gap: 18px; border-bottom: 1px solid var(--color-border); padding: 14px 2px; }
-.shsat-history-row > .status-pill { justify-self: start; }
-.shsat-history-row:last-child { border-bottom: 0; }
-.shsat-history-score { display: grid; gap: 3px; text-align: right; font-variant-numeric: tabular-nums; }
-.shsat-history-score strong { color: var(--color-text); font-size: 15px; }
+.shsat-history-list { display: grid; gap: 12px; }
+.shsat-history-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; align-items: center; gap: 48px; border: 1px solid var(--color-border); border-radius: 14px; padding: 16px 18px; background: var(--color-surface, #fff); }
+.shsat-history-row:last-child { border-bottom: 1px solid var(--color-border); }
+.shsat-history-metrics { display: flex; gap: 44px; }
+.shsat-history-metric { display: grid; gap: 5px; font-variant-numeric: tabular-nums; }
+.shsat-history-metric small { color: var(--color-muted); font-size: 13px; }
+.shsat-history-metric strong { color: var(--color-text); font-size: 16px; font-weight: 700; }
 .shsat-history-score small, .shsat-history-row .paper-copy small { color: var(--color-muted); font-size: 13px; }
-.shsat-history-row { grid-template-columns: minmax(220px, 1fr) minmax(100px, auto) auto; }
-@media (max-width: 760px) { .shsat-history-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } .shsat-history-score { text-align: left; } }
+@media (max-width: 760px) { .shsat-history-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } .shsat-history-metrics { gap: 24px; flex-wrap: wrap; } }
 .practice-history-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-top: 14px; color: var(--color-muted); font-size: 13px; }
 .exam-notification { position: fixed; z-index: 1200; top: 82px; right: 24px; display: flex; width: min(380px, calc(100vw - 32px)); align-items: center; gap: 12px; border: 1px solid var(--color-border); border-radius: 14px; padding: 13px 12px 13px 14px; background: #fff; color: var(--color-text); box-shadow: 0 16px 40px rgb(18 36 64 / 16%); }
 .exam-notification--success { border-color: #bbf7d0; }

@@ -466,6 +466,25 @@ const activeAssignmentTab = ref('GROUP');
 const activeAdminExamGroup = computed(() =>
   groupedAdminExamCards.value.find((group) => group.key === activeAssignmentTab.value) || groupedAdminExamCards.value[0]);
 
+// Available Exams 分页：与学生端 My Exams 同样每页 6 张（两排），切 tab 回到第 1 页
+const ADMIN_EXAM_PAGE_SIZE = 6;
+const adminExamPage = ref(1);
+const adminExamPageCount = computed(() =>
+  Math.max(1, Math.ceil(activeAdminExamGroup.value.exams.length / ADMIN_EXAM_PAGE_SIZE)));
+// 页码夹紧：数据刷新或减少后当前页可能越界
+watch(adminExamPageCount, (count) => {
+  if (adminExamPage.value > count) adminExamPage.value = count;
+});
+watch(activeAssignmentTab, () => { adminExamPage.value = 1; });
+const visibleAdminExams = computed(() => {
+  const start = (adminExamPage.value - 1) * ADMIN_EXAM_PAGE_SIZE;
+  return activeAdminExamGroup.value.exams.slice(start, start + ADMIN_EXAM_PAGE_SIZE);
+});
+function changeAdminExamPage(delta) {
+  const next = adminExamPage.value + delta;
+  if (next >= 1 && next <= adminExamPageCount.value) adminExamPage.value = next;
+}
+
 /** 判断复习任务是否已结束；服务端会在截止时间到达时动态返回 ENDED。 */
 function isReviewAssignmentEnded(task) {
   const status = String(task?.status || '').toUpperCase();
@@ -3328,12 +3347,11 @@ onBeforeUnmount(() => {
             </nav>
             <div v-if="activeAdminExamGroup.exams.length" class="admin-exam-grid admin-exam-grid--assignment-tab">
               <AdminExamCard
-                v-for="exam in activeAdminExamGroup.exams"
+                v-for="exam in visibleAdminExams"
                 :key="exam.id"
                 :title="exam.title"
                 :status-label="exam.status.label"
                 :status-tone="exam.status.key"
-                :description="exam.description"
                 :metadata="[
                   { label: 'Available', value: `${formatDateTime(exam.startTime)} - ${formatDateTime(exam.endTime)}`, wide: true },
                   { label: 'Submission', value: getAttemptText(exam) },
@@ -3347,6 +3365,12 @@ onBeforeUnmount(() => {
                 </template>
               </AdminExamCard>
             </div>
+            <!-- 与学生端一致的翻页条：每页 6 张，超过一页才显示 -->
+            <nav v-if="adminExamPageCount > 1" class="student-home-pagination" aria-label="Available exams pages">
+              <button type="button" :disabled="adminExamPage <= 1" @click="changeAdminExamPage(-1)">Previous</button>
+              <span>Page {{ adminExamPage }} of {{ adminExamPageCount }}</span>
+              <button type="button" :disabled="adminExamPage >= adminExamPageCount" @click="changeAdminExamPage(1)">Next</button>
+            </nav>
             <p v-else class="admin-state">{{ activeAdminExamGroup.empty }}</p>
           </template>
         </template>
@@ -5254,7 +5278,7 @@ onBeforeUnmount(() => {
 }
 
 /* Available Exams 的 Group Exams / 1on1 Exams 切换 tab（药丸式，与 AdminTabs 一致的语气）。
-   tab 内的卡片容器固定保留两排卡片（286px × 2 + 16px 间距），超出后容器内滚动，不再拉伸页面。 */
+   分页已控制每页 6 张（两排），卡片容器只保留 min-height 保持翻页高度稳定。 */
 .assignment-tabs {
   display: flex;
   gap: 8px;
@@ -5300,11 +5324,47 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-/* 只作用于 SHSAT 首页这张卡片：覆盖全局 .admin-exam-grid 的 max-height，
-   固定为两排管理端卡片（286px 基础高度）的高度窗口。 */
+/* 只作用于 SHSAT 首页这张卡片：分页已控制每页 6 张（两排）。
+   必须显式清掉全局 .admin-exam-grid 的 max-height / overflow（min(480px,65vh) + auto），
+   否则第二排卡片会在 480px 处被裁切；min-height 保证翻页时高度稳定。 */
 .admin-exam-grid--assignment-tab {
+  max-height: none;
+  overflow: visible;
   min-height: calc(286px * 2 + 16px);
-  max-height: calc(286px * 2 + 16px);
+}
+
+/* 翻页条：与学生端 My Exams / Assigned Review 完全一致的样式。
+   学生端的 .student-home-pagination 写在 ExamTypePage.vue 的 scoped 样式里，
+   作用不到本组件，因此这里重新声明一份。 */
+.student-home-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 14px;
+  color: #667b9e;
+  font-size: 13px;
+}
+
+.student-home-pagination button {
+  min-height: 34px;
+  border: 1px solid #d4e2ff;
+  border-radius: 999px;
+  padding: 0 14px;
+  background: #f5f8ff;
+  color: #245dd8;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.student-home-pagination button:hover:not(:disabled) {
+  background: #eaf1ff;
+}
+
+.student-home-pagination button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .admin-state {
@@ -6419,7 +6479,6 @@ onBeforeUnmount(() => {
 
   .admin-exam-grid--assignment-tab {
     min-height: 0;
-    max-height: none;
   }
 }
 

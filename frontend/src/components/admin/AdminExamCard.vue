@@ -3,7 +3,6 @@ defineProps({
   title: { type: String, required: true },
   statusLabel: { type: String, required: true },
   statusTone: { type: String, default: 'draft' },
-  description: { type: String, default: '' },
   metadata: { type: Array, default: () => [] },
 })
 </script>
@@ -14,9 +13,6 @@ defineProps({
       <h3>{{ title }}</h3>
       <span class="admin-exam-card__status" :class="`admin-exam-card__status--${statusTone}`">{{ statusLabel }}</span>
     </div>
-    <p class="admin-exam-card__description" :class="{ 'admin-exam-card__description--empty': !description }">
-      {{ description || 'No description provided.' }}
-    </p>
     <dl class="admin-exam-card__meta">
       <div
         v-for="item in metadata"
@@ -92,19 +88,6 @@ defineProps({
 .admin-exam-card__status--ended,
 .admin-exam-card__status--draft { color: #64748b; background: #edf2f8; }
 
-.admin-exam-card__description {
-  display: -webkit-box;
-  min-height: 38px;
-  overflow: hidden;
-  color: var(--color-muted);
-  font-size: 13px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.admin-exam-card__description--empty { color: #94a3b8; font-style: italic; }
 .admin-exam-card__meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px; margin: 0; }
 .admin-exam-card__meta-item { min-width: 0; border: 1px solid var(--color-border); border-radius: 12px; padding: 8px 9px; background: #fbfdff; }
 .admin-exam-card__meta-item--wide { grid-column: 1 / -1; }
