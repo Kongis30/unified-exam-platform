@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import AppButton from '@/components/AppButton.vue';
 import AppCard from '@/components/AppCard.vue';
+import ScoreTrendChart from '@/components/ScoreTrendChart.vue';
 import { adminApi } from '@shsat/admin/services/adminApi';
 
 const route = useRoute();
@@ -13,7 +14,6 @@ const loading = ref(false);
 const historyLoaded = ref(false);
 const errorMessage = ref('');
 const attempts = ref([]);
-const hoveredTrendPoint = ref(null);
 const historySort = ref({ key: null, direction: 'desc' });
 const SHSAT_SECTION_RAW_MAX = 50;
 const SHSAT_TOTAL_RAW_MAX = SHSAT_SECTION_RAW_MAX * 2;
@@ -50,7 +50,6 @@ async function loadHistory({ force = false } = {}) {
   const request = ++historyRequest;
   loading.value = true;
   errorMessage.value = '';
-  hoveredTrendPoint.value = null;
 
   try {
     const records = unwrapResponse(
@@ -180,48 +179,23 @@ const stats = computed(() => {
   };
 });
 
-// 按原 SHSAT 图表的口径展示可用总分，并以实际最小值和最大值确定纵轴范围。
-const chart = computed(() => {
-  const rows = completedAttempts.value
-    .map((attempt) => ({
-      id: attempt.attemptId,
-      score: getAvailableScore(attempt),
-      scoreMax: getAvailableScoreMax(attempt),
-      scoreLabel: hasScaledScoring(attempt) ? 'Scaled score' : 'Raw score',
-      date: attempt.submittedAt || attempt.startedAt,
-      title: attempt.examTitle || 'Exam',
-    }))
-    .filter((item) => item.score !== null && item.date && getTimeValue(item.date))
-    .sort((left, right) => getTimeValue(left.date) - getTimeValue(right.date));
-  const width = Math.max(760, 72 * (rows.length - 1) + 72);
-  const height = 320;
-  const padding = { top: 28, right: 24, bottom: 48, left: 48 };
-  const innerWidth = width - padding.left - padding.right;
-  const innerHeight = height - padding.top - padding.bottom;
-  let min = Math.floor(Math.min(...rows.map((row) => row.score)));
-  let max = Math.ceil(Math.max(...rows.map((row) => row.score)));
-  if (!rows.length) min = max = 0;
-  if (min === max) {
-    min = Math.max(0, min - 1);
-    max += 1;
-  }
-  const range = max - min;
-  const points = rows.map((row, index) => ({
-    ...row,
-    x: padding.left + (rows.length > 1 ? innerWidth * index / (rows.length - 1) : innerWidth / 2),
-    y: padding.top + innerHeight - (row.score - min) / range * innerHeight,
-  }));
-  const tickCount = Math.min(6, range + 1);
-  const ticks = Array.from({ length: tickCount }, (_, index) => {
-    const value = Math.round(min + range * index / (tickCount - 1));
-    return { value, y: padding.top + innerHeight - (value - min) / range * innerHeight };
-  });
-  return {
-    width, height, padding, points, ticks,
-    baseline: padding.top + innerHeight,
-    line: points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' '),
-  };
-});
+// 按可用总分构造折线点；图表渲染由共享组件 ScoreTrendChart 负责，
+// 与学生首页 Score Trend 使用同一份实现，保证两处外观一致。
+const trendPoints = computed(() => completedAttempts.value
+  .map((attempt) => ({
+    attemptId: attempt.attemptId,
+    examId: attempt.examId,
+    examTitle: attempt.examTitle || 'Exam',
+    attemptNumber: attempt.attemptNumber,
+    submittedAt: attempt.submittedAt || attempt.startedAt,
+    score: getAvailableScore(attempt),
+    scoreMax: getAvailableScoreMax(attempt),
+  }))
+  .filter((item) => item.score !== null && item.submittedAt && getTimeValue(item.submittedAt))
+  .sort((left, right) => getTimeValue(left.submittedAt) - getTimeValue(right.submittedAt)));
+
+// 只要存在量表分，整条曲线就按量表分口径展示。
+const trendUnit = computed(() => (completedAttempts.value.some(hasScaledScoring) ? 'SCALED' : 'POINTS'));
 
 function getTimeValue(value) {
   const time = value ? new Date(value).getTime() : 0;
@@ -252,15 +226,6 @@ function formatDateTime(value) {
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(date);
-}
-
-function formatShortDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function formatScore(value) {
@@ -474,37 +439,8 @@ watch([classId, studentId], () => {
         </AppCard>
 
         <AppCard title="Score Trend" subtitle="Available score over time, ordered from earliest to latest.">
-          <div v-if="!chart.points.length" class="student-detail__empty">No completed attempts to chart yet.</div>
-          <template v-else>
-          <p class="score-chart-scroll-hint">Swipe horizontally to view all scores.</p>
-          <div class="score-chart-scroll" tabindex="0" aria-label="Score trend chart">
-            <div class="score-chart-frame" :style="{ minWidth: `${chart.width}px` }">
-              <svg class="score-chart" :viewBox="`0 0 ${chart.width} ${chart.height}`" role="img" aria-label="Score trend over time">
-                <g class="chart-grid">
-                  <line v-for="tick in chart.ticks" :key="`line-${tick.value}`" :x1="chart.padding.left" :x2="chart.width - chart.padding.right" :y1="tick.y" :y2="tick.y" />
-                  <text v-for="tick in chart.ticks" :key="`tick-${tick.value}`" class="chart-axis-label" :x="chart.padding.left - 10" :y="tick.y" text-anchor="end" dominant-baseline="middle">{{ tick.value }}</text>
-                </g>
-                <path v-if="chart.points.length > 1" class="chart-line" :d="chart.line" />
-                <g v-for="point in chart.points" :key="point.id" class="chart-point-group" tabindex="0" role="img"
-                  :aria-label="`${point.title}, ${formatDateTime(point.date)}, ${point.scoreLabel} ${formatScore(point.score)}`"
-                  @mouseenter="hoveredTrendPoint = point" @mouseleave="hoveredTrendPoint = null"
-                  @focus="hoveredTrendPoint = point" @blur="hoveredTrendPoint = null">
-                  <circle :cx="point.x" :cy="point.y" r="12" class="chart-point-hit" />
-                  <circle :cx="point.x" :cy="point.y" r="5" class="chart-point" />
-                  <text class="chart-point-value" :x="point.x" :y="point.y - 12" text-anchor="middle">{{ formatScore(point.score) }}</text>
-                  <text class="chart-axis-label" :x="point.x" :y="chart.baseline + 18" text-anchor="middle">{{ formatShortDate(point.date) }}</text>
-                </g>
-              </svg>
-              <div v-if="hoveredTrendPoint" class="score-chart-tooltip" role="tooltip"
-                :class="{ 'is-below': hoveredTrendPoint.y < 75, 'is-left': hoveredTrendPoint.x > chart.width * 0.75, 'is-right': hoveredTrendPoint.x < chart.width * 0.25 }"
-                :style="{ left: `${hoveredTrendPoint.x / chart.width * 100}%`, top: `${hoveredTrendPoint.y / chart.height * 100}%` }">
-                <strong>{{ hoveredTrendPoint.title }}</strong>
-                <span>{{ formatDateTime(hoveredTrendPoint.date) }}</span>
-                <span>{{ hoveredTrendPoint.scoreLabel }}: {{ formatScore(hoveredTrendPoint.score) }}<template v-if="hoveredTrendPoint.scoreMax"> / {{ formatScore(hoveredTrendPoint.scoreMax) }}</template></span>
-              </div>
-            </div>
-          </div>
-          </template>
+          <div v-if="!trendPoints.length" class="student-detail__empty">No completed attempts to chart yet.</div>
+          <ScoreTrendChart v-else :points="trendPoints" :unit="trendUnit" />
         </AppCard>
 
         <AppCard title="Score History" subtitle="All exam attempts, latest first.">
@@ -732,25 +668,6 @@ watch([classId, studentId], () => {
   font-weight: 700;
 }
 
-.score-chart-scroll-hint { display: none; margin: 0 0 8px; color: var(--color-muted); font-size: 12px; }
-.score-chart-scroll { max-width: 100%; overflow-x: auto; }
-.score-chart-frame { position: relative; width: 100%; }
-.score-chart { display: block; width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: #fbfdff; }
-.chart-grid line { stroke: var(--color-border); stroke-width: 1; }
-.chart-axis-label { fill: var(--color-muted); font-size: 11px; }
-.chart-line { fill: none; stroke: var(--color-primary); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
-.chart-point-hit { fill: transparent; cursor: pointer; }
-.chart-point { fill: var(--color-primary); stroke: #fff; stroke-width: 2; pointer-events: none; }
-.chart-point-value { fill: var(--color-text); font-size: 12px; font-weight: 700; pointer-events: none; }
-.chart-point-group:focus { outline: none; }
-.chart-point-group:focus-visible .chart-point { stroke: #173f91; stroke-width: 3; }
-.score-chart-tooltip { position: absolute; z-index: 2; display: grid; gap: 4px; min-width: 150px; max-width: 240px; border: 1px solid var(--color-border); border-radius: 8px; padding: 9px 11px; color: var(--color-text); background: #fff; box-shadow: 0 8px 24px rgba(23, 32, 51, .14); font-size: 12px; line-height: 1.4; pointer-events: none; transform: translate(-50%, calc(-100% - 10px)); }
-.score-chart-tooltip span { color: var(--color-muted); }
-.score-chart-tooltip.is-below { transform: translate(-50%, 12px); }
-.score-chart-tooltip.is-left { transform: translate(calc(-100% + 10px), calc(-100% - 10px)); }
-.score-chart-tooltip.is-right { transform: translate(-10px, calc(-100% - 10px)); }
-.score-chart-tooltip.is-left.is-below { transform: translate(calc(-100% + 10px), 12px); }
-.score-chart-tooltip.is-right.is-below { transform: translate(-10px, 12px); }
 
 .table-wrap {
   overflow-x: auto;
@@ -957,7 +874,6 @@ watch([classId, studentId], () => {
 }
 
 @media (max-width: 780px) {
-  .score-chart-scroll-hint { display: block; }
   .student-detail :deep(.app-card) { padding: 20px; }
 
   .student-detail__hero {

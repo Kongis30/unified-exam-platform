@@ -400,6 +400,12 @@ export function listStudentExams({ force = false } = {}) {
   return cachedResource('/api/student/exams', ['student'], 15_000, { force })
 }
 
+/** 学生本人在某个考试类型下的分数趋势；与班级无关，只含本人正式考试。 */
+export function listStudentScoreTrend(examTypeCode, { force = false } = {}) {
+  const query = `?examTypeCode=${encodeURIComponent(examTypeCode)}`
+  return cachedResource(`/api/student/score-trend${query}`, ['student'], 30_000, { force })
+}
+
 export function startStudentAttempt(examId, firstSection = '') {
   return apiRequest(`/api/student/exams/${examId}/attempts`, {
     method: 'POST', body: JSON.stringify(firstSection ? { firstSection } : {}),
