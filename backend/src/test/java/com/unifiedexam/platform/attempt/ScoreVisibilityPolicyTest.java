@@ -1,34 +1,34 @@
-package com.unifiedexam.platform.examtype.shsat.admin;
+package com.unifiedexam.platform.attempt;
 
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class ReportVisibilityPolicyTest {
+class ScoreVisibilityPolicyTest {
 
     @Test
     void afterSubmitVisibilityRequiresSubmittedAttempt() {
-        assertTrue(ReportVisibilityPolicy.isVisible("AFTER_SUBMIT", true, false));
-        assertFalse(ReportVisibilityPolicy.isVisible("AFTER_SUBMIT", false, true));
+        assertTrue(ScoreVisibilityPolicy.isVisible("AFTER_SUBMIT", true, false));
+        assertFalse(ScoreVisibilityPolicy.isVisible("AFTER_SUBMIT", false, true));
     }
 
     @Test
     void afterCloseVisibilityWaitsForExamWindowToEnd() {
-        assertFalse(ReportVisibilityPolicy.isVisible("AFTER_CLOSE", true, false));
-        assertTrue(ReportVisibilityPolicy.isVisible("AFTER_CLOSE", true, true));
+        assertFalse(ScoreVisibilityPolicy.isVisible("AFTER_CLOSE", true, false));
+        assertTrue(ScoreVisibilityPolicy.isVisible("AFTER_CLOSE", true, true));
     }
 
     @Test
     void unknownVisibilityRulesFailClosed() {
-        assertFalse(ReportVisibilityPolicy.isVisible("IMMEDIATE", true, true));
-        assertFalse(ReportVisibilityPolicy.isVisible(null, true, true));
+        assertFalse(ScoreVisibilityPolicy.isVisible("IMMEDIATE", true, true));
+        assertFalse(ScoreVisibilityPolicy.isVisible(null, true, true));
     }
 
     @Test
     void shsatAnswerReviewOpensAfterSubmissionWithoutWaitingForExamClose() {
-        assertTrue(ReportVisibilityPolicy.isReviewVisible(true, true));
-        assertFalse(ReportVisibilityPolicy.isReviewVisible(true, false));
-        assertFalse(ReportVisibilityPolicy.isReviewVisible(false, true));
+        assertTrue(ScoreVisibilityPolicy.isReviewVisible(true, true));
+        assertFalse(ScoreVisibilityPolicy.isReviewVisible(true, false));
+        assertFalse(ScoreVisibilityPolicy.isReviewVisible(false, true));
     }
 }

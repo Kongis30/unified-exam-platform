@@ -2,7 +2,6 @@ package com.unifiedexam.platform.examtype.sat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.unifiedexam.platform.attempt.SatScoreScale;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -23,7 +22,6 @@ import java.util.Map;
 public class SatAdminStudentScoreService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
-    private final SatScoreScale scoreScale = new SatScoreScale();
 
     public SatAdminStudentScoreService(JdbcTemplate jdbc, ObjectMapper mapper) {
         this.jdbc = jdbc;
@@ -156,32 +154,16 @@ public class SatAdminStudentScoreService {
     }
 
     private Map<String, Object> scoreRow(ResultSet rs, int rowNum) throws SQLException {
-        JsonNode legacy = readJson(rs.getString("source_score_json"));
-        BigDecimal rw1 = firstValue(rs.getBigDecimal("imported_rw1_raw"), rs.getBigDecimal("rw1_raw"));
-        BigDecimal rw2 = firstValue(rs.getBigDecimal("imported_rw2_raw"), rs.getBigDecimal("rw2_raw"));
-        BigDecimal math1 = firstValue(rs.getBigDecimal("imported_math1_raw"), rs.getBigDecimal("math1_raw"));
-        BigDecimal math2 = firstValue(rs.getBigDecimal("imported_math2_raw"), rs.getBigDecimal("math2_raw"));
-        BigDecimal rw1Scaled = moduleScore(legacy, "rw_module1_scaled", "RW", 1, rw1);
-        BigDecimal rw2Scaled = moduleScore(legacy, "rw_module2_scaled", "RW", 2, rs.getString("rw2_difficulty"), rw2);
-        BigDecimal math1Scaled = moduleScore(legacy, "math_module1_scaled", "Math", 1, math1);
-        BigDecimal math2Scaled = moduleScore(legacy, "math_module2_scaled", "Math", 2, rs.getString("math2_difficulty"), math2);
-        BigDecimal rawTotal = sum(rw1, rw2, math1, math2);
-        if (rawTotal == null && legacy.path("correct_questions").isNumber()) {
-            rawTotal = legacy.path("correct_questions").decimalValue();
-        }
-        if (rawTotal == null && !"SAT_LEGACY".equals(rs.getString("algorithm_version"))) {
-            rawTotal = rs.getBigDecimal("total_points");
-        }
-        BigDecimal rwRaw = sum(rw1, rw2);
-        BigDecimal mathRaw = sum(math1, math2);
-        String scoringType = rs.getString("scoring_table_code");
-        int questionCount = rs.getInt("paper_question_count");
-        BigDecimal rwScaled = firstNumber(legacy.path("rw_total_scaled"), rwRaw == null ? null
-            : BigDecimal.valueOf(scoreScale.scaledTotal(scoringType, "RW", rwRaw.intValue(), questionCount)));
-        BigDecimal mathScaled = firstNumber(legacy.path("math_total_scaled"), mathRaw == null ? null
-            : BigDecimal.valueOf(scoreScale.scaledTotal(scoringType, "Math", mathRaw.intValue(), questionCount)));
-        BigDecimal totalScaled = firstNumber(legacy.path("total_score"), rwScaled == null || mathScaled == null
-            ? null : rwScaled.add(mathScaled));
+        // 换算规则集中在 SatAttemptScoreCalculator，与学生端分数趋势共用同一实现。
+        SatAttemptScoreCalculator.Result score = SatAttemptScoreCalculator.calculate(
+            new SatAttemptScoreCalculator.Input(readJson(rs.getString("source_score_json")),
+                rs.getBigDecimal("imported_rw1_raw"), rs.getBigDecimal("imported_rw2_raw"),
+                rs.getBigDecimal("imported_math1_raw"), rs.getBigDecimal("imported_math2_raw"),
+                rs.getBigDecimal("rw1_raw"), rs.getBigDecimal("rw2_raw"),
+                rs.getBigDecimal("math1_raw"), rs.getBigDecimal("math2_raw"),
+                rs.getString("scoring_table_code"), rs.getString("algorithm_version"),
+                rs.getInt("paper_question_count"), rs.getBigDecimal("total_points")),
+            rs.getString("rw2_difficulty"), rs.getString("math2_difficulty"));
 
         Map<String, Object> row = new LinkedHashMap<>();
         long attemptId = rs.getLong("attempt_id");
@@ -192,38 +174,28 @@ public class SatAdminStudentScoreService {
         row.put("examTypeCode", rs.getString("exam_type_code"));
         row.put("attemptNumber", rs.getInt("attempt_no"));
         row.put("status", "SUBMITTED".equals(rs.getString("status")) ? "COMPLETED" : rs.getString("status"));
-        row.put("rawTotalScore", rawTotal);
-        row.put("rawMaxScore", questionCount);
-        row.put("rwRawScore", rwRaw);
-        row.put("mathRawScore", mathRaw);
-        row.put("rw1RawScore", rw1);
-        row.put("rw2RawScore", rw2);
-        row.put("math1RawScore", math1);
-        row.put("math2RawScore", math2);
-        row.put("rw1ScaledScore", rw1Scaled);
-        row.put("rw2ScaledScore", rw2Scaled);
-        row.put("math1ScaledScore", math1Scaled);
-        row.put("math2ScaledScore", math2Scaled);
-        row.put("rwScaledScore", rwScaled);
-        row.put("mathScaledScore", mathScaled);
-        row.put("totalScaledScore", totalScaled);
-        row.put("scaledMaxScore", "PSAT".equalsIgnoreCase(scoringType) ? 1520 : 1600);
-        row.put("scoringType", scoringType);
+        row.put("rawTotalScore", score.rawTotal());
+        row.put("rawMaxScore", score.rawMax());
+        row.put("rwRawScore", score.rwRaw());
+        row.put("mathRawScore", score.mathRaw());
+        row.put("rw1RawScore", score.rw1Raw());
+        row.put("rw2RawScore", score.rw2Raw());
+        row.put("math1RawScore", score.math1Raw());
+        row.put("math2RawScore", score.math2Raw());
+        row.put("rw1ScaledScore", score.rw1Scaled());
+        row.put("rw2ScaledScore", score.rw2Scaled());
+        row.put("math1ScaledScore", score.math1Scaled());
+        row.put("math2ScaledScore", score.math2Scaled());
+        row.put("rwScaledScore", score.rwScaled());
+        row.put("mathScaledScore", score.mathScaled());
+        row.put("totalScaledScore", score.totalScaled());
+        row.put("scaledMaxScore", score.scaledMax());
+        row.put("scoringType", rs.getString("scoring_table_code"));
         row.put("algorithmVersion", rs.getString("algorithm_version"));
         row.put("startedAt", iso(rs.getTimestamp("started_at")));
         row.put("submittedAt", iso(rs.getTimestamp("submitted_at")));
         row.put("examDate", iso(rs.getTimestamp("opens_at")));
         return row;
-    }
-
-    private BigDecimal moduleScore(JsonNode legacy, String legacyField, String subject, int module, BigDecimal raw) {
-        return moduleScore(legacy, legacyField, subject, module, "Mid", raw);
-    }
-
-    private BigDecimal moduleScore(JsonNode legacy, String legacyField, String subject, int module,
-                                   String difficulty, BigDecimal raw) {
-        return firstNumber(legacy.path(legacyField), raw == null ? null
-            : BigDecimal.valueOf(scoreScale.scaledModule(subject, module, difficulty, raw.intValue())));
     }
 
     private Map<String, Object> statistics(List<Map<String, Object>> attempts) {
@@ -258,18 +230,6 @@ public class SatAdminStudentScoreService {
         if (values.isEmpty()) return null;
         return values.stream().reduce(BigDecimal.ZERO, BigDecimal::add)
             .divide(BigDecimal.valueOf(values.size()), 1, RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal firstValue(BigDecimal preferred, BigDecimal fallback) { return preferred == null ? fallback : preferred; }
-    private BigDecimal sum(BigDecimal... values) {
-        BigDecimal total = BigDecimal.ZERO;
-        boolean found = false;
-        for (BigDecimal value : values) if (value != null) { total = total.add(value); found = true; }
-        return found ? total : null;
-    }
-
-    private BigDecimal firstNumber(JsonNode preferred, BigDecimal fallback) {
-        return preferred != null && preferred.isNumber() ? preferred.decimalValue() : fallback;
     }
 
     private JsonNode readJson(String json) {

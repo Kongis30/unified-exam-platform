@@ -3,6 +3,7 @@ package com.unifiedexam.platform.examtype.shsat.admin;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.unifiedexam.platform.attempt.ScoreVisibilityPolicy;
 import com.unifiedexam.platform.examtype.shsat.ShsatQuestionGrader;
 import com.unifiedexam.platform.examtype.MonitorAnswerGradingService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -209,8 +210,8 @@ public class ShsatAdminReportService {
                 boolean submitted = "SUBMITTED".equals(rs.getString("status"))
                     || "COMPLETED".equals(rs.getString("status")) || "EXPIRED".equals(rs.getString("status"));
                 boolean scoreVisible = practice || (rs.getInt("ungraded_count") == 0
-                    && ReportVisibilityPolicy.isVisible(rs.getString("score_visibility"), submitted, rs.getBoolean("exam_closed")));
-                boolean answersVisible = practice || ReportVisibilityPolicy.isReviewVisible(
+                    && ScoreVisibilityPolicy.isVisible(rs.getString("score_visibility"), submitted, rs.getBoolean("exam_closed")));
+                boolean answersVisible = practice || ScoreVisibilityPolicy.isReviewVisible(
                     rs.getBoolean("allow_review"), submitted);
                 long cleared = practice ? 0 : rs.getLong("cleared_count");
                 Map<String, Object> row = new LinkedHashMap<>();
@@ -351,8 +352,8 @@ public class ShsatAdminReportService {
         }
 
         boolean scoreVisible = access.practice() || (access.ungradedCount() == 0
-            && ReportVisibilityPolicy.isVisible(access.scoreVisibility(), true, access.examClosed()));
-        boolean answersVisible = access.practice() || ReportVisibilityPolicy.isReviewVisible(access.allowReview(), true);
+            && ScoreVisibilityPolicy.isVisible(access.scoreVisibility(), true, access.examClosed()));
+        boolean answersVisible = access.practice() || ScoreVisibilityPolicy.isReviewVisible(access.allowReview(), true);
         Map<String, Object> report = attemptResult(attemptId);
         report.put("scoreVisible", scoreVisible);
         report.put("answersVisible", answersVisible);
