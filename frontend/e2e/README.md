@@ -56,6 +56,16 @@ E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:student-s
 
 This test creates two temporary students and two SHSAT exam releases targeted only to one student. It checks the Upcoming card has no start action, the Available card can be started, the other student cannot see either release, and the student page fits a 390px viewport. It deletes the temporary releases and accounts during cleanup. Do not point it at production data.
 
+To verify the My Exams Group Exams / 1on1 Exams subsections, run:
+
+```sh
+E2E_ADMIN_USERNAME=admin E2E_ADMIN_PASSWORD=... npm run test:e2e:shsat:my-exams-grouping
+```
+
+This test creates one temporary class, two temporary students, one class-targeted exam and one exam targeted only to a single student. It checks that `My Exams` keeps its title, that the class-targeted exam appears only under `Group Exams` with `assignmentKind=GROUP`, that the individually targeted exam appears only under `1on1 Exams` with `assignmentKind=ONE_ON_ONE`, that each subsection shows its own empty state and count badge, and that the grouped layout fits 1440px and 390px. It removes the temporary exams, class and students during cleanup. Do not point it at production data.
+
+For a database-free check of the same grouping rules, run `node e2e/student-my-exams-grouping-mocked.cjs` (or `npm run test:e2e:shsat:my-exams-grouping-mocked`) against a running Vite server. It mocks `/api/student/exams`, covers the both-kinds, group-only, 1on1-only and no-exams empty states, and verifies that a payload without `assignmentKind` falls back to 1on1 instead of rendering blank.
+
 To verify the SHSAT Unassigned Students bulk assignment flow, run:
 
 ```sh

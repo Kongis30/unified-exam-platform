@@ -17,6 +17,7 @@ import AdminDataTable from '@/components/admin/AdminDataTable.vue'
 import ReviewAssignmentsPanel from '@/components/admin/ReviewAssignmentsPanel.vue'
 import { reviewAssignments } from '@/api/reviewAssignments'
 import { getStudentExamState } from '@/utils/studentExamState.js'
+import { groupStudentExams } from '@/utils/studentExamGrouping.js'
 import { examApi as satExamApi } from '@/examTypes/sat/student/api/exam'
 import ClassesPage from '@/views/ClassesPage.vue'
 import {
@@ -54,7 +55,9 @@ const activeHistoryTab = ref(localStorage.getItem(`student-history-tab.${props.c
 const wrongAnswerBookGrid = ref(null)
 const wrongAnswerBookColumns = ref(3)
 const wrongAnswerBookPage = ref(1)
+const reviewTaskGrid = ref(null)
 let wrongAnswerBookResizeObserver = null
+let reviewTaskResizeObserver = null
 const startingWrongAnswerAttemptId = ref(null)
 const startingReviewTaskId = ref(null)
 const classes = ref([])
@@ -433,6 +436,18 @@ const visibleWrongAnswerBooks = computed(() => {
   return shsatWrongAnswerBooks.value.slice(start, start + wrongAnswerBookPageSize.value)
 })
 const activeReviewTasks = computed(() => studentReviewTasks.value.filter((task) => task.status !== 'COMPLETED'))
+// Assigned Review 卡片同样按网格实际列数分页，每页固定两排，避免卡片越多容器被无限拉高。
+const reviewTaskColumns = ref(3)
+const reviewTaskPage = ref(1)
+const reviewTaskPageSize = computed(() => reviewTaskColumns.value * 2)
+const reviewTaskPageCount = computed(() => Math.max(1, Math.ceil(activeReviewTasks.value.length / reviewTaskPageSize.value)))
+const visibleReviewTasks = computed(() => {
+  const start = (reviewTaskPage.value - 1) * reviewTaskPageSize.value
+  return activeReviewTasks.value.slice(start, start + reviewTaskPageSize.value)
+})
+// 学生首页按派发方式分组：整班派发为 Group Exams，其余（个人派发）归入 1on1 Exams。
+// 分组规则与文案集中在 utils/studentExamGrouping.js，便于单测覆盖。
+const groupedStudentExams = computed(() => groupStudentExams(studentExams.value))
 const completedReviewTasks = computed(() => studentReviewTasks.value
   .filter((task) => task.status === 'COMPLETED' && task.practiceAttemptId))
 const studentHomeHistoryLoading = computed(() => props.code === 'SHSAT'
@@ -481,6 +496,39 @@ async function observeWrongAnswerBookGrid() {
 function changeWrongAnswerBookPage(page) {
   wrongAnswerBookPage.value = Math.min(Math.max(page, 1), wrongAnswerBookPageCount.value)
 }
+
+// Assigned Review 与错题本使用同一套「按实际列数、每页两排」规则。
+function updateReviewTaskPagination() {
+  const grid = reviewTaskGrid.value
+  if (!grid) return
+
+  const columns = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length || 1
+  if (columns !== reviewTaskColumns.value) {
+    reviewTaskColumns.value = columns
+    reviewTaskPage.value = 1
+  }
+}
+
+async function observeReviewTaskGrid() {
+  await nextTick()
+  reviewTaskResizeObserver?.disconnect()
+  reviewTaskResizeObserver = null
+  updateReviewTaskPagination()
+
+  if (reviewTaskGrid.value && typeof ResizeObserver !== 'undefined') {
+    reviewTaskResizeObserver = new ResizeObserver(updateReviewTaskPagination)
+    reviewTaskResizeObserver.observe(reviewTaskGrid.value)
+  }
+}
+
+function changeReviewTaskPage(page) {
+  reviewTaskPage.value = Math.min(Math.max(page, 1), reviewTaskPageCount.value)
+}
+
+watch([activeReviewTasks, () => props.code], observeReviewTaskGrid, { flush: 'post' })
+watch(reviewTaskPageCount, (pageCount) => {
+  if (reviewTaskPage.value > pageCount) reviewTaskPage.value = pageCount
+})
 
 watch([activeHistoryTab, shsatWrongAnswerBooks], observeWrongAnswerBookGrid, { flush: 'post' })
 watch(wrongAnswerBookPageCount, (pageCount) => {
@@ -1093,6 +1141,7 @@ async function confirmDeleteExam() {
 
 onBeforeUnmount(() => {
   wrongAnswerBookResizeObserver?.disconnect()
+  reviewTaskResizeObserver?.disconnect()
   clearExamDeleteCooldown()
   dismissNotification()
   document.removeEventListener('visibilitychange', refreshOnVisibility)
@@ -2226,25 +2275,30 @@ watch(() => props.code, (code) => {
             </button>
             <div v-if="studentExamsLoading && !studentExams.length" class="student-home-state">Loading exams...</div>
             <p v-else-if="studentExamError" class="error-text" role="alert">{{ studentExamError }}</p>
-            <p v-else-if="!studentExams.length" class="student-home-state">No exams have been assigned to you yet.</p>
-            <div v-else class="student-home-grid">
-              <article v-for="exam in studentExams" :key="exam.id" class="student-home-exam-card">
-                <header class="student-home-exam-card__header">
-                  <div><span class="student-home-eyebrow">Exam #{{ exam.id }}</span><h3>{{ exam.title }}</h3></div>
-                  <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).canViewAttempt && !getStudentExamState(exam).canStart ? 'Completed' : getStudentExamState(exam).label }}</span>
-                </header>
-                <p class="student-home-exam-card__description">{{ exam.paperTitle || 'Assigned exam' }}</p>
-                <dl class="student-home-meta">
-                  <div class="student-home-meta__wide"><dt>Time Window</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
-                  <div><dt>Submission</dt><dd>{{ getStudentExamState(exam).canViewAttempt ? 'Final result recorded' : getStudentExamState(exam).label }}</dd></div>
-                  <div><dt>Duration</dt><dd>{{ exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' }}</dd></div>
-                </dl>
-                <AppButton v-if="getStudentExamState(exam).canStart" class="student-home-card-action" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
-                  {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
-                </AppButton>
-                <AppButton v-else class="student-home-card-action" disabled>{{ getStudentExamState(exam).canViewAttempt ? 'Completed' : getStudentExamState(exam).label }}</AppButton>
-              </article>
-            </div>
+            <template v-else>
+              <section v-for="group in groupedStudentExams" :key="group.key" class="student-home-subsection">
+                <h3 class="student-home-subsection__title">{{ group.title }} <span class="student-home-subsection__count">{{ group.exams.length }}</span></h3>
+                <div v-if="group.exams.length" class="student-home-grid">
+                  <article v-for="exam in group.exams" :key="exam.id" class="student-home-exam-card">
+                    <header class="student-home-exam-card__header">
+                      <div><span class="student-home-eyebrow">Exam #{{ exam.id }}</span><h3>{{ exam.title }}</h3></div>
+                      <span class="student-home-status" :class="`student-home-status--${studentExamStatusClass(exam)}`">{{ getStudentExamState(exam).canViewAttempt && !getStudentExamState(exam).canStart ? 'Completed' : getStudentExamState(exam).label }}</span>
+                    </header>
+                    <p class="student-home-exam-card__description">{{ exam.paperTitle || 'Assigned exam' }}</p>
+                    <dl class="student-home-meta">
+                      <div class="student-home-meta__wide"><dt>Time Window</dt><dd>{{ formatExamDate(exam.opensAt) }} – {{ formatExamDate(exam.closesAt) }}</dd></div>
+                      <div><dt>Submission</dt><dd>{{ getStudentExamState(exam).canViewAttempt ? 'Final result recorded' : getStudentExamState(exam).label }}</dd></div>
+                      <div><dt>Duration</dt><dd>{{ exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' }}</dd></div>
+                    </dl>
+                    <AppButton v-if="getStudentExamState(exam).canStart" class="student-home-card-action" :disabled="startingExamId === exam.id" @click="openStudentExam(exam)">
+                      {{ startingExamId === exam.id ? 'Starting…' : getStudentExamState(exam).startLabel }}
+                    </AppButton>
+                    <AppButton v-else class="student-home-card-action" disabled>{{ getStudentExamState(exam).canViewAttempt ? 'Completed' : getStudentExamState(exam).label }}</AppButton>
+                  </article>
+                </div>
+                <p v-else class="student-home-state">{{ group.empty }}</p>
+              </section>
+            </template>
           </AppCard>
 
           <AppCard class="management-card student-home-section" title="Assigned Review" subtitle="Redo incorrect and unanswered questions assigned by your teacher. Your original exam result stays unchanged.">
@@ -2254,24 +2308,31 @@ watch(() => props.code, (code) => {
             <p v-if="studentHomeHistoryError" class="error-text" role="alert">{{ studentHomeHistoryError }}</p>
             <p v-else-if="(props.code === 'SHSAT' ? historyLoading : studentReviewLoading) && !studentReviewTasks.length" class="student-home-state">Loading assigned reviews...</p>
             <p v-else-if="!activeReviewTasks.length" class="student-home-state">No review assignments to complete.</p>
-            <div v-else class="student-home-grid">
-              <article v-for="task in activeReviewTasks" :key="task.assignmentId" class="student-home-review-card">
-                <header class="student-home-exam-card__header">
-                  <div><span class="student-home-eyebrow">Exam Review Practice</span><h3>{{ task.title }}</h3></div>
-                  <span class="student-home-status">{{ reviewTaskStatusLabel(task.status) }}</span>
-                </header>
-                <p class="student-home-review-card__exam">{{ task.examTitle }}</p>
-                <p v-if="task.description" class="student-home-review-card__description">{{ task.description }}</p>
-                <dl class="student-home-review-meta">
-                  <div><dt>Questions remaining</dt><dd><strong>{{ task.remainingQuestionCount }}</strong><small>Original review set: {{ task.totalQuestions }} questions</small></dd></div>
-                  <div><dt>Latest accuracy</dt><dd>{{ task.accuracy == null ? '—' : `${Math.round(Number(task.accuracy))}%` }}</dd></div>
-                </dl>
-                <p v-if="task.startAt || task.endAt" class="student-home-review-card__availability">Available {{ task.startAt ? formatExamDate(task.startAt) : 'now' }}<span v-if="task.endAt"> – {{ formatExamDate(task.endAt) }}</span></p>
-                <AppButton class="student-home-card-action" :disabled="!task.canStart && task.status !== 'IN_PROGRESS' || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
-                  {{ reviewTaskActionLabel(task) }}
-                </AppButton>
-              </article>
-            </div>
+            <template v-else>
+              <div ref="reviewTaskGrid" class="student-home-grid student-home-review-grid">
+                <article v-for="task in visibleReviewTasks" :key="task.assignmentId" class="student-home-review-card">
+                  <header class="student-home-exam-card__header">
+                    <div><span class="student-home-eyebrow">Exam Review Practice</span><h3>{{ task.title }}</h3></div>
+                    <span class="student-home-status">{{ reviewTaskStatusLabel(task.status) }}</span>
+                  </header>
+                  <p class="student-home-review-card__exam">{{ task.examTitle }}</p>
+                  <p v-if="task.description" class="student-home-review-card__description">{{ task.description }}</p>
+                  <dl class="student-home-review-meta">
+                    <div><dt>Questions remaining</dt><dd><strong>{{ task.remainingQuestionCount }}</strong><small>Original review set: {{ task.totalQuestions }} questions</small></dd></div>
+                    <div><dt>Latest accuracy</dt><dd>{{ task.accuracy == null ? '—' : `${Math.round(Number(task.accuracy))}%` }}</dd></div>
+                  </dl>
+                  <p v-if="task.startAt || task.endAt" class="student-home-review-card__availability">Available {{ task.startAt ? formatExamDate(task.startAt) : 'now' }}<span v-if="task.endAt"> – {{ formatExamDate(task.endAt) }}</span></p>
+                  <AppButton class="student-home-card-action" :disabled="!task.canStart && task.status !== 'IN_PROGRESS' || startingReviewTaskId === task.assignmentId" @click="startReviewTask(task)">
+                    {{ reviewTaskActionLabel(task) }}
+                  </AppButton>
+                </article>
+              </div>
+              <div v-if="reviewTaskPageCount > 1" class="student-home-pagination" aria-label="Assigned review pages">
+                <button type="button" :disabled="reviewTaskPage <= 1" @click="changeReviewTaskPage(reviewTaskPage - 1)">Previous</button>
+                <span>Page {{ reviewTaskPage }} of {{ reviewTaskPageCount }}</span>
+                <button type="button" :disabled="reviewTaskPage >= reviewTaskPageCount" @click="changeReviewTaskPage(reviewTaskPage + 1)">Next</button>
+              </div>
+            </template>
           </AppCard>
 
           <AppCard class="management-card student-home-section" title="Score History and Explanations" subtitle="Scores and answers follow the visibility policy set by your teacher.">
@@ -2364,6 +2425,9 @@ watch(() => props.code, (code) => {
 .student-home-refresh svg { width: 16px; height: 16px; }
 .student-home-refresh:disabled { cursor: wait; opacity: .55; }
 .student-home-state { margin: 0; padding: 12px 2px; color: #667b9e; font-size: 14px; }
+.student-home-subsection + .student-home-subsection { margin-top: 24px; }
+.student-home-subsection__title { margin: 0 0 14px; color: #202b40; font-size: 15px; font-weight: 700; }
+.student-home-subsection__count { display: inline-flex; margin-left: 6px; border-radius: 999px; padding: 2px 8px; background: #edf3ff; color: #2563eb; font-size: 11px; font-weight: 750; vertical-align: middle; }
 .student-home-history-note { margin: 0; color: #667b9e; font-size: 13px; }
 .student-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); align-items: stretch; gap: 16px; padding: 0 4px 2px; }
 .student-home-exam-card, .student-home-review-card { display: flex; min-width: 0; flex-direction: column; gap: 12px; border: 1px solid #d7e4fb; border-radius: 16px; padding: 14px; background: #fff; box-shadow: 0 10px 26px rgb(31 75 135 / 6%); }
@@ -2384,6 +2448,13 @@ watch(() => props.code, (code) => {
 .student-home-card-action { width: 100%; min-height: 40px; margin-top: auto; }
 .student-home-card-action:deep(.app-button) { width: 100%; }
 .student-home-review-card { min-height: 338px; padding: 16px; background: linear-gradient(145deg, #fff, #f7faff); }
+/* Assigned Review 分页后固定展示两排：容器最小高度按两张卡片高度预留，
+   不再随任务数量无限拉高，翻页时高度保持稳定。 */
+.student-home-review-grid { min-height: calc(338px * 2 + 16px); align-content: start; }
+.student-home-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-top: 14px; color: #667b9e; font-size: 13px; }
+.student-home-pagination button { min-height: 34px; border: 1px solid #d4e2ff; border-radius: 999px; padding: 0 14px; background: #f5f8ff; color: #245dd8; cursor: pointer; font: inherit; font-weight: 650; }
+.student-home-pagination button:hover:not(:disabled) { background: #eaf1ff; }
+.student-home-pagination button:disabled { cursor: default; opacity: .45; }
 .student-home-review-card__exam, .student-home-review-card__description, .student-home-review-card__availability { margin: 0; color: #667b9e; font-size: 12px; line-height: 1.45; }
 .student-home-review-card__exam { color: #245dd8; font-weight: 750; }
 .student-home-review-card__description { min-height: 34px; }
@@ -2415,6 +2486,8 @@ watch(() => props.code, (code) => {
   .student-home-grid, .student-home-wrong-answer-grid { grid-template-columns: minmax(0, 1fr); }
   .student-home-wrong-answer-grid { min-height: 420px; max-height: min(1000px, calc(100vh - 220px)); }
   .student-home-exam-card, .student-home-review-card { min-height: 0; }
+  /* 窄屏为单列，最小高度按两排卡片计算，保持分页后的稳定高度。 */
+  .student-home-review-grid { min-height: calc(310px * 2 + 16px); }
 }
 .exam-delete-warning {
   margin: 0;

@@ -15,6 +15,7 @@ scripts/mappings/shsat_account_map.csv
 .env
 .env.*
 !.env.example
+AGENT.md
 *.log
 .DS_Store
 .idea/

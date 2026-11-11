@@ -19,6 +19,8 @@
     "test:e2e:shsat:paper-export": "node e2e/shsat-paper-export.cjs",
     "test:e2e:shsat:paper-folders": "node e2e/shsat-paper-folder-management.cjs",
     "test:e2e:shsat:student-states": "node e2e/shsat-student-exam-states.cjs",
+    "test:e2e:shsat:my-exams-grouping": "node e2e/student-my-exams-grouping.cjs",
+    "test:e2e:shsat:my-exams-grouping-mocked": "node e2e/student-my-exams-grouping-mocked.cjs",
     "test:e2e:shsat:student-history-retry": "node e2e/shsat-student-history-retry.cjs",
     "test:e2e:shsat:clear-answer": "node e2e/shsat-clear-answer-persistence.cjs",
     "preview": "vite preview",

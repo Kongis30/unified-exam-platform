@@ -4,6 +4,7 @@ import com.unifiedexam.platform.examtype.ExamTypeRegistry;
 import com.unifiedexam.platform.examtype.ExamTypeModule;
 import com.unifiedexam.platform.examtype.ExamTypeDefinition;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.ResultSetExtractor;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -203,7 +205,7 @@ class ExamReleaseServiceTest {
         ExamReleaseService service = new ExamReleaseService(jdbc, registry);
         ExamReleaseService.StudentExamView exam = new ExamReleaseService.StudentExamView(41L, "SAT",
             "Saturday Test", null, "2026-10-24T09:00:00Z", "2026-10-24T12:00:00Z",
-            "Practice Paper", 7200, 1, 0, 55L, 55L);
+            "Practice Paper", 7200, 1, 0, 55L, 55L, "ONE_ON_ONE");
         when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq("student"))).thenReturn(42L);
         when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class))).thenReturn(List.of(exam));
         when(registry.module("SAT")).thenReturn(Optional.of(satModule));
@@ -222,8 +224,93 @@ class ExamReleaseServiceTest {
                 && sql.contains("e.status = 'DRAFT' AND a.status = 'IN_PROGRESS'")
                 && sql.contains("a.status = 'IN_PROGRESS' AND a.expires_at <= CURRENT_TIMESTAMP(6)")
                 && sql.contains("a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP(6)")
-                && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED') AND a.is_practice = FALSE) AS latest_attempt_id")),
+                && sql.contains("a.status IN ('SUBMITTED', 'COMPLETED') AND a.is_practice = FALSE) AS latest_attempt_id")
+                && sql.contains("WHEN e.target_scope = 'ALL_STUDENTS' THEN 'GROUP'")
+                && sql.contains("FROM exam_participant_classes pc")
+                && sql.contains("JOIN exam_target_classes tc ON tc.exam_id = pc.exam_id AND tc.class_id = pc.class_id")
+                && sql.contains("pc.student_user_id = ep.student_user_id")
+                && sql.contains("ELSE 'ONE_ON_ONE' END AS assignment_kind")),
             any(RowMapper.class), any(Object[].class));
+    }
+
+    /** 学生首页按派发方式分组：整班派发归 GROUP，只派给个人归 ONE_ON_ONE。 */
+    @Test
+    void studentExamListExposesAssignmentKindForHomeGrouping() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamTypeRegistry registry = mock(ExamTypeRegistry.class);
+        ExamTypeModule satModule = mock(ExamTypeModule.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, registry);
+        ExamReleaseService.StudentExamView groupExam = new ExamReleaseService.StudentExamView(41L, "SAT",
+            "Class Exam", null, "2026-10-24T09:00:00Z", "2026-10-24T12:00:00Z",
+            "Practice Paper", 7200, 1, 0, null, null, "GROUP");
+        ExamReleaseService.StudentExamView oneOnOneExam = new ExamReleaseService.StudentExamView(42L, "SAT",
+            "One-on-One Exam", null, "2026-10-25T09:00:00Z", "2026-10-25T12:00:00Z",
+            "Practice Paper", 7200, 1, 0, null, null, "ONE_ON_ONE");
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq("student"))).thenReturn(42L);
+        when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class)))
+            .thenReturn(List.of(groupExam, oneOnOneExam));
+        when(registry.module("SAT")).thenReturn(Optional.of(satModule));
+        when(satModule.supportsStudentAttempts()).thenReturn(true);
+
+        List<ExamReleaseService.StudentExamView> exams = service.listForStudent("student");
+
+        assertEquals(List.of("GROUP", "ONE_ON_ONE"), exams.stream()
+            .map(ExamReleaseService.StudentExamView::assignmentKind).toList());
+    }
+
+    /** 分组列缺失（例如未应用的旧视图）时不应整块失败，只是无法区分派发方式。 */
+    @Test
+    void studentExamListKeepsRowsEvenWhenAssignmentKindIsNull() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamTypeRegistry registry = mock(ExamTypeRegistry.class);
+        ExamTypeModule satModule = mock(ExamTypeModule.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, registry);
+        ExamReleaseService.StudentExamView unknownKind = new ExamReleaseService.StudentExamView(41L, "SAT",
+            "Legacy Exam", null, "2026-10-24T09:00:00Z", "2026-10-24T12:00:00Z",
+            "Practice Paper", 7200, 1, 0, null, null, null);
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq("student"))).thenReturn(42L);
+        when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class)))
+            .thenReturn(List.of(unknownKind));
+        when(registry.module("SAT")).thenReturn(Optional.of(satModule));
+        when(satModule.supportsStudentAttempts()).thenReturn(true);
+
+        List<ExamReleaseService.StudentExamView> exams = service.listForStudent("student");
+
+        assertEquals(1, exams.size(), "a null assignmentKind must not drop the exam from the list");
+        assertNull(exams.get(0).assignmentKind());
+    }
+
+    /** 不支持学生作答的类型模块被过滤掉，分组不应影响这条既有规则。 */
+    @Test
+    void studentExamListStillDropsTypesWithoutStudentAttempts() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamTypeRegistry registry = mock(ExamTypeRegistry.class);
+        ExamTypeModule satModule = mock(ExamTypeModule.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, registry);
+        ExamReleaseService.StudentExamView groupExam = new ExamReleaseService.StudentExamView(41L, "SAT",
+            "Class Exam", null, "2026-10-24T09:00:00Z", "2026-10-24T12:00:00Z",
+            "Practice Paper", 7200, 1, 0, null, null, "GROUP");
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq("student"))).thenReturn(42L);
+        when(jdbc.query(any(String.class), any(RowMapper.class), any(Object[].class)))
+            .thenReturn(List.of(groupExam));
+        when(registry.module("SAT")).thenReturn(Optional.of(satModule));
+        when(satModule.supportsStudentAttempts()).thenReturn(false);
+
+        assertEquals(List.of(), service.listForStudent("student"),
+            "types that do not support student attempts stay filtered out");
+    }
+
+    /** 非学生账号仍应被拒绝，不能因为新增字段而放宽入口校验。 */
+    @Test
+    void studentExamListRejectsNonStudentAccounts() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ExamReleaseService service = new ExamReleaseService(jdbc, mock(ExamTypeRegistry.class));
+        when(jdbc.query(any(String.class), any(ResultSetExtractor.class), eq("admin")))
+            .thenReturn(null);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+            () -> service.listForStudent("admin"));
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatusCode());
     }
 
     @Test

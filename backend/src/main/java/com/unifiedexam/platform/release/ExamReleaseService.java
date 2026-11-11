@@ -467,7 +467,14 @@ public class ExamReleaseService {
                        AND a.status = 'IN_PROGRESS' AND a.is_practice = FALSE
                        AND (a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP(6))) AS active_attempt_id,
                    (SELECT MAX(a.id) FROM attempts a WHERE a.exam_id = e.id AND a.student_user_id = ?
-                       AND a.status IN ('SUBMITTED', 'COMPLETED') AND a.is_practice = FALSE) AS latest_attempt_id
+                       AND a.status IN ('SUBMITTED', 'COMPLETED') AND a.is_practice = FALSE) AS latest_attempt_id,
+                   CASE WHEN e.target_scope = 'ALL_STUDENTS' THEN 'GROUP'
+                        WHEN EXISTS (
+                            SELECT 1 FROM exam_participant_classes pc
+                            JOIN exam_target_classes tc ON tc.exam_id = pc.exam_id AND tc.class_id = pc.class_id
+                            WHERE pc.exam_id = e.id AND pc.student_user_id = ep.student_user_id
+                        ) THEN 'GROUP'
+                        ELSE 'ONE_ON_ONE' END AS assignment_kind
             FROM exam_participants ep JOIN exams e ON e.id = ep.exam_id
             JOIN papers p ON p.id = e.paper_id
             JOIN exam_types et ON et.code = p.exam_type_code AND et.is_active = TRUE
@@ -485,7 +492,8 @@ public class ExamReleaseService {
                 rs.getString("title"), rs.getString("description"), rs.getTimestamp("opens_at").toInstant().toString(),
                 rs.getTimestamp("closes_at").toInstant().toString(), rs.getString("paper_title"),
                 nullableInt(rs, "duration_seconds"), rs.getInt("attempt_limit"), rs.getInt("attempts_used"),
-                nullableLong(rs, "active_attempt_id"), nullableLong(rs, "latest_attempt_id")),
+                nullableLong(rs, "active_attempt_id"), nullableLong(rs, "latest_attempt_id"),
+                rs.getString("assignment_kind")),
             studentId, studentId, studentId, studentId).stream()
             .filter(exam -> examTypeRegistry.module(exam.examTypeCode())
                 .map(module -> module.supportsStudentAttempts()).orElse(false))
@@ -643,5 +651,5 @@ public class ExamReleaseService {
     public record StudentExamView(long id, String examTypeCode, String title, String description,
                                   String opensAt, String closesAt, String paperTitle,
                                   Integer durationSeconds, int attemptLimit, int attemptsUsed, Long activeAttemptId,
-                                  Long latestAttemptId) { }
+                                  Long latestAttemptId, String assignmentKind) { }
 }

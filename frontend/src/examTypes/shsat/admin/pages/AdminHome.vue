@@ -94,8 +94,6 @@ const selectedPaperId = ref('');
 const selectedClassId = ref('');
 const AVAILABLE_EXAMS_COLLAPSED_KEY = 'admin.available-exams-collapsed.SHSAT';
 const availableExamsCollapsed = ref(localStorage.getItem(AVAILABLE_EXAMS_COLLAPSED_KEY) === 'true');
-const ASSIGNED_REVIEW_COLLAPSED_KEY = 'admin.assigned-review-collapsed.SHSAT';
-const assignedReviewCollapsed = ref(localStorage.getItem(ASSIGNED_REVIEW_COLLAPSED_KEY) !== 'false');
 const examReleasesCollapsed = ref(false);
 const historicalExamsCollapsed = ref(false);
 const classExamsCollapsed = ref(false);
@@ -462,21 +460,6 @@ function isReviewAssignmentEnded(task) {
   return status === 'CLOSED' || status === 'ENDED' || (endAt > 0 && endAt <= Date.now());
 }
 
-/** 首页保留未归档的复习任务；截止或手动结束后仍可查看学生进度。 */
-const dashboardReviewAssignments = computed(() => {
-  return wrongAnswerTasks.value
-    .filter((task) => String(task.status || '').toUpperCase() !== 'CLOSED')
-    .sort((left, right) => getTimeValue(right.createdAt) - getTimeValue(left.createdAt));
-});
-
-function reviewAssignmentStatusLabel(task) {
-  if (isReviewAssignmentEnded(task)) {
-    return 'Ended';
-  }
-
-  return getTimeValue(task?.startAt) > Date.now() ? 'Scheduled' : 'Active';
-}
-
 const filteredExamReleases = computed(() => {
   const keyword = examReleaseFilters.keyword.trim().toLowerCase();
 
@@ -622,12 +605,6 @@ const canReorderPaperGroups = computed(() => {
 function toggleAvailableExams() {
   availableExamsCollapsed.value = !availableExamsCollapsed.value;
   localStorage.setItem(AVAILABLE_EXAMS_COLLAPSED_KEY, String(availableExamsCollapsed.value));
-}
-
-// 保存 Assigned Review 折叠状态，刷新页面后继续沿用用户选择。
-function toggleAssignedReview() {
-  assignedReviewCollapsed.value = !assignedReviewCollapsed.value;
-  localStorage.setItem(ASSIGNED_REVIEW_COLLAPSED_KEY, String(assignedReviewCollapsed.value));
 }
 
 const visiblePapers = computed(() => {
@@ -3345,73 +3322,6 @@ onBeforeUnmount(() => {
         </template>
       </AppCard>
 
-      <AppCard class="dashboard-review-card" title="Assigned Review" subtitle="Wrong-answer review assignments you published to your classes. Open one to track student progress.">
-        <template #actions>
-          <button
-            class="admin-refresh-button dashboard-review-refresh-button"
-            :class="{ 'admin-refresh-button--loading': wrongAnswerTaskLoading }"
-            type="button"
-            :disabled="wrongAnswerTaskLoading"
-            aria-label="Refresh review assignments"
-            title="Refresh review assignments"
-            @click="loadWrongAnswerTasks(true)"
-          >
-            <svg class="admin-refresh-button__icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M17.7 6.3A8 8 0 0 0 4.6 9.4M18 4v4.5h-4.5M6.3 17.7a8 8 0 0 0 13.1-3.1M6 20v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-          <button
-            class="collapse-arrow-button"
-            type="button"
-            :aria-expanded="!assignedReviewCollapsed"
-            :title="assignedReviewCollapsed ? 'Expand assigned review' : 'Collapse assigned review'"
-            @click="toggleAssignedReview"
-          >
-            <svg
-              class="collapse-arrow-button__icon"
-              :class="{ 'collapse-arrow-button__icon--collapsed': assignedReviewCollapsed }"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-        </template>
-        <template v-if="!assignedReviewCollapsed">
-        <div v-if="wrongAnswerTaskError && wrongAnswerTasks.length" class="admin-state admin-state--error">{{ wrongAnswerTaskError }}</div>
-        <div v-if="wrongAnswerTaskLoading && !wrongAnswerTasks.length" class="admin-state">Loading review assignments...</div>
-        <div v-else-if="wrongAnswerTaskError && !wrongAnswerTasks.length" class="admin-state admin-state--error">
-          <p>{{ wrongAnswerTaskError }}</p>
-          <AppButton variant="secondary" @click="loadWrongAnswerTasks(true)">Retry</AppButton>
-        </div>
-        <div v-else-if="dashboardReviewAssignments.length === 0" class="admin-state">
-          Publish a review assignment from the Review Assignments tab to see it here.
-        </div>
-        <div v-else class="dashboard-review-list-wrap" role="region" aria-label="Assigned review list" tabindex="0">
-          <table class="dashboard-review-list">
-            <thead>
-              <tr><th scope="col">Assignment</th><th scope="col">Progress</th><th scope="col">Availability</th><th scope="col">Status</th><th scope="col">Actions</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="task in dashboardReviewAssignments" :key="task.taskId">
-                <td class="dashboard-review-list__name">
-                  <strong>{{ task.title }}</strong>
-                  <small>{{ task.examTitle || `Exam #${task.examId}` }} · {{ task.className || `Class #${task.classId}` }}</small>
-                </td>
-                <td><strong>{{ task.completedCount || 0 }} / {{ task.eligibleCount || 0 }}</strong><small>completed · {{ task.assignedCount || 0 }} assigned</small></td>
-                <td class="dashboard-review-list__date">
-                  <span>{{ task.startAt ? formatDateTime(task.startAt) : 'Available now' }}</span>
-                  <small v-if="task.endAt">Until {{ formatDateTime(task.endAt) }}</small>
-                </td>
-                <td><span class="dashboard-review-status" :class="{ 'dashboard-review-status--ended': isReviewAssignmentEnded(task) }">{{ reviewAssignmentStatusLabel(task) }}</span></td>
-                <td><AppButton variant="secondary" @click="openWrongAnswerTaskProgress(task)">View Progress</AppButton></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        </template>
-      </AppCard>
-
       <AdminTabs
         :model-value="activeTab"
         :tabs="visibleTabs"
@@ -5010,7 +4920,6 @@ onBeforeUnmount(() => {
 }
 
 .available-exams-card,
-.dashboard-review-card,
 .exam-releases-card,
 .exam-history-card,
 .unassigned-students-card {
@@ -5021,10 +4930,6 @@ onBeforeUnmount(() => {
 }
 
 .exam-history-card {
-  margin-top: 16px;
-}
-
-.dashboard-review-card {
   margin-top: 16px;
 }
 
@@ -5330,24 +5235,6 @@ onBeforeUnmount(() => {
   color: var(--color-danger);
   background: #fff5f6;
 }
-
-.dashboard-review-list-wrap { max-width: 100%; overflow-x: auto; }
-.dashboard-review-list { width: 100%; min-width: 780px; border-collapse: collapse; table-layout: fixed; }
-.dashboard-review-list th, .dashboard-review-list td { border-bottom: 1px solid var(--color-border); padding: 12px 14px; vertical-align: middle; text-align: center; }
-.dashboard-review-list th { color: #24314a; background: var(--color-surface-soft); font-size: 13px; font-weight: 700; }
-.dashboard-review-list th:first-child, .dashboard-review-list__name { width: 32%; text-align: left !important; }
-.dashboard-review-list th:nth-child(2) { width: 18%; }
-.dashboard-review-list th:nth-child(3) { width: 23%; }
-.dashboard-review-list th:nth-child(4) { width: 11%; }
-.dashboard-review-list th:last-child { width: 16%; }
-.dashboard-review-list td { color: var(--color-text); font-size: 14px; line-height: 1.45; }
-.dashboard-review-list td strong, .dashboard-review-list td small, .dashboard-review-list__date span { display: block; }
-.dashboard-review-list td strong { font-weight: 700; overflow-wrap: anywhere; }
-.dashboard-review-list td small { margin-top: 3px; color: var(--color-muted); font-size: 12px; overflow-wrap: anywhere; }
-.dashboard-review-list__date { white-space: nowrap; }
-.dashboard-review-list td :deep(.app-button) { min-height: 34px; padding-inline: 12px; font-size: 13px; white-space: nowrap; }
-.dashboard-review-status { display: inline-block; border-radius: 999px; padding: 5px 9px; color: #16794c; background: #e8f7f1; font-size: 12px; font-weight: 700; line-height: 1.2; }
-.dashboard-review-status--ended { color: var(--color-muted); background: var(--color-surface-muted, #eef2f8); }
 
 .collapsible-card-toolbar {
   display: flex;
