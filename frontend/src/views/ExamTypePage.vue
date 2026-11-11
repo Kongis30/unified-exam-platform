@@ -19,6 +19,7 @@ import ReviewAssignmentsPanel from '@/components/admin/ReviewAssignmentsPanel.vu
 import { reviewAssignments } from '@/api/reviewAssignments'
 import { getStudentExamState } from '@/utils/studentExamState.js'
 import { groupStudentExams } from '@/utils/studentExamGrouping.js'
+import { groupExamsByAssignment } from '@/utils/examAssignmentGrouping.js'
 import { examApi as satExamApi } from '@/examTypes/sat/student/api/exam'
 import ClassesPage from '@/views/ClassesPage.vue'
 import {
@@ -246,6 +247,33 @@ const publishedExams = computed(() => {
     return Number.isFinite(opensAt) && Number.isFinite(closesAt) && closesAt > now
   })
 })
+// 管理端 Available Exams 与学生端 My Exams 口径一致：按派发方式拆成 Group Exams / 1on1 Exams 两个 tab。
+const groupedAvailableExams = computed(() => groupExamsByAssignment(publishedExams.value, {
+  GROUP: 'No group exams right now.',
+  ONE_ON_ONE: 'No 1on1 exams right now.',
+}))
+// 当前激活的派发方式 tab；默认 Group Exams
+const activeAvailableExamTab = ref('GROUP')
+const activeAvailableExamGroup = computed(() =>
+  groupedAvailableExams.value.find((group) => group.key === activeAvailableExamTab.value)
+  || groupedAvailableExams.value[0])
+// 分页：与学生端 / SHSAT 管理端一致，每页 6 张（两排），切 tab 回到第 1 页。
+const AVAILABLE_EXAM_PAGE_SIZE = 6
+const availableExamPage = ref(1)
+const availableExamPageCount = computed(() =>
+  Math.max(1, Math.ceil(activeAvailableExamGroup.value.exams.length / AVAILABLE_EXAM_PAGE_SIZE)))
+const visibleAvailableExams = computed(() => {
+  const start = (availableExamPage.value - 1) * AVAILABLE_EXAM_PAGE_SIZE
+  return activeAvailableExamGroup.value.exams.slice(start, start + AVAILABLE_EXAM_PAGE_SIZE)
+})
+watch(activeAvailableExamTab, () => { availableExamPage.value = 1 })
+watch(availableExamPageCount, (pageCount) => {
+  if (availableExamPage.value > pageCount) availableExamPage.value = pageCount
+})
+function changeAvailableExamPage(delta) {
+  const next = availableExamPage.value + delta
+  if (next >= 1 && next <= availableExamPageCount.value) availableExamPage.value = next
+}
 const adminTabs = [
   { key: 'papers', label: 'Paper Management' },
   { key: 'exams', label: 'Exam Release' },
@@ -1735,31 +1763,57 @@ watch(() => props.code, (code) => {
         </button>
         <template v-if="!availableExamsCollapsed">
           <div v-if="staffExamsLoading && !exams.length" class="table-empty">Loading exams...</div>
-          <div v-else-if="!publishedExams.length" class="table-empty">No available exams right now.</div>
-          <div v-else class="admin-exam-grid">
-            <AdminExamCard
-              v-for="exam in publishedExams"
-              :key="exam.id"
-              :title="exam.title"
-              :status-label="examAvailability(exam) === 'Upcoming' ? 'Scheduled' : exam.status"
-              :status-tone="examAvailability(exam) === 'Upcoming' ? 'pending' : 'active'"
-              :metadata="[
-                { label: 'Available', value: `${formatExamDate(exam.opensAt)} - ${formatExamDate(exam.closesAt)}`, wide: true },
-                { label: 'Program', value: exam.examTypeCode || props.code },
-                { label: 'Paper', value: exam.paperTitle || 'Not set' },
-                { label: 'Duration', value: exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' },
-              ]"
-            >
-              <template #actions>
-                <AppButton
-                  :disabled="startingExamId === exam.id || examAvailability(exam) !== 'Available'"
-                  @click="openStudentExam(exam)"
+          <template v-else>
+            <!-- 两个 tab 常显：没有考试时也保留切换结构，与 SHSAT 管理端和学生端一致 -->
+            <nav class="assignment-tabs" role="tablist" aria-label="Available exams by assignment kind">
+              <button
+                v-for="group in groupedAvailableExams"
+                :key="group.key"
+                class="assignment-tab"
+                :class="{ 'assignment-tab--active': activeAvailableExamTab === group.key }"
+                role="tab"
+                :aria-selected="activeAvailableExamTab === group.key"
+                type="button"
+                @click="activeAvailableExamTab = group.key"
+              >
+                {{ group.title }} <span class="assignment-tab__count">{{ group.exams.length }}</span>
+              </button>
+            </nav>
+            <template v-if="activeAvailableExamGroup.exams.length">
+              <div class="admin-exam-grid admin-exam-grid--paged">
+                <AdminExamCard
+                  v-for="exam in visibleAvailableExams"
+                  :key="exam.id"
+                  :title="exam.title"
+                  :status-label="examAvailability(exam) === 'Upcoming' ? 'Scheduled' : exam.status"
+                  :status-tone="examAvailability(exam) === 'Upcoming' ? 'pending' : 'active'"
+                  :metadata="[
+                    { label: 'Available', value: `${formatExamDate(exam.opensAt)} - ${formatExamDate(exam.closesAt)}`, wide: true },
+                    { label: 'Program', value: exam.examTypeCode || props.code },
+                    { label: 'Paper', value: exam.paperTitle || 'Not set' },
+                    { label: 'Duration', value: exam.durationSeconds ? `${Math.round(exam.durationSeconds / 60)} min` : 'Use paper default' },
+                  ]"
                 >
-                  {{ startingExamId === exam.id ? 'Starting…' : examAvailability(exam) === 'Upcoming' ? 'Opens soon' : isStaff ? 'Start practice' : 'Start exam' }}
-                </AppButton>
-              </template>
-            </AdminExamCard>
-          </div>
+                  <template #actions>
+                    <AppButton
+                      :disabled="startingExamId === exam.id || examAvailability(exam) !== 'Available'"
+                      @click="openStudentExam(exam)"
+                    >
+                      {{ startingExamId === exam.id ? 'Starting…' : examAvailability(exam) === 'Upcoming' ? 'Opens soon' : isStaff ? 'Start practice' : 'Start exam' }}
+                    </AppButton>
+                  </template>
+                </AdminExamCard>
+              </div>
+              <!-- 与学生端 / SHSAT 管理端一致的翻页条：每页 6 张，超过一页才显示 -->
+              <nav v-if="availableExamPageCount > 1" class="student-home-pagination" aria-label="Available exams pages">
+                <button type="button" :disabled="availableExamPage <= 1" @click="changeAvailableExamPage(-1)">Previous</button>
+                <span>Page {{ availableExamPage }} of {{ availableExamPageCount }}</span>
+                <button type="button" :disabled="availableExamPage >= availableExamPageCount" @click="changeAvailableExamPage(1)">Next</button>
+              </nav>
+            </template>
+            <!-- 当前 tab 没有考试时，按该派发方式给出空状态文案 -->
+            <p v-else class="table-empty">{{ activeAvailableExamGroup.empty }}</p>
+          </template>
         </template>
       </AppCard>
 
@@ -2502,6 +2556,14 @@ watch(() => props.code, (code) => {
 .student-home-exam-tab-grid {
   min-height: calc(278px * 2 + 16px);
 }
+/* 管理端 Available Exams 的卡片容器：分页已控制每页 6 张（两排）。
+   必须显式清掉全局 .admin-exam-grid 的 max-height / overflow（min(480px,65vh) + auto），
+   否则第二排卡片会在 480px 处被裁切；min-height 保证翻页时高度稳定。 */
+.admin-exam-grid--paged {
+  max-height: none;
+  overflow: visible;
+  min-height: calc(286px * 2 + 16px);
+}
 .student-home-history-note { margin: 0; color: #667b9e; font-size: 13px; }
 .student-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); align-items: stretch; gap: 16px; padding: 0 4px 2px; }
 .student-home-exam-card, .student-home-review-card { display: flex; min-width: 0; flex-direction: column; gap: 12px; border: 1px solid #d7e4fb; border-radius: 16px; padding: 14px; background: #fff; box-shadow: 0 10px 26px rgb(31 75 135 / 6%); }
@@ -2557,6 +2619,8 @@ watch(() => props.code, (code) => {
   /* 移动端：考试卡片改单列，两排固定高度失效，避免空容器撑高页面 */
   .assignment-tabs { flex-wrap: wrap; }
   .student-home-exam-tab-grid { min-height: 0; max-height: none; }
+  /* 管理端 Available Exams 同理：窄屏单列，不预留两排高度 */
+  .admin-exam-grid--paged { min-height: 0; }
   .student-dashboard-workspace { padding-top: 18px; }
   .student-home-refresh { top: 16px; right: 16px; }
   .student-home-header-actions { top: 16px; right: 16px; }
