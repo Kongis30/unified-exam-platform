@@ -3329,8 +3329,8 @@ onBeforeUnmount(() => {
           <div v-if="errors.adminExams && adminExams.length" class="admin-state admin-state--error">{{ errors.adminExams }}</div>
           <div v-if="loading.adminExams && !adminExams.length" class="admin-state">Loading exams...</div>
           <div v-else-if="errors.adminExams && !adminExams.length" class="admin-state admin-state--error">{{ errors.adminExams }}</div>
-          <div v-else-if="adminExamCards.length === 0" class="admin-state">No available exams right now.</div>
           <template v-else>
+            <!-- 两个 tab 常显：没有考试时也保留切换结构，便于确认派发方式与数量 -->
             <nav class="assignment-tabs" role="tablist" aria-label="Available exams by assignment kind">
               <button
                 v-for="group in groupedAdminExamCards"
@@ -3345,32 +3345,35 @@ onBeforeUnmount(() => {
                 {{ group.title }} <span class="assignment-tab__count">{{ group.exams.length }}</span>
               </button>
             </nav>
-            <div v-if="activeAdminExamGroup.exams.length" class="admin-exam-grid admin-exam-grid--assignment-tab">
-              <AdminExamCard
-                v-for="exam in visibleAdminExams"
-                :key="exam.id"
-                :title="exam.title"
-                :status-label="exam.status.label"
-                :status-tone="exam.status.key"
-                :metadata="[
-                  { label: 'Available', value: `${formatDateTime(exam.startTime)} - ${formatDateTime(exam.endTime)}`, wide: true },
-                  { label: 'Submission', value: getAttemptText(exam) },
-                  { label: 'Duration', value: exam.duration ? `${exam.duration} min` : 'Not set' },
-                ]"
-              >
-                <template #actions>
-                  <AppButton class="admin-exam-card__action" :disabled="exam.status.disabled" @click="enterAdminExam(exam)">
-                    {{ exam.status.actionText }}
-                  </AppButton>
-                </template>
-              </AdminExamCard>
-            </div>
-            <!-- 与学生端一致的翻页条：每页 6 张，超过一页才显示 -->
-            <nav v-if="adminExamPageCount > 1" class="student-home-pagination" aria-label="Available exams pages">
-              <button type="button" :disabled="adminExamPage <= 1" @click="changeAdminExamPage(-1)">Previous</button>
-              <span>Page {{ adminExamPage }} of {{ adminExamPageCount }}</span>
-              <button type="button" :disabled="adminExamPage >= adminExamPageCount" @click="changeAdminExamPage(1)">Next</button>
-            </nav>
+            <template v-if="activeAdminExamGroup.exams.length">
+              <div class="admin-exam-grid admin-exam-grid--assignment-tab">
+                <AdminExamCard
+                  v-for="exam in visibleAdminExams"
+                  :key="exam.id"
+                  :title="exam.title"
+                  :status-label="exam.status.label"
+                  :status-tone="exam.status.key"
+                  :metadata="[
+                    { label: 'Available', value: `${formatDateTime(exam.startTime)} - ${formatDateTime(exam.endTime)}`, wide: true },
+                    { label: 'Submission', value: getAttemptText(exam) },
+                    { label: 'Duration', value: exam.duration ? `${exam.duration} min` : 'Not set' },
+                  ]"
+                >
+                  <template #actions>
+                    <AppButton class="admin-exam-card__action" :disabled="exam.status.disabled" @click="enterAdminExam(exam)">
+                      {{ exam.status.actionText }}
+                    </AppButton>
+                  </template>
+                </AdminExamCard>
+              </div>
+              <!-- 与学生端一致的翻页条：每页 6 张，超过一页才显示 -->
+              <nav v-if="adminExamPageCount > 1" class="student-home-pagination" aria-label="Available exams pages">
+                <button type="button" :disabled="adminExamPage <= 1" @click="changeAdminExamPage(-1)">Previous</button>
+                <span>Page {{ adminExamPage }} of {{ adminExamPageCount }}</span>
+                <button type="button" :disabled="adminExamPage >= adminExamPageCount" @click="changeAdminExamPage(1)">Next</button>
+              </nav>
+            </template>
+            <!-- 当前 tab 没有考试时，按该派发方式给出空状态文案 -->
             <p v-else class="admin-state">{{ activeAdminExamGroup.empty }}</p>
           </template>
         </template>
