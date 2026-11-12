@@ -432,7 +432,13 @@ export default {
 }
 
 .options-title :deep(img) {
-  max-height: 420px;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+  margin: 10px auto;
   cursor: zoom-in;
 }
 

@@ -345,9 +345,17 @@ export default {
   overflow-x: auto; /* 宽表格可横向滚动 */
 }
 
-/* 图片材料显示：自适应宽度，居中且与文字间距紧凑 */
-.passage-content :deep(img) {
-  margin: 4px auto;
+/* 图片材料显示：撑满阅读栏宽度以保证可读性，超高图片等比缩放 */
+.passage-content :deep(img),
+.question-text :deep(img) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 70vh;
+  /* 被高度上限截断时等比居中，避免拉伸变形 */
+  object-fit: contain;
+  margin: 10px auto;
   cursor: zoom-in;
 }
 
@@ -361,8 +369,11 @@ export default {
 
 .material-image img {
   display: block;
+  width: 100%;
   max-width: 100%;
   height: auto;
+  max-height: 70vh;
+  object-fit: contain;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #fff;
