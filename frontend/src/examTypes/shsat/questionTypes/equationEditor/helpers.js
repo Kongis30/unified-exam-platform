@@ -210,6 +210,34 @@ export function formatEquationAnswer(value, emptyText = 'Not answered') {
   return answer.trim() ? answer : emptyText;
 }
 
+/**
+ * 供 PDF/打印导出使用的答案格式：把 LaTeX 公式包进 $…$ 定界符，
+ * 让 FormulaText 交给 MathLive 渲染成真正的数学排版，而不是输出 \frac{7}{10} 源码。
+ * 多个可接受答案以 “ / ” 分隔，与 formatEquationAnswer 的既有展示约定保持一致。
+ */
+export function formatEquationPrintAnswer(value, emptyText = '') {
+  const data = parseJson(value, value);
+  const answers = normalizeAcceptedAnswers(data).map((answer) => answer.value).filter(Boolean);
+  if (!answers.length) {
+    const single = normalizeEquationAnswerData(value);
+    if (!single.trim()) return emptyText;
+    answers.push(single);
+  }
+  const text = answers.map(describeLatexForPrint).join(' / ');
+  return text.trim() ? text : emptyText;
+}
+
+/** 把纯 LaTeX 片段转成行内公式；非公式内容原样返回，避免误伤普通文字。 */
+function describeLatexForPrint(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  // 已经带定界符的内容不再重复包裹。
+  if (text.startsWith('$') || text.startsWith('\\(')) return text;
+  // 只有包含 LaTeX 命令或上下标时才作为公式渲染；"7/5" 这类普通写法保持原样。
+  if (!/\\[A-Za-z]+|[\^_]/.test(text)) return text;
+  return `$${text}$`;
+}
+
 export function normalizeVariables(variables = []) {
   const source = Array.isArray(variables) ? variables : String(variables || '').split(',');
   const seen = new Set();

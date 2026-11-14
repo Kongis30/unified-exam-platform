@@ -6,6 +6,7 @@ import {
   createDefaultEquationConfig,
   createDefaultEquationCorrectAnswerData,
   formatEquationAnswer,
+  formatEquationPrintAnswer,
   getEquationValidationIssues,
   normalizeAcceptedAnswers,
   normalizeEquationAnswerData,
@@ -43,12 +44,17 @@ export const equationEditorQuestionTypeDefinition = {
   formatReportAnswer({ answerData, selectedAnswer, emptyText = 'Not answered' } = {}) {
     return formatEquationAnswer(answerData ?? selectedAnswer, emptyText);
   },
+  // PDF/打印导出专用：保留 LaTeX 并加行内公式定界符，交给 FormulaText 渲染。
+  formatPrintAnswer({ answerData, selectedAnswer, emptyText = '' } = {}) {
+    return formatEquationPrintAnswer(answerData ?? selectedAnswer, emptyText);
+  },
 };
 
 export {
   EQUATION_EDITOR_TYPE,
   createDefaultEquationConfig,
   createDefaultEquationCorrectAnswerData,
+  formatEquationPrintAnswer,
   getEquationValidationIssues,
   normalizeAcceptedAnswers,
   normalizeEquationAnswerData,

@@ -7,6 +7,7 @@ let answerDisplay
 let fallbackQuestionTypeDefinition
 let normalizeAnswerList
 let formatEquationAnswer
+let formatEquationPrintAnswer
 let formatSelectedPoints
 let formatGraphPoints
 let normalizeGraphAnswerPoints
@@ -27,6 +28,7 @@ let normalizeTableGridTextCellMap
 test.before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
   ;[answerDisplay, fallbackQuestionTypeDefinition, normalizeAnswerList, formatEquationAnswer,
+    formatEquationPrintAnswer,
     formatSelectedPoints, formatGraphPoints, normalizeGraphAnswerPoints, formatHotSpotSelection,
     normalizeHotSpotAnswerData, formatHotTextSelection, normalizeHotTextAnswerData, formatInlineChoiceAnswerMap,
     normalizeInlineChoiceAnswerMap, formatSolutionSetAnswer, formatTableGridAnswerMap,
@@ -49,6 +51,7 @@ test.before(async () => {
     fallback.default,
     answerUtils.normalizeAnswerList,
     equation.formatEquationAnswer,
+    equation.formatEquationPrintAnswer,
     graph.formatSelectedPoints,
     graph.formatGraphPoints,
     graph.normalizeGraphAnswerPoints,
@@ -117,4 +120,24 @@ test('formats SAT and PSAT answer values from scalar and encoded list records', 
   assert.equal(answerDisplay('C'), 'C')
   assert.equal(answerDisplay('["A", "C"]'), 'A, C')
   assert.equal(answerDisplay('{"answers":["2", "3"]}'), '2, 3')
+})
+
+// PDF 导出曾把 \frac{7}{10} 原样输出为源码；导出格式必须加行内公式定界符。
+test('wraps LaTeX equation answers in math delimiters for PDF export', () => {
+  const print = (value) => formatEquationPrintAnswer({ acceptedAnswers: [{ value }] })
+  assert.equal(print('\\frac{7}{10}'), '$\\frac{7}{10}$')
+  assert.equal(print('\\frac{7}{36}'), '$\\frac{7}{36}$')
+  assert.equal(print('\\frac{3b+12}{2}'), '$\\frac{3b+12}{2}$')
+  assert.equal(print('x^2+1'), '$x^2+1$')
+
+  // 普通写法的答案不应被包成公式，否则导出排版会异常。
+  assert.equal(print('7/5'), '7/5')
+  assert.equal(print('-13/3'), '-13/3')
+  assert.equal(print('x = 2'), 'x = 2')
+  assert.equal(print('252 sedans'), '252 sedans')
+
+  // 已带定界符的内容不重复包裹；多答案沿用 “ / ” 分隔约定。
+  assert.equal(print('$\\frac{1}{2}$'), '$\\frac{1}{2}$')
+  assert.equal(formatEquationPrintAnswer({ acceptedAnswers: [{ value: 'x = 2' }, { value: '2x = 4' }] }), 'x = 2 / 2x = 4')
+  assert.equal(formatEquationPrintAnswer({ acceptedAnswers: [] }, '—'), '—')
 })

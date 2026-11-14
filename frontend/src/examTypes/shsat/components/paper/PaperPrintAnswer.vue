@@ -27,7 +27,9 @@ const normalizedQuestion = computed(() => {
 const definition = computed(() => getQuestionTypeDefinition(normalizedQuestion.value.questionType));
 const answer = computed(() => {
   const question = normalizedQuestion.value;
-  const formatted = definition.value.formatReportAnswer?.({
+  // 导出优先使用题型提供的打印格式：公式题需要保留 LaTeX 定界符才能渲染成数学排版。
+  const formatter = definition.value.formatPrintAnswer || definition.value.formatReportAnswer;
+  const formatted = formatter?.({
     question,
     answerData: question.correctAnswerData,
     selectedAnswer: question.correctAnswer,
