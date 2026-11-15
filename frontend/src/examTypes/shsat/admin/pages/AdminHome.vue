@@ -5327,13 +5327,12 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-/* 只作用于 SHSAT 首页这张卡片：分页已控制每页 6 张（两排）。
-   必须显式清掉全局 .admin-exam-grid 的 max-height / overflow（min(480px,65vh) + auto），
-   否则第二排卡片会在 480px 处被裁切；min-height 保证翻页时高度稳定。 */
+/* 只作用于 SHSAT 首页这张卡片：高度完全由当前卡片数决定。
+   没有卡片时不渲染本 grid，只显示空状态；一行卡片只占一行高度；
+   超过两行时固定到两行高度并出现纵向滚动条。 */
 .admin-exam-grid--assignment-tab {
-  max-height: none;
-  overflow: visible;
-  min-height: calc(286px * 2 + 16px);
+  max-height: calc(286px * 2 + 16px);
+  overflow-y: auto;
 }
 
 /* 翻页条：与学生端 My Exams / Assigned Review 完全一致的样式。
@@ -6480,9 +6479,6 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
   }
 
-  .admin-exam-grid--assignment-tab {
-    min-height: 0;
-  }
 }
 
 .unassigned-students-scroll {

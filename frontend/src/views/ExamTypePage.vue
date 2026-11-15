@@ -2556,13 +2556,12 @@ watch(() => props.code, (code) => {
 .student-home-exam-tab-grid {
   min-height: calc(278px * 2 + 16px);
 }
-/* 管理端 Available Exams 的卡片容器：分页已控制每页 6 张（两排）。
-   必须显式清掉全局 .admin-exam-grid 的 max-height / overflow（min(480px,65vh) + auto），
-   否则第二排卡片会在 480px 处被裁切；min-height 保证翻页时高度稳定。 */
+/* 管理端 Available Exams 的卡片容器：高度完全由当前卡片数决定。
+   没有卡片时只显示空状态；一行卡片只占一行高度；
+   超过两行时固定到两行高度并出现纵向滚动条。 */
 .admin-exam-grid--paged {
-  max-height: none;
-  overflow: visible;
-  min-height: calc(286px * 2 + 16px);
+  max-height: calc(286px * 2 + 16px);
+  overflow-y: auto;
 }
 .student-home-history-note { margin: 0; color: #667b9e; font-size: 13px; }
 .student-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 340px)); align-items: stretch; gap: 16px; padding: 0 4px 2px; }
@@ -2619,8 +2618,8 @@ watch(() => props.code, (code) => {
   /* 移动端：考试卡片改单列，两排固定高度失效，避免空容器撑高页面 */
   .assignment-tabs { flex-wrap: wrap; }
   .student-home-exam-tab-grid { min-height: 0; max-height: none; }
-  /* 管理端 Available Exams 同理：窄屏单列，不预留两排高度 */
-  .admin-exam-grid--paged { min-height: 0; }
+  /* 管理端 Available Exams 同理：窄屏单列，只保留两行滚动窗口 */
+  .admin-exam-grid--paged { max-height: none; }
   .student-dashboard-workspace { padding-top: 18px; }
   .student-home-refresh { top: 16px; right: 16px; }
   .student-home-header-actions { top: 16px; right: 16px; }
