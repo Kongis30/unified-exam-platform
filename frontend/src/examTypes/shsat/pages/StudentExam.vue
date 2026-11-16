@@ -179,6 +179,23 @@ const returnTo = computed(() => {
   return typeof route.query.returnTo === 'string' ? route.query.returnTo : '';
 });
 
+function editCurrentQuestionInPaperEditor() {
+  if (!isPreviewMode.value || !currentQuestion.value || !route.params.paperId) {
+    return;
+  }
+
+  // 保留当前 preview 的题目位置；保存后从编辑页回到这道题的 preview。
+  const returnQuery = {
+    questionNumber: currentQuestion.value.questionNumber,
+    returnTo: route.fullPath,
+  };
+  router.push({
+    name: 'admin-paper-edit',
+    params: { paperId: route.params.paperId },
+    query: returnQuery,
+  });
+}
+
 const questionSource = computed(() => {
   const resultQuestions = isReviewMode.value ? result.value?.questions || [] : [];
   const attemptQuestions = attempt.value?.questions || [];
@@ -4220,6 +4237,15 @@ onBeforeUnmount(() => {
                 </span>
                 <span class="progress">{{ currentQuestionPosition }}</span>
               </div>
+              <button
+                v-if="isPreviewMode"
+                class="preview-edit-question-button"
+                type="button"
+                title="Edit this question in the paper editor"
+                @click="editCurrentQuestionInPaperEditor"
+              >
+                Edit This Question
+              </button>
             </div>
 
             <div class="question-content">
@@ -5788,6 +5814,25 @@ onBeforeUnmount(() => {
 .section-info .progress {
   color: #ffffff;
   background: #3f3f3f;
+}
+
+.preview-edit-question-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 1px solid #cfe0ff;
+  border-radius: 999px;
+  padding: 7px 14px;
+  color: #1d4ed8;
+  background: #f4f8ff;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.preview-edit-question-button:hover {
+  border-color: #93c5fd;
+  background: #e7f1ff;
 }
 
 /* Material on the left, divider, then question on the right. */

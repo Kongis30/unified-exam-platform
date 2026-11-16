@@ -484,8 +484,27 @@ async function main() {
       'the preview fullscreen control exits fullscreen mode');
     assert.deepEqual(previewWriteRequests, [],
       `preview interactions do not write student attempts: ${previewWriteRequests.join(', ')}`);
+
+    // Preview 内直接进入当前题编辑，保存后 Preview 应回到同一道题。
+    await page.getByRole('button', { name: 'Edit This Question', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`
+      && url.searchParams.get('questionNumber') === '1');
+    await page.getByText(questionStem, { exact: true }).first().waitFor();
+    const editedPreviewStem = `${questionStem} EDITED_FROM_PREVIEW`;
+    await page.locator('.stem-input').fill(editedPreviewStem);
+    await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
+    await page.getByText('All changes saved.', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`
+      && url.searchParams.get('questionNumber') === '1');
+    await page.getByText(editedPreviewStem, { exact: true }).waitFor();
+    assert.equal(await page.locator('.question-number').filter({ hasText: 'Question 1' }).count() > 0, true,
+      'returning from the editor opens the same preview question');
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
+    const activeQuestionText = await page.locator('.question-item--active').innerText();
+    assert.equal(activeQuestionText.includes('Q1'), true,
+      'returning from preview keeps the edited question selected');
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.route(`**/api/admin/papers/${paperId}`, async route => {

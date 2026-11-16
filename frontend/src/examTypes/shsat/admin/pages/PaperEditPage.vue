@@ -2007,8 +2007,10 @@ async function loadPaper() {
     captureOfficialStructureKeys();
     materials.value = (detail.materials || []).map((material) => ({ ...material }));
     questions.value = (detail.questions || []).map(normalizeQuestion);
+    const requestedQuestionNumber = Number(route.query.questionNumber);
+    const requestedQuestion = questions.value.find((question) => Number(question.questionNumber) === requestedQuestionNumber);
     const savedSelection = readEditorSelection('shsat', paperId.value);
-    const restoredQuestion = questions.value.find((question) => {
+    const restoredQuestion = requestedQuestion || questions.value.find((question) => {
       return (savedSelection?.questionId && sameId(question.questionId, savedSelection.questionId))
         || (savedSelection?.localId && sameId(question.localId, savedSelection.localId));
     }) || questions.value.find((question) => {
@@ -2142,9 +2144,17 @@ function previewPaper() {
     return;
   }
 
+  const requestedQuestionNumber = Number(route.query.questionNumber);
+  const targetQuestion = questions.value.find((question) => Number(question.questionNumber) === requestedQuestionNumber);
+  const returnTo = typeof route.query.returnTo === 'string' && route.query.returnTo !== '' ? route.query.returnTo : null;
+
   router.push({
     name: 'admin-paper-preview',
     params: { paperId: paperId.value },
+    query: {
+      ...(targetQuestion ? { questionNumber: targetQuestion.questionNumber } : {}),
+      ...(returnTo ? { returnTo } : {}),
+    },
   });
 }
 
@@ -3363,13 +3373,31 @@ async function deleteSubType(subType) {
   }
 }
 
-watch(paperId, (nextPaperId, previousPaperId) => {
-  if (nextPaperId && nextPaperId !== previousPaperId) {
-    loadedPaperId.value = null;
-    recentlyImportedQuestionIds.value = new Set();
+watch(
+  [paperId, () => route.query.questionNumber],
+  ([nextPaperId, nextQuestionNumber], [previousPaperId, previousQuestionNumber]) => {
+    if (!nextPaperId || nextPaperId === previousPaperId && nextQuestionNumber === previousQuestionNumber) {
+      return;
+    }
+
+    // 同一份卷子仅切换题目参数时，只更新选中项，不重新请求和清空未保存修改。
+    if (nextPaperId === previousPaperId && loadedPaperId.value === String(nextPaperId)) {
+      const requestedQuestionNumber = Number(nextQuestionNumber);
+      const requestedQuestion = questions.value.find((question) => Number(question.questionNumber) === requestedQuestionNumber);
+      if (requestedQuestion) {
+        selectedQuestionId.value = requestedQuestion.localId;
+        nextTick(() => scrollQuestionListTo(requestedQuestion.questionId || requestedQuestion.localId));
+      }
+      return;
+    }
+
+    if (nextPaperId !== previousPaperId) {
+      loadedPaperId.value = null;
+      recentlyImportedQuestionIds.value = new Set();
+    }
     loadPaper();
   }
-});
+);
 
 watch(selectedQuestionId, () => {
   if (loadedPaperId.value !== String(paperId.value)) return;
