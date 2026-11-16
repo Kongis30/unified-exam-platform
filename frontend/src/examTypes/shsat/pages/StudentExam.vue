@@ -139,6 +139,7 @@ const imagePreview = ref({
   panX: 0,
   panY: 0,
 });
+const unavailableMaterialImages = ref(new Set());
 const IMAGE_PREVIEW_MAX_ZOOM = 4;
 const IMAGE_PREVIEW_ZOOM_STEP = 1.6;
 let lineReaderDragOffset = 0;
@@ -663,6 +664,13 @@ function findMaterial(question) {
 
 function isImageMaterial(material) {
   return Boolean(material?.assetUrl);
+}
+
+function markMaterialImageUnavailable(src) {
+  if (!src || unavailableMaterialImages.value.has(src)) {
+    return;
+  }
+  unavailableMaterialImages.value = new Set([...unavailableMaterialImages.value, src]);
 }
 
 function openMaterialImagePreview(material) {
@@ -2122,7 +2130,9 @@ async function toggleMark() {
   markedQuestionNumbers.value = nextMarked;
 
   try {
-    await studentApi.setQuestionMarked(attemptId.value, currentQuestion.value.questionId, !wasMarked);
+    if (attemptId.value) {
+      await studentApi.setQuestionMarked(attemptId.value, currentQuestion.value.questionId, !wasMarked);
+    }
   } catch {
     const restoredMarks = new Set(markedQuestionNumbers.value);
     if (wasMarked) restoredMarks.add(questionNumber);
@@ -4263,7 +4273,7 @@ onBeforeUnmount(() => {
                       @click="clearHighlightSpan"
                     >
                       <button
-                        v-if="isImageMaterial(currentQuestion.material)"
+                        v-if="isImageMaterial(currentQuestion.material) && !unavailableMaterialImages.has(currentQuestion.material.assetUrl)"
                         class="material-image-button"
                         type="button"
                         :disabled="drawingOn"
@@ -4274,8 +4284,12 @@ onBeforeUnmount(() => {
                           class="material-image"
                           :src="currentQuestion.material.assetUrl"
                           alt="Question material image"
+                          @error="markMaterialImageUnavailable(currentQuestion.material.assetUrl)"
                         />
                       </button>
+                      <p v-else-if="isImageMaterial(currentQuestion.material)" class="material-image-unavailable" role="status">
+                        Question image is unavailable.
+                      </p>
                       <div v-else class="material-display">
                         <div v-if="currentMaterialDisplay?.hasIntroduction" class="material-display__introduction">
                           <SafeMarkdownText :content="currentMaterialDisplay.introduction" />
@@ -4304,14 +4318,18 @@ onBeforeUnmount(() => {
                           >
                             <template v-if="item.type === 'image'">
                               <button
+                                v-if="!unavailableMaterialImages.has(item.src)"
                                 class="material-display__image-button"
                                 type="button"
                                 :disabled="drawingOn"
                                 title="Click to enlarge image"
                                 @click.stop="openMaterialBodyImagePreview(item)"
                               >
-                                <img class="material-display__image" :src="item.src" :alt="item.alt" />
+                                <img class="material-display__image" :src="item.src" :alt="item.alt" @error="markMaterialImageUnavailable(item.src)" />
                               </button>
+                              <p v-else class="material-image-unavailable" role="status">
+                                {{ item.alt ? `Image unavailable: ${item.alt}` : 'Question image is unavailable.' }}
+                              </p>
                             </template>
                             <template v-else>
                               <div class="material-display__line-text">
@@ -5865,6 +5883,18 @@ onBeforeUnmount(() => {
 
 .material-content.scrollable {
   max-height: calc(100vh - 178px);
+}
+
+.material-image-unavailable {
+  margin: 0;
+  border: 1px dashed #cbd8e8;
+  border-radius: 8px;
+  padding: 14px;
+  color: #65758f;
+  background: #f6f9fd;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .material-image-button {

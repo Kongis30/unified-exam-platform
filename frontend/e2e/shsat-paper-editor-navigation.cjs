@@ -67,18 +67,18 @@ async function main() {
     await page.getByRole('button', { name: 'Save Changes', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
     await page.getByText('Save your changes before opening the student preview.', { exact: true }).waitFor();
-    assert.equal(new URL(page.url()).pathname, `/exam-types/SHSAT/admin/papers/${paperId}/edit`,
+    assert.equal(new URL(page.url()).pathname, `/shsat/admin/papers/${paperId}/edit`,
       'preview remains blocked while changes are unsaved');
 
     await page.getByRole('button', { name: 'Back to Paper Management' }).click();
     const leaveDialog = page.getByRole('heading', { name: 'Leave Paper Editor?' });
     await leaveDialog.waitFor();
     await page.getByRole('button', { name: 'Stay', exact: true }).click();
-    assert.equal(new URL(page.url()).pathname, `/exam-types/SHSAT/admin/papers/${paperId}/edit`,
+    assert.equal(new URL(page.url()).pathname, `/shsat/admin/papers/${paperId}/edit`,
       'Stay keeps the editor open');
     await page.getByRole('button', { name: 'Back to Paper Management' }).click();
     await page.getByRole('button', { name: 'Leave Without Saving', exact: true }).click();
-    await page.waitForURL(url => url.pathname === '/exam-types/SHSAT/admin');
+    await page.waitForURL(url => url.pathname === '/shsat');
     assert.equal(readQuestions(await api(page, `/api/admin/papers/${paperId}`)).length, 0,
       'leaving without saving discards the pending question');
 
@@ -141,6 +141,7 @@ async function main() {
       children: section.children.map(asSectionRequest),
     });
     await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', {
+      expectedRevision: withSourceMetadata.structureRevision,
       sections: withSourceMetadata.sections.map(asSectionRequest),
     });
     await page.reload();
@@ -287,11 +288,11 @@ async function main() {
       'an unused custom primary type can still be removed');
 
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
     await page.getByText(questionStem, { exact: true }).waitFor();
     await page.screenshot({ path: `/tmp/shsat-paper-editor-preview-${stamp}.png` });
     await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/edit`);
     await page.getByRole('heading', { name: paperTitle, exact: true }).waitFor();
 
     const mathematics = page.locator('.subject-group').filter({ has: page.getByRole('heading', { name: 'Mathematics', exact: true }) });
@@ -374,6 +375,7 @@ async function main() {
     await page.route(`**/uploads/paper-materials/missing-preview-${stamp}.png`, route => route.fulfill({ status: 404, body: '' }));
     await page.route(`**${missingQuestionImageUrl}`, route => route.fulfill({ status: 404, body: '' }));
     await api(page, `/api/admin/papers/${paperId}/structure`, 'PUT', {
+      expectedRevision: previewPaperDetail.structureRevision,
       sections: savedSections, materials: materialWrites,
     });
 
@@ -389,7 +391,7 @@ async function main() {
     await page.getByRole('heading', { name: 'Question 2 · Multiple Choice', exact: true }).waitFor();
 
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
     await page.getByText(questionStem, { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByText(mathStemText, { exact: false }).first().waitFor();
@@ -487,7 +489,7 @@ async function main() {
 
     // Preview 内直接进入当前题编辑，保存后 Preview 应回到同一道题。
     await page.getByRole('button', { name: 'Edit This Question', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/edit`
       && url.searchParams.get('questionNumber') === '1');
     await page.getByText(questionStem, { exact: true }).first().waitFor();
     const editedPreviewStem = `${questionStem} EDITED_FROM_PREVIEW`;
@@ -495,13 +497,13 @@ async function main() {
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
     await page.getByText('All changes saved.', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`
       && url.searchParams.get('questionNumber') === '1');
     await page.getByText(editedPreviewStem, { exact: true }).waitFor();
     assert.equal(await page.locator('.question-number').filter({ hasText: 'Question 1' }).count() > 0, true,
       'returning from the editor opens the same preview question');
     await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/edit`);
     const activeQuestionText = await page.locator('.question-item--active').innerText();
     assert.equal(activeQuestionText.includes('Q1'), true,
       'returning from preview keeps the edited question selected');
@@ -522,7 +524,7 @@ async function main() {
       await route.fulfill({ response, body: JSON.stringify(detail) });
     }, { times: 1 });
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
     await page.getByText(questionStem, { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByText('Question stem is not available', { exact: true }).waitFor();
@@ -547,7 +549,7 @@ async function main() {
       `the preview Back control is reachable at the end of the mobile toolbar: ${JSON.stringify(mobileBackBounds)}`);
     await page.screenshot({ path: `/tmp/shsat-paper-preview-tools-mobile-end-${stamp}.png` });
     await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/edit`);
     await page.setViewportSize({ width: 1440, height: 1000 });
 
     await page.getByRole('button', { name: 'Delete Question', exact: true }).click();
@@ -866,7 +868,7 @@ async function main() {
     assert.equal(await page.locator('.material-editor .material-topline select').inputValue(),
       String(importedQuestion.render.materialId), 'the material selector uses the target paper material ID');
     await page.getByRole('button', { name: 'Preview', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/preview`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.locator('.material-section').waitFor();
     await page.getByText(sourceQuestion.render.material.title, { exact: true }).waitFor();
@@ -881,7 +883,7 @@ async function main() {
     await page.screenshot({ path: `/tmp/shsat-paper-import-material-preview-mobile-${stamp}.png` });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await page.waitForURL(url => url.pathname === `/exam-types/SHSAT/admin/papers/${paperId}/edit`);
+    await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/edit`);
 
     const metadataPaper = await api(page, '/api/admin/exam-types/SHSAT/papers', 'POST', {
       paperCode: `EDITOR_METADATA_${stamp}`,
