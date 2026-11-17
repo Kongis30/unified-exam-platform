@@ -16,6 +16,7 @@
       :exam-title="examTitle"
       :module-name="examTitle"
       :preview-mode="isPreviewMode"
+      :can-edit-preview-question="isAdminPaperPreview"
       :preview-modules="previewModules"
       :selected-preview-module="selectedPreviewModule"
       :current-question="currentQuestion"
@@ -30,6 +31,7 @@
       :font-scale="fontScale"
       @change-font-scale="handleChangeFontScale"
       @select-preview-module="selectPreviewModule"
+      @edit-current-question="editCurrentQuestion"
     />
     
     <!-- 主要内容区域：支持左右面板拖拽分割 -->
@@ -195,7 +197,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, onUnmounted, watchEffect } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExamFlowStore } from '../stores/examFlow.js'
 import { examApi } from '../api/exam.js'
@@ -220,7 +222,8 @@ export default {
     const flow = useExamFlowStore()
     // 响应式数据
     const examTitle = computed(() => flow.currentTitle)
-    const isPreviewMode = computed(() => ['sat-paper-preview', 'psat-paper-preview'].includes(router.currentRoute.value.name)
+    const isAdminPaperPreview = computed(() => ['sat-paper-preview', 'psat-paper-preview'].includes(router.currentRoute.value.name))
+    const isPreviewMode = computed(() => isAdminPaperPreview.value
       || router.currentRoute.value.query.preview === '1')
     const previewModules = computed(() => flow.order.map((id) => ({ id, title: flow.modulesMeta[id]?.title || 'SAT Module' })))
     const selectedPreviewModule = computed(() => flow.currentModuleId)
@@ -292,6 +295,45 @@ export default {
     const currentQuestionData = computed(() => {
       return (flow.currentQuestions || [])[currentQuestion.value - 1] || {}
     })
+
+    const editCurrentQuestion = () => {
+      const route = router.currentRoute.value
+      if (!isAdminPaperPreview.value || !currentQuestionData.value?.id || !flow.currentModuleId) return
+      const previewQuery = {
+        ...route.query,
+        questionId: currentQuestionData.value.id,
+        moduleId: flow.currentModuleId,
+        questionNumber: currentQuestion.value,
+      }
+      router.push({
+        name: route.name === 'psat-paper-preview' ? 'psat-paper-edit' : 'sat-paper-edit',
+        params: { paperId: route.params.paperId },
+        query: {
+          ...previewQuery,
+          questionId: currentQuestionData.value.id,
+          moduleId: flow.currentModuleId,
+          questionNumber: currentQuestion.value,
+          returnTo: router.resolve({ name: route.name, params: route.params, query: previewQuery }).fullPath,
+        },
+      })
+    }
+
+    let syncingPreviewLocation = false
+    const syncPreviewLocation = () => {
+      if (!isAdminPaperPreview.value || !currentQuestionData.value?.id || !flow.currentModuleId) return
+      syncingPreviewLocation = true
+      const route = router.currentRoute.value
+      router.replace({
+        name: route.name,
+        params: route.params,
+        query: {
+          ...route.query,
+          questionId: currentQuestionData.value.id,
+          moduleId: flow.currentModuleId,
+          questionNumber: currentQuestion.value,
+        },
+      }).finally(() => { syncingPreviewLocation = false })
+    }
 
     const flushCurrentQuestionTiming = () => {
       if (isReviewMode.value || !questionTimingStartedAt) return
@@ -605,6 +647,7 @@ export default {
       if (questionNumber >= 1 && questionNumber <= totalQuestions.value) {
         flushCurrentQuestionTiming()
         currentQuestion.value = questionNumber
+        syncPreviewLocation()
         startCurrentQuestionTiming()
         updateQuestionStatus()
         savePosition()
@@ -617,6 +660,7 @@ export default {
       if (currentQuestion.value > 1) {
         flushCurrentQuestionTiming()
         currentQuestion.value--
+        syncPreviewLocation()
         startCurrentQuestionTiming()
         updateQuestionStatus()
         savePosition()
@@ -629,6 +673,7 @@ export default {
       if (currentQuestion.value < totalQuestions.value) {
         flushCurrentQuestionTiming()
         currentQuestion.value++
+        syncPreviewLocation()
         startCurrentQuestionTiming()
         updateQuestionStatus()
         savePosition()
@@ -895,14 +940,42 @@ export default {
               fileUrl: question.material.fileUrl || '',
             } : null,
           }))]))
+        // 从编辑器返回时按稳定的模块/题目 ID 定位；失效时安全回退到首模块首题。
+        const query = route.query
+        const requestedModuleIndex = flow.order.findIndex(id => String(id) === String(query.moduleId || ''))
+        const questionModule = query.questionId
+          ? modules.find(module => (module.questions || []).some(question => String(question.questionId) === String(query.questionId)))
+          : null
+        const targetModuleIndex = requestedModuleIndex >= 0 && questionModule && String(questionModule.moduleId) === String(query.moduleId)
+          ? requestedModuleIndex
+          : !requestedModuleIndex && !query.questionId ? 0 : -1
+        if (targetModuleIndex < 0) {
+          previewError.value = 'The requested preview question is no longer available.'
+          return
+        }
+        flow.index = targetModuleIndex
         totalQuestions.value = flow.currentQuestions.length
+        const requestedQuestionIndex = flow.currentQuestions.findIndex(question => {
+          return String(question.id) === String(query.questionId || '')
+        })
+        const requestedNumber = Number(query.questionNumber)
+        if (query.questionId && requestedQuestionIndex < 0) {
+          previewError.value = 'The requested preview question is no longer available.'
+          return
+        }
+        currentQuestion.value = requestedQuestionIndex >= 0
+          ? requestedQuestionIndex + 1
+          : Number.isInteger(requestedNumber) && requestedNumber >= 1 && requestedNumber <= totalQuestions.value
+            ? requestedNumber
+            : 1
         selectedAnswers.value = Array(totalQuestions.value).fill(null)
         questionStatus.value = Array(totalQuestions.value).fill(null).map((_, index) => ({
-          current: index === 0,
+          current: index === currentQuestion.value - 1,
           answered: false,
           reviewed: false,
         }))
         timeRemaining.value = flow.currentDurationMinutes * 60
+        syncPreviewLocation()
       } catch (error) {
         previewError.value = error.message || 'Unable to load this paper preview.'
       } finally {
@@ -923,6 +996,7 @@ export default {
         answered: false,
         reviewed: false
       }))
+      syncPreviewLocation()
     }
 
     // 预览在模块末题继续点击 Next 时，衔接下一个模块并从第 1 题开始。
@@ -1030,6 +1104,10 @@ export default {
     }
 
     // 生命周期钩子
+    watch(() => [router.currentRoute.value.query.moduleId, router.currentRoute.value.query.questionId, router.currentRoute.value.query.questionNumber], () => {
+      if (isAdminPaperPreview.value && !previewLoading.value && !syncingPreviewLocation) loadPaperPreview()
+    })
+
     onMounted(async () => {
       window.addEventListener('keydown', handlePreviewKeydown)
       window.addEventListener('beforeunload', handleBeforeUnload)
@@ -1160,6 +1238,8 @@ export default {
     return {
       examTitle,
       isPreviewMode,
+      isAdminPaperPreview,
+      editCurrentQuestion,
       previewModules,
       selectedPreviewModule,
       hasNextPreviewModule,

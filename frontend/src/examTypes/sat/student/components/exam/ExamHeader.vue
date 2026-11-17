@@ -30,6 +30,14 @@
     </div>
     
     <div class="header-right">
+      <button
+        v-if="canEditPreviewQuestion"
+        class="preview-edit-btn"
+        type="button"
+        @click="$emit('edit-current-question')"
+      >
+        Edit This Question
+      </button>
       <button 
         v-if="!reviewMode"
         class="highlights-btn"
@@ -146,6 +154,10 @@ export default {
       type: Boolean,
       default: false
     },
+    canEditPreviewQuestion: {
+      type: Boolean,
+      default: false
+    },
     previewModules: {
       type: Array,
       default: () => []
@@ -159,7 +171,7 @@ export default {
       default: 1
     }
   },
-  emits: ['toggle-highlight-mode', 'show-help', 'exit-exam', 'open-calculator', 'change-font-scale', 'select-preview-module'],
+  emits: ['toggle-highlight-mode', 'show-help', 'exit-exam', 'open-calculator', 'change-font-scale', 'select-preview-module', 'edit-current-question'],
   setup(props, { emit }) {
     const isTimeHidden = ref(false)
     // 由父组件控制高亮模式，header仅展示状态并发送切换事件
@@ -289,6 +301,21 @@ export default {
 </script>
 
 <style scoped>
+.preview-edit-btn {
+  flex: 0 0 auto;
+  border: 1px solid rgb(255 255 255 / 45%);
+  border-radius: 6px;
+  padding: 8px 14px;
+  color: #1e3a8a;
+  background: white;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.preview-edit-btn:hover { background: #eff6ff; }
+
 .exam-header {
   display: flex;
   align-items: center;

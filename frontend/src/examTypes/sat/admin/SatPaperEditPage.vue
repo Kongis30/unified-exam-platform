@@ -1,11 +1,22 @@
 <template>
 
     <div class="main-content">
-      <RouterLink class="sat-editor-back" :to="returnLocation">← Back to Paper Management</RouterLink>
       <div class="header-section">
-        <h1 class="page-title">Edit Paper: {{ paperTitle }}</h1>
-        <p class="page-subtitle">Manage SAT sections, modules and questions for this paper</p>
-
+        <div class="header-section__title-row">
+          <button class="sat-editor-back" type="button" @click="returnToPaperList" title="Back to Paper Management">
+            <span aria-hidden="true">←</span><span class="sat-editor-back__label">Papers</span>
+          </button>
+          <div class="paper-heading">
+            <div class="paper-heading__title">
+              <span class="paper-heading__eyebrow">Edit Paper</span>
+              <h1 class="page-title">{{ paperTitle }}</h1>
+            </div>
+            <p class="page-subtitle">Sections, modules & questions</p>
+          </div>
+          <el-button class="paper-preview-button" size="small" :disabled="!selectedQuestion || imageUploading" @click="previewPaper">
+            {{ previewOrigin ? `Back to Preview · Q${getQuestionNumber(selectedQuestion)}` : 'Preview' }}
+          </el-button>
+        </div>
       </div>
 
       <div class="paper-edit-container">
@@ -191,7 +202,7 @@
             <div class="editor-header">
               <h3>Question {{ getQuestionNumber(selectedQuestion) }}</h3>
               <div class="editor-actions">
-                <el-button size="small" :disabled="stemImageUploading || materialImageUploading || optionImageUploading" @click="saveQuestion">Save</el-button>
+                <el-button size="small" :loading="savingQuestion" :disabled="imageUploading" @click="saveQuestion">Save</el-button>
                 <el-button size="small" type="danger" @click="deleteQuestion">Delete</el-button>
               </div>
             </div>
@@ -470,7 +481,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick, h } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, h, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
@@ -480,7 +491,7 @@ import {
 import { ArrowDown, Plus } from '@element-plus/icons-vue'
 import draggable from 'vuedraggable'
 import 'element-plus/dist/index.css'
-import { RouterLink } from 'vue-router'
+import { RouterLink, onBeforeRouteLeave } from 'vue-router'
 import { readEditorSelection, writeEditorSelection } from '@/utils/editorSelectionStorage'
 import { notifyOperation } from '@/utils/operationNotification'
 import { renderMarkdown } from '../utils/markdown.js'
@@ -497,16 +508,32 @@ const route = useRoute()
 const router = useRouter()
 const vLoading = ElLoading.directive
 const returnLocation = computed(() => {
-  const returnTo = route.query.returnTo
-  if (typeof returnTo === 'string'
-    && (/^\/(sat|psat)(?:[/?#]|$)/.test(returnTo) || returnTo.startsWith('/exam-types/SAT/admin') || returnTo.startsWith('/exam-types/PSAT/admin'))
-    && !returnTo.startsWith('//')) {
-    return returnTo
-  }
   return { name: route.name === 'psat-paper-edit' ? 'psat-admin' : 'sat-admin', query: { tab: 'papers' } }
 })
 
+const previewOrigin = computed(() => {
+  return typeof route.query.returnTo === 'string' && /\/preview(?:[?#]|$)/.test(route.query.returnTo)
+})
+
+async function confirmDiscardChanges() {
+  if (!hasUnsavedQuestionChanges.value || imageUploading.value) return !imageUploading.value
+  try {
+    await ElMessageBox.confirm(
+      'Your unsaved question changes will be lost. Save the question before continuing.',
+      'Unsaved Changes',
+      { confirmButtonText: 'Discard Changes', cancelButtonText: 'Stay Here', type: 'warning' }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
 function returnToPaperList() {
+  if (imageUploading.value) {
+    operationToast.warning('Please wait for the image upload to finish')
+    return
+  }
   router.push(returnLocation.value)
 }
 
@@ -742,6 +769,23 @@ const questionForm = reactive({
 // 备份原始选项数据，用于题型切换时恢复
 const originalOptions = ref(null)
 const savedQuestionDrafts = ref({})
+const savingQuestion = ref(false)
+const imageUploading = computed(() => stemImageUploading.value || materialImageUploading.value || optionImageUploading.value)
+const questionSnapshotFor = (question) => JSON.stringify({
+  content: question.content || '',
+  material: question.material || '',
+  materialImageUrl: materialImageUrl.value || '',
+  options: question.options || [],
+  correctAnswer: question.correctAnswer || '',
+  correctAnswers: question.correctAnswers || [],
+  explanation: question.explanation || '',
+  difficulty: question.difficulty || 'medium',
+  score: question.score || 1,
+  tagPath: question.tagPath || [],
+  legacyTag: question.legacyTag || '',
+  type: question.type,
+})
+const hasUnsavedQuestionChanges = computed(() => Boolean(questionForm.id) && questionSnapshot.value !== questionSnapshotFor(questionForm))
 const legacyQuestionTag = computed(() => questionForm.legacyTag)
 
 const onQuestionTagChange = (path) => {
@@ -757,6 +801,7 @@ const clearLegacyQuestionTag = () => {
 // 计算属性 - Markdown渲染
 const materialHtml = computed(() => renderMarkdown(questionForm.material))
 const materialImageUrl = ref('')
+const questionSnapshot = ref('')
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -1124,7 +1169,7 @@ const loadPaperStructure = async () => {
       const firstNonEmpty = satSections.value.find(sec => (sec.modules && sec.modules.length > 0))
       expandedSections.value = [firstNonEmpty ? firstNonEmpty.id : 'RW1']
       savedQuestionDrafts.value = {}
-      restoreSavedQuestionSelection()
+      await restoreSavedQuestionSelection()
     } else {
       operationToast.error(response.message || 'Failed to load paper structure')
       // Return to the paper list when the requested paper is missing.
@@ -1289,8 +1334,9 @@ const toggleModule = (moduleId) => {
   }
 }
 
-const selectQuestion = async (question, module) => {
+const selectQuestion = async (question, module, { force = false } = {}) => {
   const questionId = question?.questionId || question?.id
+  if (!force && String(questionId) !== String(questionForm.id || '') && !(await confirmDiscardChanges())) return
   writeEditorSelection('sat', paperId, questionId ? { questionId: String(questionId), moduleId: String(module?.id || '') } : null)
   const savedDraft = savedQuestionDrafts.value[String(questionId)] || null
   const editableQuestion = savedDraft ? { ...question, ...savedDraft } : { ...question }
@@ -1328,10 +1374,31 @@ const selectQuestion = async (question, module) => {
     })
     // 设置材料图片预览（如果有）
     materialImageUrl.value = normalizeUrl(editableQuestion.material?.fileUrl || '')
+    questionSnapshot.value = questionSnapshotFor(questionForm)
   }
 }
 
-function restoreSavedQuestionSelection() {
+async function selectRequestedQuestion({ section, module, question }) {
+  expandedSections.value = [section.id]
+  expandedModules.value = [module.id]
+  await selectQuestion(question, module, { force: true })
+    await nextTick()
+    document.querySelector('.question-item.active')?.scrollIntoView({ block: 'nearest' })
+}
+
+async function restoreSavedQuestionSelection() {
+  const requestedQuestionId = typeof route.query.questionId === 'string' ? route.query.questionId : ''
+  const requestedModuleId = typeof route.query.moduleId === 'string' ? route.query.moduleId : ''
+  const requested = findQuestionInModule(requestedModuleId, requestedQuestionId)
+  if (requested) {
+    await selectRequestedQuestion(requested)
+    return
+  }
+
+  if (requestedQuestionId || requestedModuleId) {
+    if (!requested) operationToast.error('The requested question is no longer available in this module')
+    return
+  }
   const savedSelection = readEditorSelection('sat', paperId)
   if (!savedSelection?.questionId) return
 
@@ -1346,7 +1413,7 @@ function restoreSavedQuestionSelection() {
 
         expandedSections.value = [section.id]
         expandedModules.value = [candidate.id]
-        selectQuestion(question, candidate)
+        await selectQuestion(question, candidate, { force: true })
         return
       }
     }
@@ -1624,6 +1691,8 @@ const addQuestion = async (module) => {
 }
 
 const saveQuestion = async () => {
+  if (savingQuestion.value) return
+  savingQuestion.value = true
   try {
     if (stemImageUploading.value || materialImageUploading.value || optionImageUploading.value) {
       operationToast.warning('Please wait for the image upload to finish')
@@ -1781,6 +1850,7 @@ const saveQuestion = async () => {
         correctAnswer,
         tags
       })
+      questionSnapshot.value = questionSnapshotFor(questionForm)
     } else {
       operationToast.error(`Failed to save question. ${getApiMessage(response, '')}`.trim())
     }
@@ -1793,6 +1863,8 @@ const saveQuestion = async () => {
       error
     })
     operationToast.error(`Failed to save question. ${getApiMessage(error, '')}`.trim())
+  } finally {
+    savingQuestion.value = false
   }
 }
 
@@ -1959,16 +2031,60 @@ const questionListTags = (question) => [question.typeName || question.type, ques
   .filter(value => typeof value === 'string' && value.trim())
 
 // 初始化
+async function previewPaper() {
+  if (!selectedQuestion.value || imageUploading.value) return
+  if (hasUnsavedQuestionChanges.value) {
+    operationToast.warning('Save your changes before opening the paper preview')
+    return
+  }
+  let sourcePreviewUrl = null
+  let previewReturnTo = null
+  try {
+    sourcePreviewUrl = previewOrigin.value ? new URL(route.query.returnTo, window.location.origin) : null
+    const workspaceReturnTo = sourcePreviewUrl?.searchParams.get('returnTo')
+    if (workspaceReturnTo) previewReturnTo = workspaceReturnTo
+  } catch { /* Use a fresh preview without a nested return path. */ }
+  await router.push({
+    name: route.name === 'psat-paper-edit' ? 'psat-paper-preview' : 'sat-paper-preview',
+    params: { paperId },
+    query: {
+      questionId: selectedQuestion.value.questionId || selectedQuestion.value.id,
+      moduleId: selectedModule.value.id,
+      questionNumber: getQuestionNumber(selectedQuestion.value),
+      ...(previewReturnTo ? { returnTo: previewReturnTo } : {}),
+    },
+  })
+}
+
+onBeforeRouteLeave(async () => {
+  if (imageUploading.value) return false
+  return confirmDiscardChanges()
+})
+
 onMounted(async () => {
+  window.addEventListener('beforeunload', warnBeforeUnload)
   await loadPaperStructure()
 })
+
+function warnBeforeUnload(event) {
+  if (!hasUnsavedQuestionChanges.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnload))
 </script>
 
 <style scoped>
 .sat-editor-back {
   display: inline-flex;
   align-items: center;
-  margin: 16px 0 0;
+  gap: 6px;
+  flex: 0 0 90px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
   color: var(--color-primary-strong);
   font-weight: 700;
 }
@@ -1977,7 +2093,7 @@ onMounted(async () => {
   width: 100%;
   max-width: 1760px;
   margin: 0 auto;
-  padding: 24px clamp(12px, 1.5vw, 24px);
+  padding: 12px clamp(12px, 1.5vw, 24px) 20px;
   font-family: inherit;
 }
 
@@ -1995,23 +2111,60 @@ onMounted(async () => {
 }
 
 .header-section {
-  margin-bottom: 24px;
+  margin-bottom: 14px;
+}
+
+.header-section__title-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.paper-heading {
+  flex: 1;
+  min-width: 0;
   text-align: center;
 }
+
+.paper-heading__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.paper-heading__eyebrow {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.header-section__title-row .page-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paper-preview-button { flex: 0 0 auto; }
 
 
 
 .page-title {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   color: #303133;
-  margin: 0 0 8px 0;
+  margin: 0;
 }
 
 .page-subtitle {
-  font-size: 14px;
-  color: #606266;
-  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  margin: 3px 0 0;
+  text-align: center;
 }
 
 .paper-edit-container {
