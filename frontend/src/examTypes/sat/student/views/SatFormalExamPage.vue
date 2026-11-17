@@ -946,9 +946,10 @@ export default {
         const questionModule = query.questionId
           ? modules.find(module => (module.questions || []).some(question => String(question.questionId) === String(query.questionId)))
           : null
+        const hasRequestedQuestion = Boolean(query.moduleId || query.questionId)
         const targetModuleIndex = requestedModuleIndex >= 0 && questionModule && String(questionModule.moduleId) === String(query.moduleId)
           ? requestedModuleIndex
-          : !requestedModuleIndex && !query.questionId ? 0 : -1
+          : !hasRequestedQuestion ? 0 : -1
         if (targetModuleIndex < 0) {
           previewError.value = 'The requested preview question is no longer available.'
           return

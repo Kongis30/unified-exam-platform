@@ -36,7 +36,11 @@ async function main() {
         return { paperId: paper.id, module: target, question: target.questions[1] || target.questions[0], number: target.questions.length > 1 ? 2 : 1 };
       }, code);
       const { paperId, module, question, number } = structure;
-      originals.push({ paperId, questionId: question.questionId, content: question.content, moduleId: module.moduleId, subject: module.subjectCode === 2 ? 'Math' : 'RW', material: question.material });
+      await page.goto(`${baseUrl}/${code.toLowerCase()}/admin/papers/${paperId}/preview`);
+      await page.locator('.answer-options').waitFor();
+      assert.equal(await page.locator('.question-number-badge').textContent(), '1', `${code} ordinary preview opens without a question query`);
+      const originalsItem = { paperId, questionId: question.questionId, content: question.content, moduleId: module.moduleId, subject: module.subjectCode === 2 ? 'Math' : 'RW', material: question.material };
+      originals.push(originalsItem);
       const workspaceReturnTo = `/exam-types/${code}/admin?tab=papers`;
       const previewPath = `/${code.toLowerCase()}/admin/papers/${paperId}/preview`;
       const initialQuery = new URLSearchParams({ moduleId: module.moduleId, questionId: question.questionId, questionNumber: number, returnTo: workspaceReturnTo });
