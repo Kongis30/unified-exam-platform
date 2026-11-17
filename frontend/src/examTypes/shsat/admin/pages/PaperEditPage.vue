@@ -461,6 +461,16 @@ const hasChanges = computed(() => {
     || scoringProfileCode.value !== (paper.value?.scoringProfileCode || 'SHSAT_2026_100');
 });
 
+// 从 Preview 的“Edit This Question”进入时，记住要回到哪一道题的 Preview。
+const previewOriginQuestionNumber = computed(() => {
+  const returnTo = route.query.returnTo;
+  if (typeof returnTo !== 'string' || !returnTo.includes('/preview')) {
+    return null;
+  }
+  const questionNumber = Number(route.query.questionNumber);
+  return Number.isFinite(questionNumber) && questionNumber > 0 ? questionNumber : null;
+});
+
 function createStemTextPreviewBlock(items) {
   const firstItem = items[0];
   const lastItem = items[items.length - 1];
@@ -3751,8 +3761,15 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="edit-header__actions">
-          <AppButton variant="secondary" :disabled="!paper" @click="previewPaper">
-            Preview
+          <AppButton
+            variant="secondary"
+            :disabled="!paper"
+            :title="previewOriginQuestionNumber
+              ? `回到 Preview 的第 ${previewOriginQuestionNumber} 题`
+              : 'Open the student preview'"
+            @click="previewPaper"
+          >
+            {{ previewOriginQuestionNumber ? `Back to Preview · Q${previewOriginQuestionNumber}` : 'Preview' }}
           </AppButton>
           <AppButton :disabled="!hasChanges || saving" @click="saveChanges">
             {{ saving ? 'Saving...' : hasChanges ? 'Save Changes' : 'No Changes' }}

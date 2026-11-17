@@ -65,7 +65,7 @@ async function main() {
     await page.getByRole('button', { name: 'Add Question', exact: true }).first().click();
     await page.locator('.stem-input').fill(questionStem);
     await page.getByRole('button', { name: 'Save Changes', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: /^(Preview|Back to Preview · Q\d+)$/ }).click();
     await page.getByText('Save your changes before opening the student preview.', { exact: true }).waitFor();
     assert.equal(new URL(page.url()).pathname, `/shsat/admin/papers/${paperId}/edit`,
       'preview remains blocked while changes are unsaved');
@@ -287,7 +287,7 @@ async function main() {
     assert.equal((await api(page, `/api/admin/papers/${paperId}`)).sections.some(section => section.sectionCode === customPartCode), false,
       'an unused custom primary type can still be removed');
 
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: /^(Preview|Back to Preview · Q\d+)$/ }).click();
     await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
     await page.getByText(questionStem, { exact: true }).waitFor();
     await page.screenshot({ path: `/tmp/shsat-paper-editor-preview-${stamp}.png` });
@@ -390,7 +390,7 @@ async function main() {
     await nextQuestion.click();
     await page.getByRole('heading', { name: 'Question 2 · Multiple Choice', exact: true }).waitFor();
 
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: /^(Preview|Back to Preview · Q\d+)$/ }).click();
     await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
     await page.getByText(questionStem, { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
@@ -487,16 +487,20 @@ async function main() {
     assert.deepEqual(previewWriteRequests, [],
       `preview interactions do not write student attempts: ${previewWriteRequests.join(', ')}`);
 
-    // Preview 内直接进入当前题编辑，保存后 Preview 应回到同一道题。
+    // Preview 内直接进入当前题编辑；保存后停留在编辑器，由用户主动点按钮回到 Preview 同一题。
     await page.getByRole('button', { name: 'Edit This Question', exact: true }).click();
     await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/edit`
       && url.searchParams.get('questionNumber') === '1');
     await page.getByText(questionStem, { exact: true }).first().waitFor();
+    const backToPreviewButton = page.getByRole('button', { name: 'Back to Preview · Q1', exact: true });
+    await backToPreviewButton.waitFor();
     const editedPreviewStem = `${questionStem} EDITED_FROM_PREVIEW`;
     await page.locator('.stem-input').fill(editedPreviewStem);
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
     await page.getByText('All changes saved.', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    assert.equal(new URL(page.url()).pathname, `/shsat/admin/papers/${paperId}/edit`,
+      'saving keeps the user in the paper editor instead of jumping to preview');
+    await backToPreviewButton.click();
     await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`
       && url.searchParams.get('questionNumber') === '1');
     await page.getByText(editedPreviewStem, { exact: true }).waitFor();
@@ -510,8 +514,15 @@ async function main() {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.route(`**/api/admin/papers/${paperId}`, async route => {
+      if (route.request().method() !== 'GET') return route.fallback();
       const response = await route.fetch();
-      const detail = await response.json();
+      const raw = await response.text();
+      let detail;
+      try {
+        detail = JSON.parse(raw);
+      } catch {
+        return route.fulfill({ response, body: raw });
+      }
       const clearQuestionStem = value => {
         if (Array.isArray(value)) {
           value.forEach(clearQuestionStem);
@@ -523,16 +534,24 @@ async function main() {
       clearQuestionStem(detail);
       await route.fulfill({ response, body: JSON.stringify(detail) });
     }, { times: 1 });
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: /^(Preview|Back to Preview · Q\d+)$/ }).click();
     await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
-    await page.getByText(questionStem, { exact: true }).waitFor();
+    await page.getByText(editedPreviewStem, { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByText('Question stem is not available', { exact: true }).waitFor();
     await page.getByText('Question image is unavailable.', { exact: true }).waitFor();
     await page.screenshot({ path: `/tmp/shsat-paper-preview-empty-stem-mobile-${stamp}.png` });
     await page.getByRole('button', { name: 'Previous', exact: true }).click();
-    await page.getByText(questionStem, { exact: true }).waitFor();
+    await page.getByText(editedPreviewStem, { exact: true }).waitFor();
     const previewMobileSize = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
+    if (previewMobileSize.page > previewMobileSize.viewport) {
+      const offenders = await page.evaluate(() => [...document.querySelectorAll('*')]
+        .filter(el => el.getBoundingClientRect().right > window.innerWidth + 1)
+        .slice(0, 12)
+        .map(el => ({ tag: el.tagName, cls: String(el.className).slice(0, 80), right: Math.round(el.getBoundingClientRect().right) })));
+      console.log('[overflow-debug]', JSON.stringify({ previewMobileSize, url: page.url(), offenders }, null, 2));
+    }
+    await page.screenshot({ path: `/tmp/shsat-paper-preview-mobile-overflow-${stamp}.png` });
     assert.ok(previewMobileSize.page <= previewMobileSize.viewport, 'the paper preview fits a 390px viewport');
     const mobileToolbar = page.locator('.exam-toolbar');
     const mobileToolbarMetrics = await mobileToolbar.evaluate(element => ({
@@ -867,7 +886,7 @@ async function main() {
       'the imported material type remains attached after reloading the editor');
     assert.equal(await page.locator('.material-editor .material-topline select').inputValue(),
       String(importedQuestion.render.materialId), 'the material selector uses the target paper material ID');
-    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: /^(Preview|Back to Preview · Q\d+)$/ }).click();
     await page.waitForURL(url => url.pathname === `/shsat/admin/papers/${paperId}/preview`);
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.locator('.material-section').waitFor();
